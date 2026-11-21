@@ -1,0 +1,85 @@
+// Actual Zig Pool/negative bridge with fixed C metadata substitutes; no threads/IO/models here.
+const std = @import("std");
+const pool_io = @import("expert/io.zig");
+const owners = @import("fios/request_ownership.zig");
+const cleanup = @import("fios/current_ane_native_cleanup_uncertainty.zig");
+const scenario = @import("build_options").scenario;
+var refused = false;
+var starts: usize = 0;
+var stops: usize = 0;
+var quiesces: usize = 0;
+const Trace = struct {
+    allocs: usize=0, frees: usize=0,
+    fn alloc(raw:*anyopaque,n:usize,alignment:std.mem.Alignment,ret:usize)?[*]u8 {
+        const self:*@This()=@ptrCast(@alignCast(raw));self.allocs+=1;
+        return std.heap.page_allocator.rawAlloc(n,alignment,ret);
+    }
+    fn free(raw:*anyopaque,bytes:[]u8,alignment:std.mem.Alignment,ret:usize)void {
+        const self:*@This()=@ptrCast(@alignCast(raw));self.frees+=1;
+        std.heap.page_allocator.rawFree(bytes,alignment,ret);
+    }
+    const vtable:std.mem.Allocator.VTable=.{.alloc=alloc,.resize=std.mem.Allocator.noResize,.remap=std.mem.Allocator.noRemap,.free=free};
+    fn allocator(self:*@This())std.mem.Allocator{return .{.ptr=self,.vtable=&vtable};}
+};
+pub export fn q3ld_abi()i32{return pool_io.abi_version;}
+pub export fn q3ld_counters_n()i32{return pool_io.counters_n;}
+pub export fn q3ld_max_spec()i32{return pool_io.max_spec;}
+pub export fn q3ld_max_pre()i32{return pool_io.max_pre;}
+pub export fn q3ld_max_gates()i32{return pool_io.max_gates;}
+pub export fn q3ld_max_gate_tickets()i32{return pool_io.max_gate_tickets;}
+pub export fn q3ld_spec_config(_:i32,_:?[*]const u64,_:i32,_:i64,_:i64,_:i64,_:?[*]i64)c_int{return 0;}
+pub export fn q3ld_spec_streams(_:i32)c_int{return 0;}
+pub export fn q3ld_direct_config(_:i32)c_int{return 0;}
+pub export fn q3ld_start(_:i32,_:[*]const u64,_:i64,_:i64,_:[*]i64,_:i64,_:[*]i64,_:i64,_:*[6]i64)c_int {
+    starts+=1;return if(scenario==3 or scenario==4)-2 else 0;
+}
+pub export fn q3ld_quiesce(_:i64)c_int{quiesces+=1;return if(scenario==1)1 else 0;}
+pub export fn q3ld_stop()c_int {
+    stops+=1;
+    if(scenario==0 or scenario==3){refused=true;return -3;}
+    return 0;
+}
+pub export fn fios_q3ld_cleanup_uncertain()c_int{return @intFromBool(refused);}
+pub export fn fios_q3ld_cleanup_refused()void{refused=true;}
+pub fn main(init:std.process.Init)!void {
+    const io=init.io;var trace:Trace=.{};
+    try owners.shared().initialize(io,@splat(73));
+    const root=try owners.shared().enter(io);
+    const cid:owners.CorrelationID=@splat(35);
+    try owners.shared().associate(io,root,cid);
+    try owners.shared().bind(io,root,"fixture/read-pool-original");
+    const held=try owners.shared().retainTokens(io,&.{root});
+    if(scenario==5)refused=true;
+    const result=pool_io.Pool.start(trace.allocator(),.{.workers=1,.staging_bytes=std.heap.pageSize(),.tickets=32,
+        .spec=if(scenario==3 or scenario==4).{.threads=1,.slots=1,.record_bytes=std.heap.pageSize(),.chunk_bytes=std.heap.pageSize()} else null});
+    if(scenario==3 or scenario==4 or scenario==5){
+        if(result)|_|{std.debug.print("FIO_STREAM_POOL_PARENT_STARTED_AFTER_REFUSAL\n",.{});return error.StartAccepted;}
+        else |err|{if(err!=(if(scenario==5)error.PoolCleanupUncertain else error.PoolStart))return error.WrongStartRefusal;}
+        if(scenario==3 and trace.frees!=0){std.debug.print("FIO_STREAM_POOL_PARENT_PARTIAL_START_FREED\n",.{});return error.PartialStartFreed;}
+        if(scenario==4 and (trace.frees!=trace.allocs or refused))return error.HealthyPartialCleanupChanged;
+        if(scenario==5 and (trace.allocs!=0 or starts!=0))return error.PriorFenceAllocated;
+    }else{
+        const pool=try result;
+        if(scenario==6 or scenario==7){
+            if(comptime @hasDecl(pool_io.Pool,"prepareStop")){
+                if(!pool.prepareStop() or !pool.prepareStop())return error.HealthyPreparationRefused;
+            }
+            if(scenario==6)refused=true;
+        }
+        pool.stop();
+        if(scenario==0 or scenario==1 or scenario==6){
+            if(trace.frees!=0){std.debug.print("FIO_STREAM_POOL_PARENT_FREED_AFTER_REFUSAL\n",.{});return error.ParentFreed;}
+            if(!refused or (scenario==1 and stops!=0))return error.RefusalNotPreserved;
+        }else if(trace.frees!=trace.allocs or stops!=1 or refused)return error.HealthyStopChanged;
+    }
+    const negative=scenario==0 or scenario==1 or scenario==3 or scenario==5 or scenario==6;
+    const known=cleanup.known(io,false,false);
+    if(known!=negative)return error.SourceFenceNotPropagated;
+    try owners.shared().leave(io,root);
+    if(negative){
+        if(held.releaseIfCertain(io))return error.IndependentFenceReleasedOriginal;
+        const lineage=owners.shared().correlationSnapshot(io,cid);
+        if(!lineage.found or lineage.root_sequence!=root.sequence or !lineage.uncertain)return error.OriginalLineageLost;
+    }else if(!held.releaseIfCertain(io) or owners.shared().snapshot(io).owned!=0)return error.HealthyReferenceLeak;
+    std.debug.print("PASS: actual Zig pool preserves exact storage and independent native lineage\n",.{});
+}

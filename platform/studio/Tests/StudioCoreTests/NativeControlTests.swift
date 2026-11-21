@@ -1,0 +1,88 @@
+import Foundation
+
+private final class ObservationSourceFixture:NativeReadOnlyClientSource,@unchecked Sendable {
+    private let lock=NSLock()
+    private var count=0
+    private let client:NativeReadOnlyClient
+    init(client:NativeReadOnlyClient) {self.client=client}
+    var calls:Int {lock.lock();defer {lock.unlock()};return count}
+    func resolve()throws->NativeReadOnlyClient {
+        lock.lock();count+=1;let current=count;lock.unlock()
+        if current==1 {throw NativeControlError.unavailable}
+        return client
+    }
+}
+
+func runNativeControlTests() throws {
+    let absentPeer=NativeControlPeer(pid:42,start:100,executable:try VerifiedExecutable(path:"/fixture/not-opened",sha256:String(repeating:"a",count:64)))
+    let observer=AsyncNativeControl(observer:NativeReadOnlyClient(NativeControlClient(path:"/fixture/not-connected",peer:absentPeer)))
+    for operation:NativeControlOperation in [.pause,.resume,.ownerBarrier] {
+        do {try observer.submit(NativeMaintenanceCommand(id:"readonly",operation:operation,instance:nil,sequence:0));fatalError("Readonly observer accepted native management")}
+        catch NativeControlError.unauthorized {}
+    }
+    for (instance,sequence) in [(String(repeating:"07",count:16),UInt64(0)),(nil,UInt64(1))] as [(String?,UInt64)] {
+        do {try observer.submit(NativeMaintenanceCommand(id:"readonly",operation:.observe,instance:instance,sequence:sequence));fatalError("Readonly observer accepted scoped command metadata")}
+        catch NativeControlError.unauthorized {}
+    }
+    guard observer.poll()==nil else {fatalError("Rejected readonly command opened a worker slot")}
+    guard try NativeServingObservationSource.load(directory:URL(fileURLWithPath:"/fixture/no-installed-state"))==nil else {fatalError("Development image constructed installed observation")}
+    let source=ObservationSourceFixture(client:NativeReadOnlyClient(NativeControlClient(path:"/fixture/not-connected",peer:absentPeer,version:3,observeBackendFences:true,observePrimaryActivity:true,observeSDKBackground:true)))
+    let dynamic=AsyncNativeControl(observerSource:source)
+    guard source.calls==0 else {fatalError("Observer constructor resolved a process inline")}
+    do {try dynamic.submit(NativeMaintenanceCommand(id:"forbidden",operation:.pause,instance:nil,sequence:0));fatalError("Dynamic observer accepted pause")}
+    catch NativeControlError.unauthorized {}
+    guard source.calls==0 else {fatalError("Rejected management called the observation resolver")}
+    for attempt in 1...2 {
+        let id=UUID().uuidString.lowercased()
+        try dynamic.submit(NativeMaintenanceCommand(id:id,operation:.observe,instance:nil,sequence:0))
+        let end=ProcessInfo.processInfo.systemUptime+3
+        var result:NativeControlResult?
+        repeat {result=dynamic.poll();if result==nil {Thread.sleep(forTimeInterval:0.005)}} while result==nil && ProcessInfo.processInfo.systemUptime<end
+        guard let result,result.id==id,source.calls==attempt,result.primaryActivity==nil,result.backendFences==nil else {fatalError("Observer retried, resolved inline or changed the original result")}
+        guard case .failure=result.value else {fatalError("Missing source/peer became native observation")}
+    }
+    try runNativePrimaryActivityWireTests()
+    try runQueuedPrimaryActivityWireTests()
+    try runRegistryActivityWireTests()
+    try runNativeBackendFenceWireTests()
+    try runCurrentBackendFenceWireTests()
+    let instance=String(repeating:"07",count:16)
+    let request=try NativeControlWire.request(operation:.pause,instance:instance,sequence:0)
+    guard request.count==32,Array(request.prefix(6))==[70,73,67,57,2,1],Array(request.suffix(16))==Array(repeating:7,count:16) else {fatalError("Native control frame changed")}
+    var reply=Data(repeating:0,count:64)
+    reply.replaceSubrange(0..<4,with:Data("FIR9".utf8));reply[4]=2;reply[5]=1
+    reply.replaceSubrange(8..<24,with:Data(repeating:7,count:16));reply[31]=1;reply[56]=1
+    var sliced=Data(repeating:0,count:80)+reply;sliced.removeFirst(80)
+    let rebased=try NativeControlWire.reply(sliced)
+    guard rebased.pauseSequence==1 else {fatalError("Control decoding depended on backing-buffer offsets")}
+    let value=try NativeControlWire.reply(reply)
+    guard value.operation == .pause,value.status == .ok,value.instance==instance,value.pauseSequence==1,value.closed,value.owners==0,value.activity == .unknown else {fatalError("Private ingress status became native idle authority")}
+    func reject(_ data:Data) {
+        do {_ = try NativeControlWire.reply(data);fatalError("Malformed native private control accepted")}catch{}
+    }
+    for index in [0,4,5,6,7,56,57,58,63] {
+        var wrong=reply;wrong[index]=255;reject(wrong)
+    }
+    var legacy=reply;legacy[4]=1;reject(legacy)
+    var owner=reply;owner[5]=3;owner[58]=1;owner[62]=1
+    let partial=try NativeControlWire.reply(owner)
+    guard partial.ownerStreamOutcome == .ownerStreamsSynchronized,partial.synchronizedStreams==256,partial.activity == .unknown else {fatalError("Partial MLX barrier became global terminal authority")}
+    var tooMany=owner;tooMany[63]=1;reject(tooMany)
+    var failedProgress=owner;failedProgress[58]=5;reject(failedProgress)
+    var openOwner=owner;openOwner[56]=0;openOwner[31]=0;reject(openOwner)
+    var uncertainOwner=owner;uncertainOwner[57]=1;reject(uncertainOwner)
+    var invalidOwner=owner;invalidOwner[6]=1;reject(invalidOwner)
+    var liveOwner=owner;liveOwner[35]=1;liveOwner[39]=1;reject(liveOwner)
+    do {_ = try NativeControlWire.request(operation:.ownerBarrier,instance:instance,sequence:0);fatalError("Ungated owner probe accepted")}catch{}
+    var zero=reply;zero.replaceSubrange(8..<24,with:Data(repeating:0,count:16));reject(zero)
+    var noPause=reply;noPause[31]=0;reject(noPause)
+    var inconsistent=reply;inconsistent[35]=1;reject(inconsistent)
+    var oversized=reply;oversized[34]=2;oversized[39]=1;reject(oversized)
+    reject(reply.dropLast());reject(reply+Data([0]))
+    for bad in ["",String(repeating:"0",count:32),String(repeating:"A",count:32),String(repeating:"a",count:31)] {
+        do {_ = try NativeControlWire.request(operation:.pause,instance:bad,sequence:0);fatalError("Invalid source identity accepted")}catch{}
+    }
+    do {_ = try NativeControlWire.request(operation:.observe,instance:nil,sequence:1);fatalError("Observe accepted management sequence")}catch{}
+    do {_ = try NativeControlWire.request(operation:.resume,instance:instance,sequence:0);fatalError("Zero resume accepted")}catch{}
+    print("PASS: exact native control framing, source/one-use sequence bounds, unknown-only activity and malformed response refusal")
+}

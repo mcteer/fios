@@ -1,0 +1,100 @@
+import Foundation
+import Darwin
+import CryptoKit
+@main struct NativeRequestEventPollingLive {
+    static func main()throws {
+        let args=CommandLine.arguments
+        guard args.count==6,["graph","cancel-queued"].contains(args[5]),let pid=Int32(args[2]) else {throw NativeControlError.invalid}
+        let cancelled=args[5]=="cancel-queued"
+        let executable=try VerifiedExecutable(path:args[1],sha256:SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:args[1]))).map {String(format:"%02x",$0)}.joined())
+        let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
+        let client=NativeControlClient(path:args[3],peer:peer,version:3,observeRequestEvents:true,sourceLineageClock:true,queuedLineage:true)
+        let now=HostResources.nowMilliseconds(),job=UUID().uuidString.lowercased()
+        let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),managerEpoch:UUID().uuidString.lowercased(),
+            nativeEpoch:String(repeating:"07",count:16),canonicalModel:"fixture/native-events",nativeModel:"fixture/native-events",sequence:1,sampledAt:now)
+        let journal=try Journal(directory:URL(fileURLWithPath:args[4]))
+        let token=TaskOwner.newToken(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
+        _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"d",count:64),created:now))
+        try journal.transitionJob(id:job,to:.running)
+        try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope);try journal.markDispatched(job:job,attempt:0)
+        let correlation=try scope.nativeRequestCorrelationID(job:job,attempt:0)
+        let registration=try client.registerHandoff(instance:scope.nativeEpoch,correlationID:correlation)
+        let legacy=NativeControlClient(path:args[3],peer:peer,version:3)
+        let legacyRead=try legacy.lineage(instance:scope.nativeEpoch,correlationID:correlation)
+        guard legacyRead.lineage.sourceCapturedAt==nil,legacyRead.lineage.operations==nil else {throw NativeControlError.invalid}
+        let clockOnly=NativeControlClient(path:args[3],peer:peer,version:3,sourceLineageClock:true)
+        let clockRead=try clockOnly.lineage(instance:scope.nativeEpoch,correlationID:correlation)
+        guard clockRead.lineage.sourceCapturedAt != nil,clockRead.lineage.operations==nil else {throw NativeControlError.invalid}
+        let poller=NativeLineagePoller(journal:journal,source:client)
+        func poll()throws {
+            guard try poller.beginNext() else {throw JournalError.invalid}
+            let end=ProcessInfo.processInfo.systemUptime+3
+            while ProcessInfo.processInfo.systemUptime<end {
+                if try poller.drain(now:HostResources.nowMilliseconds()) {return}
+                Thread.sleep(forTimeInterval:0.001)
+            }
+            throw NativeControlError.deadline
+        }
+        try poll()
+        guard let initial=try poller.requestEvents(job:job,attempt:0,now:HostResources.nowMilliseconds()),
+              initial.events.identityKnown,initial.events.metal==nil else {throw JournalError.invalid}
+        func output(_ value:[String:Any])throws {
+            FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys]));FileHandle.standardOutput.write(Data([10]))
+        }
+        try output(["correlation_id":correlation,"root":String(registration.result.rootSequence)])
+        for expected in cancelled ? ["queued"]:["queued","active"] {
+            let deadline=ProcessInfo.processInfo.systemUptime+5
+            var found=false
+            while ProcessInfo.processInfo.systemUptime<deadline {
+                try poll()
+                if let phase=try poller.requestEventStatuses(job:job,now:HostResources.nowMilliseconds()).first?.object["request"] as? [String:Any],
+                   phase["state"] as? String==expected,let operations=phase["operations"] as? [String:Int],operations[expected]==1 {
+                    found=true;break
+                }
+                Thread.sleep(forTimeInterval:0.01)
+            }
+            guard found,try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+            try output(["observed_operation":expected])
+        }
+        let end=ProcessInfo.processInfo.systemUptime+10
+        while ProcessInfo.processInfo.systemUptime<end {
+            try poll()
+            if let sample=try poller.requestEvents(job:job,attempt:0,now:HostResources.nowMilliseconds()) {
+                if cancelled {
+                    guard sample.events.metal==nil else {throw JournalError.invalid}
+                } else {
+                    guard let metal=sample.events.metal,metal.originated>0,metal.pending==0,metal.retired==metal.originated else {Thread.sleep(forTimeInterval:0.01);continue}
+                }
+                guard sample.events.rootSequence==registration.result.rootSequence,
+                      try journal.inferenceScope(job:job,attempt:0)?.state == .dispatched,try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+                let phases=try poller.requestEventStatuses(job:job,now:HostResources.nowMilliseconds())
+                guard let phase=phases.first?.object["request"] as? [String:Any],phase["state"] as? String=="responding",phase["captured_at"] as? Int64 != nil,
+                      let operations=phase["operations"] as? [String:Int],operations["queued"]==0,operations["active"]==0 else {Thread.sleep(forTimeInterval:0.01);continue}
+                let observedAt=HostResources.nowMilliseconds()
+                try journal.transitionJob(id:job,to:.revoking,now:observedAt);try journal.transitionJob(id:job,to:.removed,now:observedAt)
+                let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal))
+                let jobs=JobController(journal:journal,executor:UnavailableSandboxRuntime())
+                let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:URL(fileURLWithPath:args[4]).appendingPathComponent("exports"),availableBytes:{50<<30}))
+                let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:"/fixture/unused.sock",peerUID:geteuid())
+                let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid(),nativeRequestEvents:{job,now in try poller.requestEventStatuses(job:job,now:now)})
+                let request=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),"operation":"job.status","payload":["owner":token,"job":job]]))
+                let resources=ResourceSample(sampledAt:observedAt,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:observedAt)
+                var admission=AdmissionPolicy()
+                let status=try commands.handle(request,role:.task,sample:resources,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:observedAt,uptime:1000)
+                guard let rows=status["native_request_events"] as? [[String:Any]],rows.count==1,
+                      rows[0]["root_sequence"] as? String==String(sample.events.rootSequence),
+                      (rows[0]["request"] as? [String:Any])?["state"] as? String=="responding",
+                      status["unresolved_managed_requests"] as? Int==1,status["state"] as? String=="removed" else {throw JournalError.invalid}
+                var result:[String:Any]=["ok":true,"original_root":String(sample.events.rootSequence),
+                    "unresolved_requests":1,"owner_status_observation":true,"local_job_state":"removed","native_request_state":"responding",
+                    "queued_observed":true,"active_observed":!cancelled,"queue_cancelled":cancelled,"gpu_graph_executed":!cancelled,
+                    "native_lineage_capture_time":true,"legacy_lineage_still_available":true,"clock_only_lineage_still_available":true,
+                    "model_requests":0,"native_authority":false]
+                if let metal=sample.events.metal {result["metal_originated"]=metal.originated;result["metal_retired"]=metal.retired}
+                try output(result);return
+            }
+            Thread.sleep(forTimeInterval:0.01)
+        }
+        throw NativeControlError.deadline
+    }
+}

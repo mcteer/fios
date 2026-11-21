@@ -1,0 +1,167 @@
+--- a/mlx/stream.h
++++ b/mlx/stream.h
+@@ -79,6 +79,20 @@
+   uint64_t scope_ = 0;
+ };
+ 
++// Optional CPU callback events only, not a native terminal proof.
++#define MLX_FIOS_REQUEST_HOST_EVENTS_V1 1
++struct FiosHostRequestEventHooksV1 {
++  uint32_t version, size;
++  // Context is borrowed for this call. Observers must not throw or call MLX.
++  // Phases: 1 origin, 2 callback/captures retired, 3 uncertain.
++  int (*observe)(void*, uint64_t, uint32_t);
++};
++MLX_API bool fios_register_host_request_event_hooks_v1(const FiosHostRequestEventHooksV1* hooks);
++MLX_API bool fios_host_request_events_enabled();
++struct MLX_API FiosHostRequestEvent;
++MLX_API std::shared_ptr<FiosHostRequestEvent> fios_reserve_host_request_event(std::shared_ptr<FiosRequestOwners> owners);
++MLX_API void fios_finish_host_request_event(const std::shared_ptr<FiosHostRequestEvent>& event, bool failed);
++
+ // Host scheduler tasks only, not device command buffers or model lifetime.
+ struct MLX_API FiosHostQueueState {
+   uint64_t epoch, pending, active;
+--- a/mlx/stream.cpp
++++ b/mlx/stream.cpp
+@@ -272,6 +272,87 @@
+   }
+ }
+ 
++namespace {
++constinit std::atomic<const FiosHostRequestEventHooksV1*> fios_host_event_hooks{nullptr};
++constinit std::atomic<uint64_t> fios_next_host_event{0};
++void fios_host_event_fence(const std::shared_ptr<FiosRequestOwners>& owners) {
++  {
++    std::lock_guard lock(fios_registry.mutex);
++    fios_mark_uncertain(40);
++  }
++  if (owners) owners->hooks->uncertain();
++}
++}
++
++bool fios_register_host_request_event_hooks_v1(const FiosHostRequestEventHooksV1* hooks) {
++  if (!hooks || hooks->version != 1 || hooks->size != sizeof(*hooks) || !hooks->observe)
++    return false;
++  std::lock_guard lock(fios_registry.mutex);
++  if (!fios_registry.enabled || fios_registry.uncertain || fios_registry.ever_created ||
++      fios_registry.ever_host || fios_registry.ever_metal ||
++      !fios_request_hooks.load(std::memory_order_acquire)) return false;
++  const FiosHostRequestEventHooksV1* expected = nullptr;
++  return fios_host_event_hooks.compare_exchange_strong(expected, hooks, std::memory_order_release, std::memory_order_relaxed);
++}
++
++bool fios_host_request_events_enabled() {
++  return fios_host_event_hooks.load(std::memory_order_acquire) != nullptr;
++}
++
++struct FiosHostRequestEvent {
++  const FiosHostRequestEventHooksV1* hooks;
++  std::shared_ptr<FiosRequestOwners> owners;
++  uint64_t id;
++  std::atomic<bool> finished{false};
++  FiosHostRequestEvent(const FiosHostRequestEventHooksV1* h,
++      std::shared_ptr<FiosRequestOwners> o, uint64_t i) : hooks(h), owners(std::move(o)), id(i) {}
++  bool report(uint32_t phase) noexcept {
++    try {
++      if (hooks->observe(owners->context, id, phase) == 0) return true;
++    } catch (...) {}
++    fios_host_event_fence(owners);
++    return false;
++  }
++  ~FiosHostRequestEvent() {
++    if (!finished.exchange(true, std::memory_order_acq_rel)) {
++      report(3);
++      fios_host_event_fence(owners);
++    }
++  }
++};
++
++std::shared_ptr<FiosHostRequestEvent> fios_reserve_host_request_event(std::shared_ptr<FiosRequestOwners> owners) {
++  const auto hooks = fios_host_event_hooks.load(std::memory_order_acquire);
++  if (!hooks) return {};
++  if (!owners) {
++    fios_host_event_fence(owners);
++    throw std::runtime_error("Host event origin unavailable");
++  }
++  auto id = fios_next_host_event.load(std::memory_order_acquire);
++  while (true) {
++    if (id == std::numeric_limits<uint64_t>::max()) {
++      fios_host_event_fence(owners);
++      throw std::runtime_error("Host event sequence exhausted");
++    }
++    if (fios_next_host_event.compare_exchange_weak(id, id + 1, std::memory_order_acq_rel)) break;
++  }
++  std::shared_ptr<FiosHostRequestEvent> event;
++  try { event = std::make_shared<FiosHostRequestEvent>(hooks, owners, id + 1); }
++  catch (...) { fios_host_event_fence(owners);throw; }
++  if (!event->report(1)) {
++    event->finished.store(true, std::memory_order_release);
++    throw std::runtime_error("Host event observer unavailable");
++  }
++  return event;
++}
++
++void fios_finish_host_request_event(const std::shared_ptr<FiosHostRequestEvent>& event, bool failed) {
++  if (!event || event->finished.exchange(true, std::memory_order_acq_rel)) return;
++  const bool uncertain = failed || fios_known_source_uncertain();
++  event->report(uncertain ? 3 : 2);
++  if (uncertain) fios_host_event_fence(event->owners);
++}
++
+ struct FiosHostTask {
+   bool tracked = false, started = false, done = false;
+   std::thread::id worker;
+--- a/mlx/scheduler.cpp
++++ b/mlx/scheduler.cpp
+@@ -79,18 +79,21 @@
+ 
+   void enqueue(std::function<void()> f) {
+     if (auto owners = fios_capture_request_owners()) {
+-      f = [this, owners = std::move(owners), task = std::move(f)]() mutable {
++      auto event = fios_reserve_host_request_event(owners);
++      f = [this, owners = std::move(owners), event = std::move(event), task = std::move(f)]() mutable {
+         try {
+-          FiosRequestOwnerScope scope(owners);
+-          try { task(); }
+-          catch (...) { scope.fence();task = nullptr;throw; }
+-          if (error.valid()) scope.fence();
+-          // Captured-object cleanup can enqueue more SDK work. Destroy those
+-          // captures while the original native owner scope is still active.
+-          task = nullptr;
++          {
++            FiosRequestOwnerScope scope(owners);
++            try { task(); }
++            catch (...) { scope.fence();task = nullptr;fios_finish_host_request_event(event, true);throw; }
++            if (error.valid()) scope.fence();
++            // Keep captured-object cleanup under its original owner scope.
++            task = nullptr;
++          }
++          fios_finish_host_request_event(event, error.valid());
+         } catch (const std::exception& failure) {
+-          // Preserve the stream's original bounded error channel instead of
+-          // letting context-entry failure escape the scheduler thread.
++          fios_finish_host_request_event(event, true);
++          // Keep the existing bounded stream error channel.
+           if (!error.valid()) error.set_message(std::make_shared<std::string>(failure.what()));
+         }
+       };
+--- a/mlx/backend/metal/event.cpp
++++ b/mlx/backend/metal/event.cpp
+@@ -26,7 +26,16 @@
+ }
+ 
+ void EventImpl::wait(uint64_t value) {
+-  mtl_event_->waitUntilSignaledValue(value, -1); // never times out
++  if (!fios_host_request_events_enabled()) {
++    mtl_event_->waitUntilSignaledValue(value, -1);
++    return;
++  }
++  // Source failure may prevent the signal callback from running.
++  while (true) {
++    if (fios_known_source_uncertain())
++      throw std::runtime_error("Native source event ownership unavailable");
++    if (mtl_event_->waitUntilSignaledValue(value, 10)) return;
++  }
+ }
+ 
+ void EventImpl::signal(uint64_t value) {

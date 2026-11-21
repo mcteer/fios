@@ -1,0 +1,143 @@
+diff --git a/src/engines/llama/engine.zig b/src/engines/llama/engine.zig
+index 9d7291e..5824cc9 100644
+--- a/src/engines/llama/engine.zig
++++ b/src/engines/llama/engine.zig
+@@ -8,6 +8,8 @@
+ //! requests take no MTP round); grammar, the think budget and the tool gate are refused by name.
+ 
+ const std = @import("std");
++const fios_slots = @import("../../fios/current_slot_origins.zig");
++const fios_owners = @import("../../fios/request_ownership.zig");
+ const env = @import("../../env.zig");
+ const build_options = @import("build_options");
+ const abi = @import("../../abi/engine.zig");
+@@ -86,6 +88,8 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+         /// when asked. A request that shapes its logits keeps the ids it emitted (`history`) and, for logprobs, the
+         /// raw row (`raw`) the shaping overwrites.
+         const Live = struct {
++            // Borrowed only while r lives; actor scopes clone before effects.
++            fios_owner: ?*const fios_owners.Retained = null,
+             r: *Req,
+             seq: *B.LlamaSeq,
+             next: i32,
+@@ -292,6 +296,14 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+         /// Claim a sequence, sync it to the prompt (reusing the KV prefix a previous request left there) and draw
+         /// the first token.
+         fn admit(st: *State, live: *std.ArrayList(Live), r: *Req) void {
++            var fio_scope = fios_slots.retain(io, @as([]const *Req, &.{r})) catch {
++                st.book.done(r, .failed, "InvalidRequestOrigins");return;
++            };
++            if (fio_scope) |*scope| scope.enter(io) catch {
++                st.book.done(r, .failed, "InvalidRequestOrigins");return;
++            };
++            defer if (fio_scope) |*scope| { _ = scope.finish(io); };
++
+             if (r.isCancelled()) return st.book.done(r, .cancelled, "");
+             const prompt = gpa.alloc(i32, r.prompt.len) catch return st.book.done(r, .failed, "OutOfMemory");
+             defer gpa.free(prompt);
+@@ -299,7 +311,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+             const seq = &st.ctx.seqs[policy.pickSeq(st.ctx.seqs, prompt).?]; // a free one: fewer live than seqs
+             seq.busy = true;
+             seq.last_used_ns = @intCast(book_mod.nowNs());
+-            var l: Live = .{ .r = r, .seq = seq, .next = 0, .rng = r.seed() };
++            var l: Live = .{ .fios_owner = if (r.fios_owner) |*held| held else null, .r = r, .seq = seq, .next = 0, .rng = r.seed() };
+             l.top = gpa.alloc(abi.Bias, r.logprobs) catch return end(st, &l, .failed, "OutOfMemory");
+             if (l.shaped() and r.logprobs > 0) l.raw = gpa.alloc(f32, st.tokens.pieces.len) catch return end(st, &l, .failed, "OutOfMemory");
+             const cached = seq.syncWithFallback(prompt) catch |err| return end(st, &l, .failed, @errorName(err));
+@@ -323,6 +335,17 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+         /// round, then the ones still decoding feed theirs in ONE batched step and draw the next. A request alone
+         /// on a context with an MTP head runs an MTP round instead.
+         fn tick(st: *State, live: *std.ArrayList(Live)) void {
++            // Clone the entire current batch before any entry can finish/free.
++            var fio_scope = fios_slots.retain(io, live.items) catch {
++                while (live.items.len > 0) endAt(st, live, 0, .failed, "InvalidRequestOrigins");
++                return;
++            };
++            if (fio_scope) |*scope| scope.enter(io) catch {
++                while (live.items.len > 0) endAt(st, live, 0, .failed, "InvalidRequestOrigins");
++                return;
++            };
++            defer if (fio_scope) |*scope| { _ = scope.finish(io); };
++
+             var i: usize = 0;
+             while (i < live.items.len) {
+                 const l = &live.items[i];
+@@ -688,3 +711,78 @@ test "llama adapter: greedy tokens equal the plain bridge sequence on a real GGU
+     got.wait();
+     try testing.expectEqualSlices(u32, want.items, got.toks.items);
+ }
++
++test "fios current llama adapter worker restores original request origins" {
++    const owners = @import("../../fios/request_ownership.zig");
++    try owners.shared().initialize(testing.io, @splat(67));
++    const root = try owners.shared().enter(testing.io);
++    var root_live = true;
++    defer if (root_live) owners.shared().leave(testing.io, root) catch {};
++    try owners.shared().bind(testing.io, root, "fixture/llama-adapter");
++    owners.current().* = root;
++    defer owners.current().* = null;
++    const Probe = struct {
++        root: owners.Token,
++        done: std.atomic.Value(bool) = .init(false),
++        attributed: std.atomic.Value(bool) = .init(false),
++        tokens_attributed: std.atomic.Value(bool) = .init(false),
++        reason: Reason = .failed,
++        fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (ev.kind == .prefilled) {
++                if (owners.current_group().*) |group| {
++                    self.attributed.store(group.len == 1 and std.meta.eql(group[0], self.root), .release);
++                }
++            }
++            if (ev.kind == .tokens) {
++                if (owners.current_group().*) |group| {
++                    self.tokens_attributed.store(group.len == 1 and std.meta.eql(group[0], self.root), .release);
++                }
++            }
++            if (ev.kind == .finished) {
++                self.reason = ev.reason;
++                self.done.store(true, .release);
++            }
++            return .go;
++        }
++    };
++    var actor_check: Probe = .{ .root = root };
++    // The real adapter/book/worker with the existing model-free bridge only:
++    // no llama.cpp execution, weights or model competence is claimed.
++    var tmp = testing.tmpDir(.{});
++    defer tmp.cleanup();
++    var buffer: [std.fs.max_path_bytes]u8 = undefined;
++    const path = try llamaGguf(&tmp, &buffer);
++    var host: abi.Host = .{ .ctx = &actor_check, .log = struct {
++        fn f(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
++    }.f, .wake = struct {
++        fn f(_: *anyopaque) callconv(.c) void {}
++    }.f };
++    const settings = "{\"seqs\":1,\"mtp_drafts\":0}";
++    const open: abi.Open = .{ .model_dir = abi.span(u8, path), .model_type = .{}, .config_json = .{},
++        .context = 0, .max_concurrent = 1, .memory_budget = 0, .settings_json = abi.span(u8, settings),
++        .options_json = .{}, .host = &host };
++    var info: abi.Info = undefined;
++    var verdict: abi.Verdict = .{};
++    const engine = Fake.table.open(&open, &info, &verdict) orelse return error.Open;
++    var closed = false;
++    defer if (!closed) Fake.table.close(engine);
++    const prompt = [_]u32{ 5, 6, 7 };
++    try testing.expectEqual(abi.Verdict.Code.ok, Fake.table.submit(engine, 1,
++        &.{ .prompt = abi.span(u32, &prompt), .max_tokens = 2, .sampling = .{ .temperature = 0 } },
++        .{ .ctx = &actor_check, .event = Probe.event }).code);
++    try owners.shared().leave(testing.io, root);root_live = false;
++    owners.current().* = null;
++    for (0..3000) |_| {
++        if (actor_check.done.load(.acquire)) break;
++        try testing.io.sleep(.fromMilliseconds(1), .awake);
++    }
++    try testing.expect(actor_check.done.load(.acquire));
++    Fake.table.close(engine);closed = true;
++    try testing.expectEqual(Reason.length, actor_check.reason);
++    if (!actor_check.attributed.load(.acquire)) std.debug.print("FIO_CURRENT_LLAMA_WORKER_LOST_ORIGINS\n", .{});
++    try testing.expect(actor_check.attributed.load(.acquire));
++    try testing.expect(actor_check.tokens_attributed.load(.acquire));
++    try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
++    try testing.expect(owners.current().* == null and owners.current_group().* == null);
++}

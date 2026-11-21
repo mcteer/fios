@@ -1,0 +1,195 @@
+diff --git a/src/fios/current_cpu_media_origins.zig b/src/fios/current_cpu_media_origins.zig
+new file mode 100644
+index 0000000..8da99ea
+--- /dev/null
++++ b/src/fios/current_cpu_media_origins.zig
+@@ -0,0 +1,37 @@
++//! Host implementation of the SDK's opaque pure-CPU ownership hook.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++const queue = @import("queued_request_ownership.zig");
++const sdk = @import("../sdk/media/offload_origins.zig");
++const State = struct { io: std.Io, scope: queue.Scope };
++comptime {
++    if (@sizeOf(State) > @sizeOf(sdk.Payload) or @alignOf(State) > @alignOf(sdk.Payload))
++        @compileError("CPU media ownership exceeds its fixed opaque payload");
++}
++const hooks: sdk.Hooks = .{ .capture = capture, .enter = enter, .finish = finish, .abandon = abandon };
++pub fn install() !void { try sdk.install(&hooks); }
++fn state(payload: *sdk.Payload) *State { return @ptrCast(@alignCast(payload)); }
++fn capture(payload: *sdk.Payload) sdk.Capture {
++    const io = std.Io.Threaded.global_single_threaded.io();
++    const original = owners.retainCurrent(io) catch return .failed;
++    const held = original orelse return .unavailable;
++    state(payload).* = .{ .io = io, .scope = .{ .retained = held } };
++    return .retained;
++}
++fn enter(payload: *sdk.Payload) bool {
++    const s = state(payload);
++    s.scope.enter(s.io) catch return false;
++    return true;
++}
++fn finish(payload: *sdk.Payload) void {
++    const s = state(payload);
++    _ = s.scope.finish(s.io);
++}
++fn abandon(payload: *sdk.Payload) void {
++    const s = state(payload);
++    if (s.scope.state != .captured) { owners.shared().fence(s.io); return; }
++    // No worker started. Release only this local capture, preserving any
++    // independent native uncertainty and all native-object custody.
++    if (!s.scope.retained.tracker.backendKnownUncertain(s.io))
++        _ = s.scope.retained.releaseIfCertain(s.io);
++}
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index 9923d6c..8ea0aa2 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -400,6 +400,7 @@ pub fn serve(
+     // Trusted startup only, before any current ingress or tracker operation.
+     fios_ownership.shared().primary_guard = false;
+     try fios_ownership.shared().initialize(io, fios_instance);
++    try @import("../../fios/current_cpu_media_origins.zig").install();
+     if (comptime @import("build_options").fios_source_sdk) {
+         try @import("../../fios/sdk_request_ownership.zig").initialize(io);
+         try fios_ownership.shared().enrollDiagnosticUncertaintyProbe(io, &fiosKnownSdkUncertain);
+diff --git a/src/host/media_jobs/sse.zig b/src/host/media_jobs/sse.zig
+index 273e842..59febab 100644
+--- a/src/host/media_jobs/sse.zig
++++ b/src/host/media_jobs/sse.zig
+@@ -463,3 +463,50 @@ test "Progress.wantsPreview is false when the client did not opt in" {
+     const p = Progress{ .ctx = &dummy, .cb = H.emitCb };
+     try std.testing.expect(!p.wantsPreview());
+ }
++
++test "fios current CPU media offload retains the full original group" {
++    const owners = @import("../../fios/request_ownership.zig");
++    const io = std.testing.io;
++    try owners.shared().initialize(io, @splat(83));
++    try @import("../../fios/current_cpu_media_origins.zig").install();
++    const first = try owners.shared().enter(io);
++    const second = try owners.shared().enter(io);
++    var roots_held = true;
++    defer if (roots_held) {
++        owners.shared().leave(io, first) catch {};
++        owners.shared().leave(io, second) catch {};
++    };
++    try owners.shared().bind(io, first, "fixture/cpu-media");
++    try owners.shared().bind(io, second, "fixture/cpu-media");
++    const roots = [_]owners.Token{ first, second };
++    owners.current_group().* = &roots;
++    defer owners.current_group().* = null;
++    const H = struct {
++        const Result = struct { attributed: bool, tid: std.Thread.Id };
++        fn step(_: *anyopaque) void {}
++        fn serve(_: *anyopaque, done: *const std.atomic.Value(bool)) void {
++            while (!done.load(.acquire)) std.atomic.spinLoopHint();
++        }
++        fn wake(_: *anyopaque) void {}
++        fn work(expected: [2]owners.Token) Result {
++            var attributed = false;
++            if (owners.current_group().*) |group| attributed = group.len == 2 and std.meta.eql(group[0], expected[0]) and std.meta.eql(group[1], expected[1]);
++            return .{ .attributed = attributed, .tid = std.Thread.getCurrentId() };
++        }
++    };
++    var dummy: u8 = 0;
++    const hook: Yield = .{ .ctx = &dummy, .step = H.step, .serve_until = H.serve, .wake = H.wake };
++    progress_mod.genYield().* = &hook;
++    defer progress_mod.genYield().* = null;
++    const me = std.Thread.getCurrentId();
++    const result = offload(H.work, .{roots});
++    try std.testing.expect(result.tid != me);
++    try std.testing.expect(owners.current().* == null and owners.current_group().*.?.ptr == &roots);
++    owners.current_group().* = null;
++    try owners.shared().leave(io, first);
++    try owners.shared().leave(io, second);
++    roots_held = false;
++    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).owned);
++    if (!result.attributed) std.debug.print("FIO_CURRENT_CPU_MEDIA_LOST_ORIGINS\n", .{});
++    try std.testing.expect(result.attributed);
++}
+diff --git a/src/sdk/media/offload_origins.zig b/src/sdk/media/offload_origins.zig
+new file mode 100644
+index 0000000..a8276bc
+--- /dev/null
++++ b/src/sdk/media/offload_origins.zig
+@@ -0,0 +1,23 @@
++//! Opaque CPU-stage custody only. No host import, model policy or terminal proof.
++const std = @import("std");
++const shared = @import("../util/shared.zig");
++
++pub const Payload = extern struct { bytes: [12 * 1024]u8 align(16) = undefined };
++pub const Capture = enum { unavailable, retained, failed };
++pub const Hooks = struct {
++    capture: *const fn (*Payload) Capture,
++    enter: *const fn (*Payload) bool,
++    finish: *const fn (*Payload) void,
++    abandon: *const fn (*Payload) void,
++};
++const Storage = shared.Shared(std.atomic.Value(?*const Hooks), "fios_cpu_media_hooks", .init(null));
++
++// Trusted startup installs one immutable host implementation before workers.
++pub fn install(hooks: *const Hooks) !void {
++    if (Storage.get().cmpxchgStrong(null, hooks, .acq_rel, .acquire)) |previous| {
++        if (previous != hooks) return error.CpuMediaHooksAlreadyInstalled;
++    }
++}
++pub fn current() ?*const Hooks {
++    return Storage.get().load(.acquire);
++}
+diff --git a/src/sdk/media/progress.zig b/src/sdk/media/progress.zig
+index 98101fc..5c89064 100644
+--- a/src/sdk/media/progress.zig
++++ b/src/sdk/media/progress.zig
+@@ -3,6 +3,7 @@
+ 
+ const std = @import("std");
+ const shared = @import("../util/shared.zig");
++const origins = @import("offload_origins.zig");
+ const preview = @import("preview.zig");
+ 
+ /// Erased progress callback handed into the model code (flux/tts/ltx) so the
+@@ -94,17 +95,40 @@ pub fn offload(comptime func: anytype, args: std.meta.ArgsTuple(@TypeOf(func)))
+         y: ?*const Yield,
+         result: ReturnOf(func) = undefined,
+         done: std.atomic.Value(bool) = .init(false),
+-        fn run(j: *@This()) void {
+-            j.result = @call(.auto, func, j.args);
++        origin_hooks: ?*const origins.Hooks = null,
++        origin_payload: origins.Payload = .{},
++        refused: bool = false,
++        fn signal(j: *@This()) void {
+             j.done.store(true, .release);
+             if (j.y) |y| y.wake(y.ctx);
+         }
++        fn run(j: *@This()) void {
++            if (j.origin_hooks) |hooks| if (!hooks.enter(&j.origin_payload)) {
++                j.refused = true;
++                j.signal();
++                return;
++            };
++            defer if (j.origin_hooks) |hooks| hooks.finish(&j.origin_payload);
++            j.result = @call(.auto, func, j.args);
++            j.signal();
++        }
+     };
+     var job = Job{ .args = args, .y = genYield().* };
+-    const t = std.Thread.spawn(.{}, Job.run, .{&job}) catch return @call(.auto, func, args);
++    if (origins.current()) |hooks| switch (hooks.capture(&job.origin_payload)) {
++        .unavailable => {},
++        .retained => job.origin_hooks = hooks,
++        // This helper accepts pure CPU stages only. Keep the existing inline
++        // path before any stage is attempted; never run a stage twice.
++        .failed => return @call(.auto, func, args),
++    };
++    const t = std.Thread.spawn(.{}, Job.run, .{&job}) catch {
++        if (job.origin_hooks) |hooks| hooks.abandon(&job.origin_payload);
++        return @call(.auto, func, args);
++    };
+     const beater = if (ka) |k| std.Thread.spawn(.{}, Keepalive.run, .{ k, &job.done }) catch null else null;
+     if (job.y) |y| y.serve_until(y.ctx, &job.done);
+     t.join();
+     if (beater) |b| b.join();
++    if (job.refused) return @call(.auto, func, args);
+     return job.result;
+ }

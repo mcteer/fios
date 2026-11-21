@@ -1,0 +1,75 @@
+diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m
+index 972567e..48aa143 100644
+--- a/lib/ane/ane_bridge.m
++++ b/lib/ane/ane_bridge.m
+@@ -12,6 +12,9 @@
+ #include <string.h>
+ #include <unistd.h>
+ #ifdef FIOS_ANE_SOURCE
++#include <sys/stat.h>
++#endif
++#ifdef FIOS_ANE_SOURCE
+ #include <stdatomic.h>
+ #include <pthread.h>
+ #include <stdint.h>
+@@ -120,12 +123,18 @@ static NSString *bridge_cache_entry(NSString *identifier) {
+  * fallback. The destination is replaced. */
+ static bool bridge_mirror(NSString *from, NSString *to) {
+     NSFileManager *files = [NSFileManager defaultManager];
++#ifdef FIOS_ANE_SOURCE
++    /* Foundation copy refuses an existing destination. Never adopt/remove an
++     * existing staging tree, even if a cache receipt or PID looks familiar. */
++    return [files copyItemAtPath:from toPath:to error:nil];
++#else
+     [files removeItemAtPath:to error:nil];
+     [files createDirectoryAtPath:[to stringByDeletingLastPathComponent]
+         withIntermediateDirectories:YES attributes:nil error:nil];
+     if ([files linkItemAtPath:from toPath:to error:nil]) return true;
+     [files removeItemAtPath:to error:nil];
+     return [files copyItemAtPath:from toPath:to error:nil];
++#endif
+ }
+ 
+ /* The model unload deletes its staging directory, so compiled artifacts are
+@@ -145,6 +154,25 @@ static bool bridge_cache_restore(NSString *identifier, NSString *directory) {
+     return true;
+ }
+ 
++#ifdef FIOS_ANE_SOURCE
++/* Exclusive preparation only: a refused/partial restore is never a cold-cache
++ * fallback. Existing trees remain untouched and no native ownership is inferred.
++ * Trusted callers keep this process-owned path stable throughout construction. */
++static bool fios_ane_prepare_staging(NSString *identifier, NSString *directory,
++                                      bool *cached) {
++    *cached = false;
++    if (msv_ane_source_uncertainty()) return false;
++    NSFileManager *files = [NSFileManager defaultManager];
++    NSString *entry = bridge_cache_entry(identifier);
++    if ([files fileExistsAtPath:[entry stringByAppendingPathComponent:@"compiled.ok"]]) {
++        if (!bridge_cache_restore(identifier, directory)) return false;
++        *cached = true;
++        return true;
++    }
++    return mkdir(directory.fileSystemRepresentation, 0700) == 0;
++}
++#endif
++
+ /* Entries are content-addressed and never invalidated, so every distinct
+  * (weights x shape) combination adds a ~250 MB entry FOREVER — a share sweep
+  * grew the cache to 49 GB and ran the disk to 100%, after which ANECCompile
+@@ -484,7 +512,15 @@ static bool bridge_compile_load(const char *name, id model, NSData *program,
+     });
+     NSString *directory = [NSTemporaryDirectory() stringByAppendingPathComponent:identifier];
+     NSFileManager *files = [NSFileManager defaultManager];
++#ifdef FIOS_ANE_SOURCE
++    bool cached = false;
++    if (!fios_ane_prepare_staging(identifier, directory, &cached)) {
++        bridge_fail(error, error_size, "ANE %s staging unavailable; existing/partial trees retained", name);
++        return false;
++    }
++#else
+     bool cached = bridge_cache_restore(identifier, directory);
++#endif
+     if (cached) bridge_cache_tag(bridge_cache_entry(identifier));
+     if (!cached) bridge_write_sources(directory, program, weights);
+     [[NSString stringWithFormat:@"%d", getpid()]

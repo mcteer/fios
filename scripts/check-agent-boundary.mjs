@@ -11,7 +11,7 @@ async function walk(path) {
       if (!["__pycache__"].includes(entry.name)) await walk(full);
       continue;
     }
-    if (!/\.(js|jsx|py|mjs)$/.test(name)) continue;
+    if (!/\.(js|jsx|py|mjs|swift)$/.test(name)) continue;
     const text = await readFile(full, "utf8");
     const harness = name.startsWith("src/agent/fios_agent/");
     if (
@@ -29,6 +29,11 @@ async function walk(path) {
       failures.push(name + ": browser imports agent");
     if (!harness && /html\.duckduckgo\.com|http:\/\/searxng:8080\/search|\bddgs\b|web_search\s*\(/.test(text))
       failures.push(name + ': search orchestration outside harness');
+    if (name.startsWith('src/agent/fios_agent/platform_') && /\b(?:subprocess|sqlite3)\b|\b(?:eval|exec)\s*\(|os\.(?:system|popen)\s*\(/.test(text))
+      failures.push(name + ': host tools/database/code execution in private model worker');
+    if (name === 'src/agent/fios_agent/platform_worker.py' &&
+        (!text.includes("web_search='off'") || !text.includes('retries=0,trust_env=False') || !text.includes('await check_native_guard(self.command)')))
+      failures.push(name + ': platform worker isolation/guard changed');
     if (harness && /\bTool\s*\(/.test(text) && name !== 'src/agent/fios_agent/web/tool.py')
       failures.push(name + ': unexpected tool registration');
     if (name === 'src/agent/fios_agent/web/tool.py' &&
@@ -45,6 +50,8 @@ async function walk(path) {
 }
 await walk(join(root, "src"));
 await walk(join(root, "server"));
+await walk(join(root, "platform/studio/Sources"));
+await walk(join(root, "platform/studio/sandbox"));
 const py = await readFile(join(root, "pyproject.toml"), "utf8");
 if (!py.includes("pydantic-ai-slim[openai]==") || /"pydantic-ai["=\[]/.test(py))
   failures.push("pyproject.toml: unexpected distribution");

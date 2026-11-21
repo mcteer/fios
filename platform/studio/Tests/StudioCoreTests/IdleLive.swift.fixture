@@ -1,0 +1,116 @@
+import Foundation
+import Darwin
+
+@main struct IdleLive {
+    static func usage(_ pid:Int32)throws->rusage_info_v2 {
+        var value=rusage_info_v2()
+        let code=withUnsafeMutablePointer(to:&value) {$0.withMemoryRebound(to:rusage_info_t?.self,capacity:1) {proc_pid_rusage(pid,RUSAGE_INFO_V2,$0)}}
+        guard code==0 else {throw RuntimeError.launch};return value
+    }
+    static func main() {
+        do {try run()}
+        catch {FileHandle.standardError.write(Data("Idle fixture bound or cleanup failed\n".utf8));exit(1)}
+    }
+    static func run() throws {
+        let args=CommandLine.arguments
+        guard args.count==3,let seconds=Int(args[2]),(5...300).contains(seconds) else {throw RuntimeError.invalid}
+        let directory=URL(fileURLWithPath:"/tmp/fios-idle-"+UUID().uuidString.lowercased())
+        defer {
+            if let fence=try? StoppedPlatformState(directory:directory) {
+                withExtendedLifetime(fence) {try? FileManager.default.removeItem(at:directory)}
+            } else {print("RETAINED: disposable idle state without stopped-writer proof: \(directory.path)")}
+        }
+        do {
+            let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds()
+            for index in 0..<256 {
+                let job=try DurableJob(id:UUID().uuidString.lowercased(),idempotency:UUID().uuidString.lowercased(),ownerHash:String(repeating:"a",count:64),requestHash:String(repeating:"b",count:64),created:now)
+                if index%2==0 {
+                    let config=try SandboxConfiguration(job:job.id,nonce:String(repeating:"c",count:64),image:"sha256:"+String(repeating:"d",count:64),memory:512<<20,cpus:1)
+                    _=try journal.reserveSandbox(job:job,configuration:config)
+                    try journal.confirmSandboxAbsent(job:job.id) // Never created; no runtime touched.
+                } else {_=try journal.reserveJob(job)}
+                try journal.transitionJob(id:job.id,to:.revoking,now:now)
+                try journal.transitionJob(id:job.id,to:.removed,now:now)
+            }
+        }
+        let process=Process()
+        process.executableURL=URL(fileURLWithPath:args[1]);process.arguments=["--state",directory.path]
+        process.environment=["PATH":"/usr/bin:/bin","LANG":"C","LC_ALL":"C"]
+        process.standardInput=FileHandle.nullDevice;process.standardOutput=FileHandle.nullDevice;process.standardError=FileHandle.nullDevice
+        var managerPID:Int32?,managerStart:UInt64?
+        try process.run()
+        defer {
+            if process.isRunning {process.terminate()}
+            let end=ProcessInfo.processInfo.systemUptime+2
+            while process.isRunning && ProcessInfo.processInfo.systemUptime<end {Thread.sleep(forTimeInterval:0.01)}
+            if process.isRunning {kill(process.processIdentifier,SIGKILL)}
+            if !process.isRunning {process.waitUntilExit()}
+            // Never leak a fixture child if its supervisor failed. Fence the
+            // direct signal by the exact previously sampled kernel start ID.
+            if let pid=managerPID,let start=managerStart,let current=try? usage(pid),current.ri_proc_start_abstime==start {kill(pid,SIGKILL)}
+        }
+        let warmup=ProcessInfo.processInfo.systemUptime+5
+        while ProcessInfo.processInfo.systemUptime<warmup {guard process.isRunning else {throw RuntimeError.launch};Thread.sleep(forTimeInterval:0.1)}
+        func progress()throws->[String:Any] {
+            guard let value=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("progress.json"))) as? [String:Any] else {throw RuntimeError.invalid}
+            return value
+        }
+        guard let pid=(try progress()["pid"] as? NSNumber)?.int32Value,pid>1 else {throw RuntimeError.invalid}
+        managerPID=pid
+        let firstManager=try usage(pid),firstSupervisor=try usage(process.processIdentifier),began=ProcessInfo.processInfo.systemUptime
+        managerStart=firstManager.ri_proc_start_abstime
+        let initial=firstManager.ri_resident_size+firstSupervisor.ri_resident_size
+        var peak=initial,managerPeak=firstManager.ri_resident_size,supervisorPeak=firstSupervisor.ri_resident_size
+        while ProcessInfo.processInfo.systemUptime-began<Double(seconds) {
+            guard process.isRunning else {throw RuntimeError.launch}
+            let manager=try usage(pid),supervisor=try usage(process.processIdentifier),value=try progress()
+            guard manager.ri_proc_start_abstime==managerStart,(value["pid"] as? NSNumber)?.int32Value==pid else {throw RuntimeError.invalid}
+            peak=max(peak,manager.ri_resident_size+supervisor.ri_resident_size)
+            managerPeak=max(managerPeak,manager.ri_resident_size);supervisorPeak=max(supervisorPeak,supervisor.ri_resident_size)
+            guard let last=value["progress"] as? Double,ProcessInfo.processInfo.systemUptime-last<6 else {throw RuntimeError.deadline}
+            Thread.sleep(forTimeInterval:1)
+        }
+        let lastManager=try usage(pid),lastSupervisor=try usage(process.processIdentifier),elapsed=ProcessInfo.processInfo.systemUptime-began
+        func consumed(_ first:rusage_info_v2,_ last:rusage_info_v2)throws->UInt64 {
+            guard last.ri_user_time>=first.ri_user_time,last.ri_system_time>=first.ri_system_time else {throw RuntimeError.invalid}
+            return last.ri_user_time-first.ri_user_time+last.ri_system_time-first.ri_system_time
+        }
+        let ticks=try consumed(firstManager,lastManager)+consumed(firstSupervisor,lastSupervisor)
+        let cpu=ProcessCPU.seconds(ticks:ticks)/elapsed*100
+        print("METRIC: observation-only manager+supervisor, mixed terminal tombstones256 including128 never-created sandbox records, seconds=\(Int(elapsed)), initial_rss_mib=\(initial/(1<<20)), combined_peak_rss_mib=\(peak/(1<<20)), growth_rss_mib=\((peak-initial)/(1<<20)), manager_peak_rss_mib=\(managerPeak/(1<<20)), supervisor_peak_rss_mib=\(supervisorPeak/(1<<20)), combined_cpu_percent_one_core=\(String(format:"%.2f",cpu))")
+        fflush(nil) // Preserve numeric evidence even when a bound fails.
+        guard peak<=256<<20,cpu<=5,peak-initial<=32<<20 else {throw RuntimeError.outputLimit}
+        // Poll only AFTER the idle CPU interval. Verify the actual manager
+        // cache/publication path, not an encoder supplied with synthetic time.
+        var epoch:String?,sequence:Int64 = -1,sampleTime:Int64 = -1,maxAge:Int64=0
+        for index in 0..<6 {
+            if index>0 {Thread.sleep(forTimeInterval:2.1)}
+            let response=try ControlClient.request(path:directory.appendingPathComponent("observe.sock").path,operation:.resources)
+            guard response["ok"] as? Bool == true,
+                  let resources=response["resources"] as? [String:Any],
+                  let observation=response["resource_observation"] as? [String:Any],
+                  WireScalar.integer(observation["version"],maximum:2)==2,
+                  let currentEpoch=observation["epoch"] as? String,WireScalar.uuid(currentEpoch),
+                  epoch==nil || epoch==currentEpoch,
+                  let currentSequence=WireScalar.integer(observation["sequence"]),currentSequence>sequence,
+                  let sampled=WireScalar.integer(observation["sampled_at"]),sampled>sampleTime,
+                  let published=WireScalar.integer(observation["observed_at"]),
+                  (-1000...5000).contains(published-sampled),
+                  (-1000...5000).contains(HostResources.nowMilliseconds()-published),
+                  let signals=observation["signals"] as? [String:[String:Any]],signals.count==11,
+                  let physical=signals["physical_memory"],physical["availability"] as? String=="observed",
+                  WireScalar.integer(physical["sampled_at"])==sampled,
+                  WireScalar.integer(physical["age_ms"])==published-sampled,
+                  observation["vm_coverage"] as? String=="unknown",resources["vmAvailable"] is NSNull else {throw RuntimeError.invalid}
+            for signal in signals.values where signal["availability"] as? String=="observed" {
+                guard let at=WireScalar.integer(signal["sampled_at"]),
+                      let age=(signal["age_ms"] as? NSNumber)?.int64Value,
+                      age==published-at,(-1000...5000).contains(age) else {throw RuntimeError.invalid}
+                maxAge=max(maxAge,age)
+            }
+            epoch=currentEpoch;sequence=currentSequence;sampleTime=sampled
+        }
+        print("METRIC: actual observation-only manager resource samples=6 interval_ms=2100 max_observed_signal_age_ms=\(maxAge), strict epoch/sequence/original-time progression, unenrolled VM remains unknown; no VM/native/model probe")
+        print("PASS: isolated manager+supervisor combined idle CPU/RSS/heartbeat bounds; not native service/model acceptance")
+    }
+}

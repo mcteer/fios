@@ -1,0 +1,16 @@
+import Foundation
+
+@main
+struct NativePreparationFrames {
+    static func main()throws {
+        guard CommandLine.arguments.count==3 else {throw NativeControlError.invalid}
+        let instance=String(repeating:"ab",count:16),id=String(repeating:"15",count:32),model="fixture/a"
+        for (index,operation) in [NativePreparationOperation.reserve,.withdraw].enumerated() {
+            let bytes=try Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[index+1]))
+            let ack=try NativePreparationWire.reply(bytes,operation:operation,instance:instance,correlationID:id,model:model,
+                rootSequence:operation == .reserve ? 0:UInt64.max,lifetimeMilliseconds:operation == .reserve ? 5000:0)
+            guard ack.rootSequence==UInt64.max,ack.model.utf8.elementsEqual(model.utf8),ack.sourceSampledAt != nil else {throw NativeControlError.invalid}
+        }
+        print("PASS actual native Unix preparation frames retain full-width identity in current Core; no admission or completion proof")
+    }
+}

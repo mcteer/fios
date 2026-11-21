@@ -1,0 +1,77 @@
+const std=@import("std");
+const owners=@import("fios/request_ownership.zig");
+const sdk=@import("fios/sdk_request_ownership.zig");
+extern "c" fn getenv([*:0]const u8) ?[*:0]const u8;
+const Hooks=extern struct {
+ capture:*const fn() callconv(.c) ?*anyopaque,
+ enter:*const fn(?*anyopaque) callconv(.c) u64,
+ leave:*const fn(u64) callconv(.c) c_int,
+ release:*const fn(?*anyopaque) callconv(.c) void,
+ merge:*const fn(?*anyopaque,?*anyopaque) callconv(.c) ?*anyopaque,
+ covers_current:*const fn(?*anyopaque) callconv(.c) c_int,
+ uncertain:*const fn() callconv(.c) void,
+};
+var original:[2]owners.Token=undefined;
+var cleanupScoped=false;
+var cleanupUncertain=false;
+var returnedUncertain=false;
+var restored=false;
+var workUncertain=false;
+fn same(a:owners.Token,b:owners.Token) bool {return a.slot==b.slot and a.sequence==b.sequence and std.mem.eql(u8,&a.instance,&b.instance);}
+fn observer(phase:c_int) callconv(.c) c_int {
+ if(phase==0) {
+  const current=owners.current().* orelse return 0;
+  const group=owners.current_group().* orelse return 0;
+  cleanupScoped=group.len==2 and same(current,original[0]) and same(group[0],original[0]) and same(group[1],original[1]);
+  cleanupUncertain=sdk.diagnostic().uncertain;
+ }else if(phase==2) {
+  workUncertain=sdk.diagnostic().uncertain;
+ }else {
+  returnedUncertain=sdk.diagnostic().uncertain;
+  restored=owners.current().*==null and owners.current_group().*==null;
+ }
+ return 1;
+}
+test "fios ordinary Metal callback actual host scope" {
+ const io=std.testing.io;
+ const library=std.mem.span(getenv("FIOS_METAL_FIXTURE_LIBRARY") orelse return error.MissingLibrary);
+ const mode=try std.fmt.parseInt(c_int,std.mem.span(getenv("FIOS_METAL_CASE") orelse return error.MissingCase),10);
+ try std.testing.expect(mode>=0 and mode<=7);
+ var dll=try std.DynLib.open(library);defer dll.close();
+ const register=dll.lookup(*const fn(*const Hooks,*const fn(c_int) callconv(.c) c_int) callconv(.c) c_int,"fios_fixture_register") orelse return error.MissingSymbol;
+ const prepare=dll.lookup(*const fn() callconv(.c) c_int,"fios_fixture_prepare") orelse return error.MissingSymbol;
+ const run=dll.lookup(*const fn(c_int) callconv(.c) c_int,"fios_fixture_run") orelse return error.MissingSymbol;
+ const release=dll.lookup(*const fn() callconv(.c) void,"fios_fixture_release") orelse return error.MissingSymbol;
+ try owners.shared().initialize(io,@splat(7));try sdk.initialize(io);
+ const hooks:Hooks=.{.capture=sdk.fios_native_request_owners_capture,.enter=sdk.fios_native_request_owners_enter,
+  .leave=sdk.fios_native_request_owners_leave,.release=sdk.fios_native_request_owners_release,
+  .merge=sdk.fios_native_request_owners_merge,.covers_current=sdk.fios_native_request_owners_covers_current,
+  .uncertain=sdk.fios_native_request_owners_uncertain};
+ try std.testing.expectEqual(@as(c_int,1),register(&hooks,observer));
+ for(&original,0..) |*token,index| {
+  token.*=try owners.shared().enter(io);
+  try owners.shared().associate(io,token.*,@splat(@as(u8,@intCast(index+13))));
+  try owners.shared().bind(io,token.*,"fixture/metal-callback");try owners.shared().active(io,token.*);
+ }
+ owners.current().*=original[0];owners.current_group().*=&original;
+ try std.testing.expectEqual(@as(c_int,1),prepare());
+ var released=false;defer {if(!released)release();}
+ owners.current().*=null;owners.current_group().*=null;
+ for(original) |token|try owners.shared().leave(io,token);
+ try std.testing.expectEqual(@as(usize,2),owners.shared().snapshot(io).owned);
+ try std.testing.expectEqual(@as(u32,1),sdk.diagnostic().active_contexts);
+ try std.testing.expectEqual(@as(c_int,if(mode==0) 8 else if(mode==6) 12 else 14),run(mode));
+ try std.testing.expect(cleanupScoped and restored);
+ if(mode>=6 and !workUncertain) {
+  std.debug.print("FIO_METAL_ACTUAL_OWNER_FENCE_AFTER_CAPTURE_CLEANUP\n",.{});return error.TestExpectedEqual;
+ }
+ if(mode!=0 and ((mode!=4 and !cleanupUncertain) or !returnedUncertain)) {
+  std.debug.print("FIO_METAL_ACTUAL_OWNER_FENCE_AFTER_CAPTURE_CLEANUP\n",.{});return error.TestExpectedEqual;
+ }
+ try std.testing.expectEqual(mode!=0,sdk.diagnostic().uncertain);
+ release();released=true;
+ try std.testing.expectEqual(@as(u32,if(mode==0) 0 else 1),sdk.diagnostic().active_contexts);
+ try std.testing.expectEqual(@as(usize,if(mode==0) 0 else 2),owners.shared().snapshot(io).owned);
+ for([_]u8{13,14}) |id|try std.testing.expectEqual(mode!=0,owners.shared().correlationSnapshot(io,@splat(id)).found);
+ std.debug.print("PASS: actual SDK owner scope and host group span CPU callback cleanup with independent uncertainty retained\n",.{});
+}

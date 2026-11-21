@@ -1,0 +1,90 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const leases = @import("fios/preparation_leases.zig");
+const protocol = @import("fios/preparation_protocol.zig");
+const control = @import("fios/control_protocol.zig");
+const Entry = struct { id: []const u8, state: enum { unloaded, loading, ready, error_state, evicting }, fios_load_uncertain: std.atomic.Value(bool) = .init(false) };
+const Registry = struct { mutex: std.Io.Mutex = .init, entries: std.StringHashMap(*Entry), generation: std.atomic.Value(u64) = .init(7) };
+const Context = struct {
+    tracker: *owners.Tracker,
+    registry: *Registry,
+    table: leases.Leases = .{},
+    calls: usize = 0,
+    corrupt_reply: bool = false,
+    fn reserve(raw: *anyopaque, model: []const u8, id: owners.CorrelationID, lifetime: u32) !leases.Handle {
+        const self: *Context = @ptrCast(@alignCast(raw));self.calls += 1;
+        var handle = try self.table.reserve(std.testing.io, self.tracker, self.registry, model, id, 100, lifetime);
+        if (self.corrupt_reply) handle.instance[0] ^= 1;
+        return handle;
+    }
+    fn withdraw(raw: *anyopaque, handle: leases.Handle, model: []const u8) !void {
+        const self: *Context = @ptrCast(@alignCast(raw));self.calls += 1;
+        return self.table.withdraw(std.testing.io, self.tracker, handle, model);
+    }
+    fn source(self: *Context) protocol.Source {return .{.context=self,.reserve=reserve,.withdraw=withdraw};}
+};
+fn request(instance: [16]u8) [protocol.request_size]u8 {
+    var bytes: [protocol.request_size]u8 = @splat(0);
+    @memcpy(bytes[0..4], "FIP9");bytes[4]=1;bytes[5]=1;
+    @memcpy(bytes[8..24], &instance);@memset(bytes[24..56], 11);
+    std.mem.writeInt(u16, bytes[64..66], 9, .big);std.mem.writeInt(u32, bytes[68..72], 5000, .big);
+    @memcpy(bytes[80..89], "fixture/a");return bytes;
+}
+test "preparation protocol preserves actual original claim and explicit withdrawal without native proof" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{.primary_guard=true};try tracker.initialize(io,@splat(161));
+    var registry: Registry = .{.entries=std.StringHashMap(*Entry).init(std.testing.allocator)};defer registry.entries.deinit();
+    var a: Entry = .{.id="fixture/a",.state=.unloaded};try registry.entries.put(a.id,&a);
+    var context: Context = .{.tracker=&tracker,.registry=&registry};var bytes=request(@splat(161));
+    const reply=protocol.dispatch(&tracker,io,&bytes,context.source());
+    try std.testing.expectEqual(@intFromEnum(control.Status.ok),reply[5]);
+    const root=std.mem.readInt(u64,reply[40..48],.big);try std.testing.expect(root>0);
+    try std.testing.expectEqual(@as(usize,1),tracker.primarySnapshot(io).owned);
+    try std.testing.expectEqual(root,tracker.correlationSnapshot(io,@splat(11)).root_sequence);
+    const duplicate=protocol.dispatch(&tracker,io,&bytes,context.source());
+    try std.testing.expectEqual(@intFromEnum(control.Status.maintenance),duplicate[5]);
+    bytes[5]=2;std.mem.writeInt(u64,bytes[56..64],root,.big);std.mem.writeInt(u32,bytes[68..72],0,.big);
+    const withdrawn=protocol.dispatch(&tracker,io,&bytes,context.source());
+    try std.testing.expectEqual(@intFromEnum(control.Status.ok),withdrawn[5]);
+    try std.testing.expectEqual(@as(usize,0),tracker.primarySnapshot(io).owned);
+    const late=protocol.dispatch(&tracker,io,&bytes,context.source());
+    try std.testing.expectEqual(@intFromEnum(control.Status.maintenance),late[5]);
+    try std.testing.expect(a.state==.unloaded and registry.generation.load(.acquire)==7);
+}
+test "preparation protocol refuses malformed foreign unavailable and unsupported sources before model effects" {
+    const io=std.testing.io;
+    var tracker:owners.Tracker=.{.primary_guard=false};try tracker.initialize(io,@splat(162));
+    var registry:Registry=.{.entries=std.StringHashMap(*Entry).init(std.testing.allocator)};defer registry.entries.deinit();
+    var a:Entry=.{.id="fixture/a",.state=.unloaded};try registry.entries.put(a.id,&a);
+    var context:Context=.{.tracker=&tracker,.registry=&registry};const good=request(@splat(162));
+    for ([_]usize{0,4,5,6,7,66,67,72,79,89,1103}) |offset| {
+        var bad=good;bad[offset]^=0x7f;
+        const reply=protocol.dispatch(&tracker,io,&bad,context.source());
+        try std.testing.expectEqual(@intFromEnum(control.Status.invalid),reply[5]);
+    }
+    try std.testing.expectEqual(@as(usize,0),context.calls);
+    var foreign=good;foreign[8]^=1;
+    const changed=protocol.dispatch(&tracker,io,&foreign,context.source());
+    try std.testing.expectEqual(@intFromEnum(control.Status.wrong_instance),changed[5]);
+    try std.testing.expectEqual(@as(usize,0),context.calls);
+    const missing=protocol.dispatch(&tracker,io,&good,null);
+    try std.testing.expectEqual(@intFromEnum(control.Status.maintenance),missing[5]);
+    const unsupported=protocol.dispatch(&tracker,io,&good,context.source());
+    try std.testing.expectEqual(@intFromEnum(control.Status.maintenance),unsupported[5]);
+    try std.testing.expectEqual(@as(usize,0),tracker.primarySnapshot(io).owned);
+}
+
+test "preparation protocol retains original native claim after invalid producer acknowledgement" {
+    const io=std.testing.io;
+    var tracker:owners.Tracker=.{.primary_guard=true};try tracker.initialize(io,@splat(163));
+    var registry:Registry=.{.entries=std.StringHashMap(*Entry).init(std.testing.allocator)};defer registry.entries.deinit();
+    var a:Entry=.{.id="fixture/a",.state=.unloaded};try registry.entries.put(a.id,&a);
+    var context:Context=.{.tracker=&tracker,.registry=&registry,.corrupt_reply=true};const bytes=request(@splat(163));
+    const reply=protocol.dispatch(&tracker,io,&bytes,context.source());
+    try std.testing.expectEqual(@intFromEnum(control.Status.invalid),reply[5]);
+    try std.testing.expectEqual(@as(usize,1),context.calls);
+    try std.testing.expectEqual(@as(usize,1),tracker.primarySnapshot(io).owned);
+    const original=tracker.correlationSnapshot(io,@splat(11));
+    try std.testing.expect(original.found and original.root_sequence>0);
+    try std.testing.expectEqual(@as(usize,1),original.owners);
+}

@@ -1,0 +1,13 @@
+// Empty C metadata refusal only: no ANE class, request evaluation or model.
+int fios_fixture_ane_parent_refusal(void) {
+#ifndef FIOS_ANE_SOURCE
+    return 0;
+#else
+    msv_ane_program *p=calloc(1,sizeof(*p));
+    msv_ane_request *r=calloc(1,sizeof(*r));
+    if (!p || !r || !fios_ane_parent_acquire(p,r)) return 0;
+    if (msv_ane_program_try_free(p) || !msv_ane_source_uncertainty()) return 0;
+    if (msv_ane_request_try_free(r)) return 0;
+    return p->fios_children==1 && p->fios_requests==r && r->fios_parent==p;
+#endif
+}

@@ -1,0 +1,105 @@
+
+test "fios current llama close retains callback-uncertain book parent" {
+    const owners = @import("../../fios/request_ownership.zig");
+    const owner_io = testing.io;
+    const page = std.heap.page_allocator;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(owner_io, @splat(191));
+    const Trace = struct {
+        var target: std.atomic.Value(usize) = .init(0);
+        var freed: std.atomic.Value(bool) = .init(false);
+        var anchor: u8 = 0;
+        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(_: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            if (@intFromPtr(bytes.ptr) == target.load(.acquire)) freed.store(true, .release);
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        const allocator: std.mem.Allocator = .{ .ptr = &anchor, .vtable = &vtable };
+    };
+    const A = Adapter(FakeBridgeFor(page), Trace.allocator);
+    const Probe = struct {
+        owner_io: std.Io,
+        book: *Book,
+        unknown: bool,
+        token_seen: std.atomic.Value(bool) = .init(false),
+        callbacks: std.atomic.Value(usize) = .init(0),
+        coordination_ok: std.atomic.Value(bool) = .init(true),
+        fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (ev.kind == .tokens) {
+                self.token_seen.store(true, .release);
+                // Ordinary bounded close coordination, not a backend fault:
+                // finish only once the real book has entered closing.
+                for (0..2000) |_| {
+                    self.book.mu.lockUncancelable(self.owner_io);
+                    const closing = self.book.closing;
+                    self.book.mu.unlock(self.owner_io);
+                    if (closing) return .stop;
+                    self.owner_io.sleep(.fromMilliseconds(1), .awake) catch {};
+                }
+                self.coordination_ok.store(false, .release);
+                return .stop;
+            }
+            if (ev.kind == .finished) {
+                _ = self.callbacks.fetchAdd(1, .acq_rel);
+                if (self.unknown) owners.shared().fence(self.owner_io);
+            }
+            return .go;
+        }
+        fn log(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
+        fn wake(_: *anyopaque) callconv(.c) void {}
+    };
+    for ([_]bool{ false, true }) |unknown| {
+        Trace.target.store(0, .release);
+        Trace.freed.store(false, .release);
+        const temp = try page.create(testing.TmpDir);
+        temp.* = testing.tmpDir(.{});
+        const buffer = try page.create([std.fs.max_path_bytes]u8);
+        const path = try llamaGguf(temp, buffer);
+        const actor_check = try page.create(Probe);
+        actor_check.* = .{ .owner_io = owner_io, .book = undefined, .unknown = unknown };
+        const host = try page.create(abi.Host);
+        host.* = .{ .ctx = actor_check, .log = Probe.log, .wake = Probe.wake };
+        const settings = "{\"seqs\":1,\"mtp_drafts\":0}";
+        const open: abi.Open = .{ .model_dir = abi.Str.of(path), .model_type = .{}, .config_json = .{}, .context = 64, .max_concurrent = 1, .memory_budget = 0, .settings_json = abi.Str.of(settings), .options_json = .{}, .host = host };
+        var info: abi.Info = undefined;
+        var verdict: abi.Verdict = .{};
+        const engine = A.table.open(&open, &info, &verdict) orelse return error.Open;
+        const st = A.state(engine);
+        actor_check.book = &st.book;
+        Trace.target.store(@intFromPtr(engine), .release);
+        const root = try owners.shared().enter(owner_io);
+        try owners.shared().bind(owner_io, root, "fixture/llama-book-parent");
+        owners.current().* = root;
+        try testing.expectEqual(abi.Verdict.Code.ok, A.table.submit(engine, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 2, .sampling = .{ .temperature = 0 } }, .{ .ctx = actor_check, .event = Probe.event }).code);
+        try owners.shared().leave(owner_io, root);
+        owners.current().* = null;
+        for (0..2000) |_| {
+            if (actor_check.token_seen.load(.acquire)) break;
+            try owner_io.sleep(.fromMilliseconds(1), .awake);
+        }
+        try testing.expect(actor_check.token_seen.load(.acquire));
+        A.table.close(engine);
+        try testing.expect(actor_check.coordination_ok.load(.acquire));
+        try testing.expectEqual(@as(usize, 1), actor_check.callbacks.load(.acquire));
+        if (unknown) {
+            if (Trace.freed.load(.acquire)) std.debug.print("FIO_CURRENT_LLAMA_DROPPED_UNCERTAIN_BOOK_PARENT\n", .{});
+            try testing.expect(!Trace.freed.load(.acquire)); // Witness before dereference.
+            if (@hasField(Book, "fios_quarantine")) try testing.expect(st.book.fios_quarantine != null);
+            A.table.close(engine);
+            try testing.expect(!Trace.freed.load(.acquire));
+            try testing.expectEqual(@as(usize, 1), actor_check.callbacks.load(.acquire));
+            try testing.expect(owners.shared().knownUncertain(owner_io));
+        } else {
+            try testing.expect(Trace.freed.load(.acquire));
+            temp.cleanup();
+            page.destroy(temp);
+            page.destroy(buffer);
+            page.destroy(host);
+            page.destroy(actor_check);
+        }
+    }
+}

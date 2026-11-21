@@ -1,0 +1,261 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+test "fios current queued operation independent phases retain original root" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    try tracker.initialize(io, @splat(71));
+    const token = try tracker.enter(io);
+    try tracker.bind(io, token, "fixture/exact-model");
+    try tracker.active(io, token);
+    var retained: owners.Retained = .{ .tracker = &tracker, .count = 1 };
+    retained.tokens[0] = token;
+    const a = try tracker.beginQueued(io, &retained);
+    const b = try tracker.beginQueued(io, &retained);
+    try tracker.leave(io, token);
+    try std.testing.expectEqual(owners.QueuePhase.queued, try tracker.queuedRootPhase(io, token));
+    try tracker.activateQueued(io, a);
+    try std.testing.expectEqual(owners.QueuePhase.active, try tracker.queuedRootPhase(io, token));
+    try std.testing.expectError(error.InvalidQueuePhase, tracker.activateQueued(io, a));
+    try tracker.retireQueued(io, a);
+    try std.testing.expectEqual(owners.QueuePhase.queued, try tracker.queuedRootPhase(io, token));
+    try std.testing.expectError(error.InvalidQueueTicket, tracker.retireQueued(io, a));
+    try tracker.retireQueued(io, b);
+    try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
+    try std.testing.expect(!tracker.snapshot(io).uncertain);
+}
+test "fios current queued operation keeps independent uncertain original roots" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    try tracker.initialize(io, @splat(72));
+    const token = try tracker.enter(io);
+    try tracker.bind(io, token, "fixture/exact-model");
+    var retained: owners.Retained = .{ .tracker = &tracker, .count = 1 };
+    retained.tokens[0] = token;
+    const ticket = try tracker.beginQueued(io, &retained);
+    try tracker.leave(io, token);
+    tracker.fence(io);
+    try std.testing.expectError(error.CoverageUncertain, tracker.activateQueued(io, ticket));
+    try std.testing.expectError(error.CoverageUncertain, tracker.retireQueued(io, ticket));
+    try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).owned);
+    try std.testing.expect(tracker.snapshot(io).uncertain);
+}
+test "fios current queued operation rejects foreign stale and duplicate unions atomically" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    var foreign: owners.Tracker = .{};
+    try tracker.initialize(io, @splat(73));
+    try foreign.initialize(io, @splat(74));
+    const token = try tracker.enter(io);
+    try tracker.bind(io, token, "fixture/exact-model");
+    var retained: owners.Retained = .{ .tracker = &tracker, .count = 2 };
+    retained.tokens[0] = token; retained.tokens[1] = token;
+    try std.testing.expectError(error.InvalidQueuedOrigins, tracker.beginQueued(io, &retained));
+    retained.count = 1; retained.tracker = &foreign;
+    try std.testing.expectError(error.InvalidQueuedOrigins, tracker.beginQueued(io, &retained));
+    retained.tracker = &tracker;
+    const ticket = try tracker.beginQueued(io, &retained);
+    var wrong = ticket; wrong.instance = @splat(74);
+    try std.testing.expectError(error.InvalidQueueTicket, tracker.activateQueued(io, wrong));
+    try std.testing.expectEqual(owners.QueuePhase.queued, try tracker.queuedRootPhase(io, token));
+    try tracker.retireQueued(io, ticket);
+    try tracker.leave(io, token);
+    try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
+}
+test "fios current queued operation rejects a late invalid root before any retain" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    try tracker.initialize(io, @splat(75));
+    const a = try tracker.enter(io);
+    const b = try tracker.enter(io);
+    try tracker.bind(io, a, "fixture/exact-model");
+    var retained: owners.Retained = .{ .tracker = &tracker, .count = 2 };
+    retained.tokens[0] = a; retained.tokens[1] = b;
+    try std.testing.expectError(error.InvalidQueuedOrigins, tracker.beginQueued(io, &retained));
+    try tracker.leave(io, a); try tracker.leave(io, b);
+    try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
+    try std.testing.expect(!tracker.snapshot(io).uncertain);
+}
+test "fios current queued operation capacity and sequence exhaustion retain uncertainty" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    try tracker.initialize(io, @splat(76));
+    const token = try tracker.enter(io);
+    try tracker.bind(io, token, "fixture/exact-model");
+    var retained: owners.Retained = .{ .tracker = &tracker, .count = 1 };
+    retained.tokens[0] = token;
+    var tickets: [owners.capacity]owners.QueueTicket = undefined;
+    for (&tickets) |*ticket| ticket.* = try tracker.beginQueued(io, &retained);
+    try std.testing.expectError(error.TrackingLimit, tracker.beginQueued(io, &retained));
+    try tracker.leave(io, token);
+    try std.testing.expectError(error.CoverageUncertain, tracker.retireQueued(io, tickets[0]));
+    try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(io).owned);
+    var exhausted: owners.Tracker = .{};
+    try exhausted.initialize(io, @splat(77));
+    const other = try exhausted.enter(io);
+    try exhausted.bind(io, other, "fixture/exact-model");
+    retained.tracker = &exhausted; retained.tokens[0] = other;
+    exhausted.queue_sequence = owners.maximum_sample_sequence;
+    try std.testing.expectError(error.SequenceExhausted, exhausted.beginQueued(io, &retained));
+    try std.testing.expectEqual(owners.maximum_sample_sequence, exhausted.queue_sequence);
+    try std.testing.expect(exhausted.snapshot(io).uncertain);
+}
+test "fios current queued operation stale ticket cannot activate reused slot" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    try tracker.initialize(io, @splat(78));
+    const token = try tracker.enter(io);
+    try tracker.bind(io, token, "fixture/exact-model");
+    var retained: owners.Retained = .{ .tracker = &tracker, .count = 1 };
+    retained.tokens[0] = token;
+    const previous = try tracker.beginQueued(io, &retained);
+    try tracker.retireQueued(io, previous);
+    const current = try tracker.beginQueued(io, &retained);
+    try std.testing.expectEqual(previous.slot, current.slot);
+    try std.testing.expect(current.sequence > previous.sequence);
+    try std.testing.expectError(error.InvalidQueueTicket, tracker.activateQueued(io, previous));
+    try std.testing.expectEqual(owners.QueuePhase.queued, try tracker.queuedRootPhase(io, token));
+    try tracker.retireQueued(io, current);
+    try tracker.leave(io, token);
+    try std.testing.expectEqual(@as(usize, 0), tracker.snapshot(io).owned);
+}
+test "fios current queued operation five phase capture deduplicates overlapping roots" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    try tracker.initialize(io, @splat(79));
+    const a = try tracker.enter(io); const b = try tracker.enter(io);
+    try tracker.bind(io, a, "fixture/exact-model"); try tracker.active(io, a);
+    try tracker.bind(io, b, "fixture/exact-model"); try tracker.active(io, b);
+    var retained: owners.Retained = .{ .tracker = &tracker, .count = 1 };
+    retained.tokens[0] = a;
+    const first = try tracker.beginQueued(io, &retained);
+    const overlap = try tracker.beginQueued(io, &retained);
+    retained.tokens[0] = b;
+    const other = try tracker.beginQueued(io, &retained);
+    try tracker.leave(io, a); try tracker.leave(io, b);
+    var sample = tracker.queuedSnapshot(io);
+    try std.testing.expectEqual(@as(usize, 2), sample.owned);
+    try std.testing.expectEqual(@as(usize, 2), sample.queued);
+    try std.testing.expectEqual(@as(usize, 0), sample.active);
+    try std.testing.expectEqual(@as(usize, 1), sample.model_count);
+    try std.testing.expectEqual(@as(usize, 2), sample.models[0].queued);
+    // Legacy diagnostics retain their original four-phase meanings.
+    try std.testing.expectEqual(@as(usize, 2), tracker.snapshot(io).active);
+    try tracker.activateQueued(io, first);
+    sample = tracker.queuedSnapshot(io);
+    try std.testing.expectEqual(@as(usize, 1), sample.queued);
+    try std.testing.expectEqual(@as(usize, 1), sample.active);
+    try std.testing.expectEqual(@as(usize, 1), sample.models[0].queued);
+    try std.testing.expectEqual(@as(usize, 1), sample.models[0].active);
+    try tracker.retireQueued(io, first);
+    try std.testing.expectEqual(@as(usize, 2), tracker.queuedSnapshot(io).queued);
+    try tracker.retireQueued(io, overlap);
+    try std.testing.expectEqual(@as(usize, 1), tracker.queuedSnapshot(io).owned);
+    try tracker.retireQueued(io, other);
+    sample = tracker.queuedSnapshot(io);
+    try std.testing.expectEqual(@as(usize, 0), sample.owned);
+    try std.testing.expect(!sample.uncertain);
+}
+test "fios current queued operation response handoff never hides outstanding operation" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    try tracker.initialize(io, @splat(80));
+    const token = try tracker.enter(io);
+    try tracker.bind(io, token, "fixture/exact-model"); try tracker.active(io, token);
+    var retained: owners.Retained = .{ .tracker = &tracker, .count = 1 };
+    retained.tokens[0] = token;
+    const ticket = try tracker.beginQueued(io, &retained);
+    try tracker.responding(io, token);
+    try std.testing.expectEqual(@as(usize, 1), tracker.queuedSnapshot(io).queued);
+    try tracker.activateQueued(io, ticket);
+    try std.testing.expectEqual(@as(usize, 1), tracker.queuedSnapshot(io).active);
+    try tracker.retireQueued(io, ticket);
+    try std.testing.expectEqual(@as(usize, 1), tracker.queuedSnapshot(io).responding);
+    tracker.fence(io);
+    const sample = tracker.queuedSnapshot(io);
+    try std.testing.expect(sample.uncertain);
+    try std.testing.expectEqual(@as(usize, 1), sample.owned);
+}
+test "fios current queued operation prework park retains original identity and uncertainty" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    try tracker.initialize(io, @splat(81));
+    const token = try tracker.enter(io);
+    try tracker.bind(io, token, "fixture/exact-model");
+    var retained: owners.Retained = .{ .tracker = &tracker, .count = 1 };
+    retained.tokens[0] = token;
+    const ticket = try tracker.beginQueued(io, &retained);
+    try std.testing.expectError(error.InvalidQueuePhase, tracker.parkQueued(io, ticket));
+    try tracker.activateQueued(io, ticket);
+    try tracker.parkQueued(io, ticket);
+    try std.testing.expectEqual(@as(usize, 1), tracker.queuedSnapshot(io).queued);
+    try std.testing.expectEqual(ticket.sequence, tracker.queue_sequence);
+    try tracker.activateQueued(io, ticket);
+    tracker.fence(io);
+    try std.testing.expectError(error.CoverageUncertain, tracker.parkQueued(io, ticket));
+    try std.testing.expectError(error.CoverageUncertain, tracker.retireQueued(io, ticket));
+    try std.testing.expectEqual(@as(usize, 1), tracker.queuedSnapshot(io).active);
+    try std.testing.expect(tracker.queuedSnapshot(io).uncertain);
+}
+test "fios current queued operation actual actor entry activates and parks original ticket" {
+    const io = std.testing.io;
+    const actor = @import("fios/current_slot_origins.zig");
+    const tracker = owners.shared();
+    tracker.primary_guard = false;
+    try tracker.initialize(io, @splat(88));
+    const token = try tracker.enter(io);
+    try tracker.bind(io, token, "fixture/queued-original");
+    try tracker.active(io, token);
+    const held = try tracker.retainTokens(io, &.{token});
+    const ticket = try tracker.beginQueued(io, &held);
+    const ActorSlot = struct {
+        fios_owner: ?owners.Retained,
+        fios_queue_ticket: ?owners.QueueTicket,
+        fios_queue_started: bool = false,
+    };
+    var slot: ActorSlot = .{ .fios_owner = held, .fios_queue_ticket = ticket };
+    try tracker.leave(io, token);
+    var work = (try actor.retain(io, @as([]const *ActorSlot, &.{&slot}))).?;
+    try work.enter(io);
+    if (!slot.fios_queue_started or try tracker.queuedRootPhase(io, token) != .active) {
+        std.debug.print("FIO_QUEUED_WORKER_NOT_ACTIVATED\n", .{});
+        try std.testing.expect(false);
+    }
+    try std.testing.expect(work.finish(io));
+    if (comptime @hasDecl(actor, "park")) {
+        try std.testing.expect(actor.park(io, &slot));
+    } else return error.MissingQueuedPark;
+    try std.testing.expect(!slot.fios_queue_started);
+    try std.testing.expectEqual(owners.QueuePhase.queued, try tracker.queuedRootPhase(io, token));
+    try std.testing.expectEqual(ticket.sequence, tracker.queue_sequence);
+    var resumed = (try actor.retain(io, @as([]const *ActorSlot, &.{&slot}))).?;
+    try resumed.enter(io);
+    try std.testing.expect(slot.fios_queue_started);
+    try std.testing.expectEqual(owners.QueuePhase.active, try tracker.queuedRootPhase(io, token));
+    try std.testing.expect(resumed.finish(io));
+    try tracker.retireQueued(io, ticket);
+    try std.testing.expect(held.releaseIfCertain(io));
+    try std.testing.expectEqual(@as(usize, 0), tracker.queuedSnapshot(io).owned);
+    try std.testing.expect(!tracker.queuedSnapshot(io).uncertain);
+}
+test "fios current queued operation lost original root makes capture uncertain" {
+    const io = std.testing.io;
+    var tracker: owners.Tracker = .{};
+    try tracker.initialize(io, @splat(89));
+    const token = try tracker.enter(io);
+    try tracker.bind(io, token, "fixture/lost-original");
+    var held: owners.Retained = .{ .tracker = &tracker, .count = 1 };
+    held.tokens[0] = token;
+    const ticket = try tracker.beginQueued(io, &held);
+    try tracker.leave(io, token);
+    // A local ownership bug drops a reference it does not own. The source must
+    // retain the orphaned operation and report unknown, never an idle proof.
+    try tracker.leave(io, token);
+    const sample = tracker.queuedSnapshot(io);
+    if (!sample.uncertain) {
+        std.debug.print("FIO_QUEUED_ORPHAN_LOOKS_EMPTY_CERTAIN\n", .{});
+        try std.testing.expect(false);
+    }
+    try std.testing.expect(tracker.knownUncertain(io));
+    try std.testing.expectError(error.CoverageUncertain, tracker.retireQueued(io, ticket));
+    try std.testing.expectEqual(ticket.sequence, tracker.queue_operations[ticket.slot].sequence);
+}

@@ -1,0 +1,29 @@
+// Actual source status helpers with synthetic backend/Metal state ports.
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+struct Metal {bool has_error=false,reported_error=false;int calls=0;};
+using ggml_metal_t=Metal*;
+struct Blas {std::vector<int> tasks;};
+struct Backend {int kind;void* context;};
+using ggml_backend_t=Backend*;
+static bool ggml_backend_is_blas(Backend* b){return b&&b->kind==2;}
+static void ggml_metal_synchronize(Metal* m){++m->calls;if(m->reported_error)m->has_error=true;}
+using ggml_backend_blas_context=Blas;
+// FIOS_ACTUAL_METAL_STATUS
+// FIOS_ACTUAL_METAL_BRIDGE
+// FIOS_ACTUAL_BLAS_STATUS
+int main(int argc,char** argv) {
+ if(argc!=2)return 2;const char* mode=argv[1];Metal m;Blas b;Backend metal{1,&m},blas{2,&b};
+ if(std::strcmp(mode,"metal-null")==0){if(ggml_backend_metal_fios_synchronize_checked_v1(nullptr)!=0)return 3;}
+ else if(std::strcmp(mode,"metal-no-context")==0){metal.context=nullptr;if(ggml_backend_metal_fios_synchronize_checked_v1(&metal)!=0)return 4;}
+ else if(std::strcmp(mode,"metal-failure")==0){m.reported_error=true;if(ggml_backend_metal_fios_synchronize_checked_v1(&metal)!=0||!m.has_error||m.calls!=1)return 5;m.reported_error=false;if(ggml_backend_metal_fios_synchronize_checked_v1(&metal)!=0||m.calls!=1)return 6;}
+ else if(std::strcmp(mode,"metal-latched")==0){m.has_error=true;if(ggml_backend_metal_fios_synchronize_checked_v1(&metal)!=0||m.calls)return 7;}
+ else if(std::strcmp(mode,"metal-healthy")==0){if(ggml_backend_metal_fios_synchronize_checked_v1(&metal)!=1||m.calls!=1)return 8;}
+ else if(std::strcmp(mode,"blas-pending")==0){b.tasks.push_back(1);if(ggml_backend_blas_fios_synchronize_checked_v1(&blas)!=0||b.tasks.size()!=1)return 9;}
+ else if(std::strcmp(mode,"blas-wrong")==0){if(ggml_backend_blas_fios_synchronize_checked_v1(&metal)!=0)return 10;}
+ else if(std::strcmp(mode,"blas-healthy")==0){if(ggml_backend_blas_fios_synchronize_checked_v1(&blas)!=1)return 11;}
+ else return 12;
+ std::puts("PASS: actual backend source checked status helpers with synthetic ports; no native authority");
+}

@@ -1,0 +1,10 @@
+const std=@import("std");
+const marker=@import("sdk/util/engram_prefetch_uncertainty.zig");
+extern "c" fn fios_fixture_unit_mark()void;
+extern "c" fn fios_fixture_unit_known()c_int;
+pub fn main()!void {
+ if(marker.known() or fios_fixture_unit_known()!=0)return error.InitialState;
+ fios_fixture_unit_mark();
+ if(!marker.known() or !marker.cleanup_storage.get().load(.acquire) or fios_fixture_unit_known()!=1 or marker.storage.get().load(.acquire))return error.SplitCleanupState;
+ std.debug.print("PASS: actual Shared cleanup latch is identical across host and plugin object\n",.{});
+}

@@ -1,0 +1,30 @@
+// Ordinary metadata callback spy: no model, ANE API or GPU operation.
+const std = @import("std");
+const FallbackSpy = struct {
+    calls: *usize,
+    pub fn full(self: @This(), x: usize) !usize {
+        self.calls.* += 1;
+        return x + 1;
+    }
+};
+fn metadataBlocked() bool {
+    return true;
+}
+fn metadataHealthy() bool {
+    return false;
+}
+test "fios current ANE seam refuses fallback after independent uncertainty" {
+    var calls: usize = 0;
+    const result = fallbackWith(metadataBlocked, FallbackSpy{ .calls = &calls }, @as(usize, 3));
+    if (result) |_| {
+        std.debug.print("FIO_CURRENT_ANE_FALLBACK_AFTER_KNOWN_UNCERTAINTY\n", .{});
+        try std.testing.expect(false);
+    } else |err| try std.testing.expectEqual(error.FiosAneSourceUncertain, err);
+    try std.testing.expectEqual(@as(usize, 0), calls);
+}
+test "fios current ANE seam preserves legacy healthy fallback callback" {
+    var calls: usize = 0;
+    const result = try fallbackWith(metadataHealthy, FallbackSpy{ .calls = &calls }, @as(usize, 3));
+    try std.testing.expectEqual(@as(usize, 4), result);
+    try std.testing.expectEqual(@as(usize, 1), calls);
+}

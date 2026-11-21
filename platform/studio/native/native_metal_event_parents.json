@@ -1,0 +1,4 @@
+{
+  "src/fios/sdk_request_ownership.zig": "3e4a645b82bc4c0623d541a9b680af6b21a941a5d64dc520b17ce3f8977590be",
+  "src/fios/current_sdk_owners.cpp": "dc9f6e4b45dcb1f6ff67a83e580b377092c233c958b55fcf179b4c8a1386620c"
+}

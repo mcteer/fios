@@ -1,0 +1,5 @@
+//! Independently compiled portable SDK unit; no host imports.
+pub const mlx_serve_unit = true;
+const guard = @import("sdk/ane/cleanup_guard.zig");
+export fn fios_fixture_media_unit_known() callconv(.c) bool { return guard.known(); }
+export fn fios_fixture_media_unit_retain() callconv(.c) void { guard.retainUncertain(); }

@@ -1,0 +1,472 @@
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index c4f1da2..78b3669 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -495,8 +495,12 @@ pub fn deinit(self: *Scheduler) void {
+         while (it.next()) |entry_ptr| {
+             const entry = entry_ptr.*;
+             if (entry.state == .ready or entry.state == .evicting) {
++                if (entry.fios_owner_guard and entry.state == .ready and !self.registry.markEvictingLocked(entry)) return;
+                 if (!entry.tryUnloadResident()) return;
+-                entry.state = .unloaded;
++                if (entry.fios_owner_guard) {
++                    self.registry.finalizeEvictionLocked(entry);
++                    if (entry.state != .unloaded) return;
++                } else entry.state = .unloaded;
+             }
+         }
+     }
+@@ -1119,6 +1123,7 @@ pub fn unloadModelIfIdle(self: *Scheduler, id_or_empty: []const u8, idle_window_
+         if (!held.tracker.backendKnownUncertain(self.io)) _ = held.releaseIfCertain(self.io);
+     };
+     const entry = try self.registry.resolveEntry(id_or_empty);
++    var fios_unload_mutation: ?fios_ownership.ModelMutation = null;
+     {
+         self.registry.mutex.lockUncancelable(self.io);
+         wait: while (true) {
+@@ -1144,10 +1149,27 @@ pub fn unloadModelIfIdle(self: *Scheduler, id_or_empty: []const u8, idle_window_
+                 return;
+             }
+         }
+-        self.registry.markEvictingLocked(entry);
++        if (!self.registry.markEvictingLocked(entry)) {
++            const uncertain = entry.fios_load_uncertain.load(.acquire) or model_registry_mod.cleanupUncertainLocked(self.io);
++            self.registry.mutex.unlock(self.io);
++            return if (uncertain) error.NativeCleanupUncertain else error.ModelOwned;
++        }
+         self.registry.waitForRefcountZeroLocked(entry);
++        fios_unload_mutation = entry.fios_model_mutation;
+         self.registry.mutex.unlock(self.io);
+     }
++    // An unpublished request owns no backend work. Roll back only its exact
++    // metadata reservation after leaving the queue lock; uncertainty is retained.
++    var fios_published = false;
++    errdefer if (!fios_published) {
++        if (fios_unload_mutation) |ticket| {
++            self.registry.mutex.lockUncancelable(self.io);
++            defer self.registry.mutex.unlock(self.io);
++            if (entry.fios_model_mutation) |current| {
++                if (entry.state == .evicting and std.meta.eql(current, ticket)) self.registry.unmarkEvictingLocked(entry);
++            }
++        }
++    };
+ 
+     var req = UnloadRequest{
+         .entry = entry,
+@@ -1156,10 +1178,11 @@ pub fn unloadModelIfIdle(self: *Scheduler, id_or_empty: []const u8, idle_window_
+     {
+         self.queue_mu.lockUncancelable(self.io);
+         defer self.queue_mu.unlock(self.io);
+-        // On shutdown the entry stays `.evicting`; `Scheduler.deinit`
+-        // unloads every `.ready`/`.evicting` entry, so it's still freed.
++        // Default shutdown leaves eviction to Scheduler.deinit; an unpublished
++        // source reservation instead rolls back through its exact ticket above.
+         if (self.shutdown.load(.acquire)) return error.Shutdown;
+         try self.unload_queue.append(self.allocator, &req);
++        fios_published = true;
+         self.queue_cond.broadcast(self.io);
+     }
+     req.done_mu.lockUncancelable(self.io);
+@@ -2025,3 +2048,44 @@ test "fios current untracked slot retains its model borrow" {
+     cleanup.deinit();
+     try std.testing.expectEqual(@as(u32, 0), model.refcount.load(.acquire));
+ }
++
++// Model-free actual unload publication controls; no backend or worker exists.
++test "fios current unload publication refusal rolls back its own mutation" {
++    const io = std.testing.io;
++    const owners = fios_ownership;
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(229));
++    for ([_]bool{ false, true }) |shutdown| {
++        const registry = try model_registry_mod.ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
++        defer registry.deinit();
++        const entry = try registry.registerStub("fixture/unpublished-unload", "/fixture/no-model", null);
++        entry.state = .ready;
++        entry.fios_owner_guard = true;
++        var fail = std.testing.FailingAllocator.init(std.heap.page_allocator, .{ .fail_index = 0 });
++        var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = fail.allocator(), .io = io, .registry = registry });
++        scheduler.shutdown.store(shutdown, .release);
++        const result = unloadModelIfIdle(&scheduler, entry.id, null);
++        if (shutdown) try std.testing.expectError(error.Shutdown, result)
++        else try std.testing.expectError(error.OutOfMemory, result);
++        try std.testing.expect(entry.state == .ready and entry.fios_model_mutation == null);
++        try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).model_mutations);
++        try std.testing.expectEqual(@as(usize, 0), scheduler.unload_queue.items.len);
++        try std.testing.expect(!owners.shared().knownUncertain(io));
++    }
++}
++
++test "fios current unload uncertainty crosses as uncertain not ownership conflict" {
++    const io = std.testing.io;
++    const owners = fios_ownership;
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(233));
++    const registry = try model_registry_mod.ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
++    const entry = try registry.registerStub("fixture/uncertain-unload", "/fixture/no-model", null);
++    entry.state = .ready;
++    entry.fios_owner_guard = true;
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = std.heap.page_allocator, .io = io, .registry = registry });
++    owners.shared().fence(io);
++    try std.testing.expectError(error.NativeCleanupUncertain, unloadModelIfIdle(&scheduler, entry.id, null));
++    try std.testing.expect(entry.state == .ready and entry.fios_model_mutation == null);
++    try std.testing.expect(owners.shared().knownUncertain(io));
++}
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+index e8670e6..e931705 100644
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -449,6 +449,23 @@ pub const Tracker = struct {
+     // This metadata edge is not proof of device completion or native quiescence.
+     pub fn beginModelMutation(self: *Tracker, io: std.Io, id: []const u8) !ModelMutation {
+         self.observeBackendUncertainty(io);
++        return self.beginModelMutationKnown(io, id);
++    }
++    // Metadata-only under an enclosing registry lock: no source/SDK callback.
++    // False is only absence of a known block, never native completion/admission.
++    pub fn modelMutationBlockedKnown(self: *Tracker, io: std.Io, id: []const u8) bool {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain or id.len == 0 or id.len > model_limit or
++            !std.unicode.utf8ValidateSlice(id) or std.mem.indexOfScalar(u8, id, 0) != null or self.transitioningLocked(id)) return true;
++        for (self.models) |model| {
++            if (model.owners != 0 and std.mem.eql(u8, model.id[0..model.len], id)) return true;
++        }
++        return false;
++    }
++    // Caller independently checks fixed cached negative evidence. This reserves
++    // only the known model metadata transition; no device/terminal proof.
++    pub fn beginModelMutationKnown(self: *Tracker, io: std.Io, id: []const u8) !ModelMutation {
+         self.mutex.lockUncancelable(io);
+         defer self.mutex.unlock(io);
+         if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+diff --git a/src/host/api/models.zig b/src/host/api/models.zig
+index bf8b7ba..46fa1e4 100644
+--- a/src/host/api/models.zig
++++ b/src/host/api/models.zig
+@@ -871,6 +871,14 @@ pub fn handleUnloadModelStrict(allocator: std.mem.Allocator, stream: *Conn, requ
+             try sendErrorResponse(allocator, stream, "503 Service Unavailable", "no_model", "No default model configured", 503);
+             return;
+         },
++        error.ModelOwned => {
++            try sendErrorResponse(allocator, stream, "409 Conflict", "model_in_use", "Model request ownership prevents unloading", 409);
++            return;
++        },
++        error.NativeCleanupUncertain => {
++            try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_state_uncertain", "Native model cleanup is unavailable", 503);
++            return;
++        },
+         error.Shutdown => {
+             try sendErrorResponse(allocator, stream, "503 Service Unavailable", "shutting_down", "Server is shutting down", 503);
+             return;
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index 4ac0acd..b3ab787 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -32,6 +32,7 @@ const Served = @import("../engines/served.zig").Served;
+ const gen_mod = @import("../media_jobs/gen.zig");
+ const log = @import("../../sdk/util/log.zig");
+ const handles = @import("../../abi/mlx_handles.zig");
++const fios_owners = @import("../../fios/request_ownership.zig");
+ const mlx_engine = @import("../engines/mlx.zig");
+ 
+ /// Negative cleanup evidence only; never native completion or admission.
+@@ -308,6 +309,12 @@ pub const LoadedModel = struct {
+     fios_local_cleanup_done: bool = false,
+     /// Sticky local load custody; no completion/admission proof.
+     fios_load_uncertain: std.atomic.Value(bool) = .init(false),
++    // Code-only private source option; never decoded from model/task input.
++    fios_owner_guard: bool = blk: {
++        const options = @import("build_options");
++        break :blk if (@hasDecl(options, "fios_source_sdk")) options.fios_source_sdk else false;
++    },
++    fios_model_mutation: ?fios_owners.ModelMutation = null,
+     fios_teardown_attempted: std.atomic.Value(bool) = .init(false),
+     /// MLX bytes the load added, measured at ready: above `bytes_resident` when the model fills its own cache
+     /// at load (a plugin's streamed-expert cache), so eviction credits what unloading frees.
+@@ -325,6 +332,12 @@ pub const LoadedModel = struct {
+     /// (e.g. "LoadFailed", "MissingVisionWeights"). Null otherwise.
+     error_name: ?[]const u8,
+ 
++    fn fiosOwnerBlocked(self: *const LoadedModel) bool {
++        if (!self.fios_owner_guard) return false;
++        const io = std.Io.Threaded.global_single_threaded.io();
++        return cleanupUncertainLocked(io) or fios_owners.shared().modelMutationBlockedKnown(io, self.id);
++    }
++
+     /// Token → bytes table backing the JSON grammar mask, built lazily on this
+     /// entry's first schema-constrained request. Its lifetime matches
+     /// `tokenizer` exactly: ids only mean bytes in the vocabulary they were
+@@ -712,7 +725,8 @@ pub const ModelRegistry = struct {
+         var entries = self.entries.valueIterator();
+         var borrowed = false;
+         while (entries.next()) |entry| {
+-            if (entry.*.refcount.load(.acquire) != 0) { borrowed = true; break; }
++            if (entry.*.refcount.load(.acquire) != 0 or (entry.*.fios_owner_guard and
++                (entry.*.fios_model_mutation != null or entry.*.fiosOwnerBlocked()))) { borrowed = true; break; }
+         }
+         self.mutex.unlock(self.io);
+         if (borrowed) return;
+@@ -1074,11 +1088,26 @@ pub const ModelRegistry = struct {
+     /// ensureLoaded callers wait on `.evicting`. Returns immediately;
+     /// caller MUST call `waitForRefcountZeroLocked` to drain readers
+     /// before freeing GPU memory.
+-    pub fn markEvictingLocked(self: *ModelRegistry, entry: *LoadedModel) void {
+-        if (entry.fios_load_uncertain.load(.acquire)) return;
+-        std.debug.assert(entry.state == .ready);
++    pub fn markEvictingLocked(self: *ModelRegistry, entry: *LoadedModel) bool {
++        if (entry.fios_load_uncertain.load(.acquire) or entry.state != .ready) return false;
++        if (entry.fios_owner_guard) {
++            if (entry.fios_model_mutation != null or entry.refcount.load(.acquire) != 0 or cleanupUncertainLocked(self.io)) return false;
++            entry.fios_model_mutation = fios_owners.shared().beginModelMutationKnown(self.io, entry.id) catch return false;
++        }
+         entry.state = .evicting;
+         self.stateChanged();
++        return true;
++    }
++
++    // Release only this exact metadata reservation; never clear uncertainty.
++    fn finishFiosModelMutationLocked(self: *ModelRegistry, entry: *LoadedModel) bool {
++        const ticket = entry.fios_model_mutation orelse return true;
++        fios_owners.shared().endModelMutation(self.io, ticket) catch {
++            fios_owners.shared().fence(self.io);
++            return false;
++        };
++        entry.fios_model_mutation = null;
++        return true;
+     }
+ 
+     /// Phase D: block until `entry.refcount == 0`. Caller holds `mutex`.
+@@ -1094,6 +1123,7 @@ pub const ModelRegistry = struct {
+     /// summed-bytes accounting and flips state to `.unloaded`.
+     pub fn finalizeEvictionLocked(self: *ModelRegistry, entry: *LoadedModel) void {
+         if (entry.fios_load_uncertain.load(.acquire)) return;
++        if (!self.finishFiosModelMutationLocked(entry)) return;
+         // bytes_resident was zeroed by unloadResident already; we still
+         // subtract its previous accounting here. Because we already
+         // synced `current_resident_bytes` at markReady time, just clear.
+@@ -1239,6 +1269,7 @@ pub const ModelRegistry = struct {
+             if (entry.state != .ready) continue;
+             if (entry.refcount.load(.acquire) != 0) continue;
+             if (std.mem.eql(u8, entry.id, exclude_id)) continue;
++            if (entry.fiosOwnerBlocked()) continue;
+             if (slot_only and !takesSlot(entry)) continue;
+             if (mlx_engine.api().holds_pair(entry.path)) continue;
+             if (entry.last_used_ns < best_used) {
+@@ -1255,6 +1286,7 @@ pub const ModelRegistry = struct {
+     pub fn idleEvictable(entry: *LoadedModel, now_ms: i64, window_ms: i64) bool {
+         if (entry.state != .ready) return false;
+         if (entry.refcount.load(.acquire) != 0) return false;
++        if (entry.fiosOwnerBlocked()) return false;
+         if (mlx_engine.api().holds_pair(entry.path)) return false;
+         // `now_ms - used` and not `used < deadline`: the boot clock's epoch
+         // is arbitrary, so the subtraction is the only meaningful form.
+@@ -1366,6 +1398,7 @@ pub const ModelRegistry = struct {
+     pub fn unmarkEvictingLocked(self: *ModelRegistry, entry: *LoadedModel) void {
+         if (entry.fios_load_uncertain.load(.acquire)) return;
+         std.debug.assert(entry.state == .evicting);
++        if (!self.finishFiosModelMutationLocked(entry)) return;
+         entry.state = .ready;
+         self.stateChanged();
+     }
+@@ -1387,7 +1420,7 @@ pub const ModelRegistry = struct {
+         var freed_live: u64 = 0;
+         var freed_slots: u32 = 0;
+         if (forced) |v| {
+-            self.markEvictingLocked(v);
++            if (out.len == 0 or !self.markEvictingLocked(v)) return null;
+             out[0] = v;
+             n = 1;
+             freed = v.bytes_resident;
+@@ -1416,7 +1449,10 @@ pub const ModelRegistry = struct {
+                 for (out[0..n]) |v| self.unmarkEvictingLocked(v);
+                 return null;
+             }
+-            self.markEvictingLocked(victim); // now `.evicting` → pickLru won't repick
++            if (!self.markEvictingLocked(victim)) {
++                for (out[0..n]) |v| self.unmarkEvictingLocked(v);
++                return null;
++            }
+             freed += victim.bytes_resident;
+             freed_live += liveBytesFreed(victim);
+             freed_slots += @intFromBool(takesSlot(victim));
+@@ -1443,6 +1479,7 @@ pub const ModelRegistry = struct {
+             const e = entry_ptr.*;
+             if (e.state != .ready or e.refcount.load(.acquire) != 0 or std.mem.eql(u8, e.id, exclude_id)) continue;
+             if (e.servesGguf() or n_idle == idle.len) continue;
++            if (e.fiosOwnerBlocked()) continue;
+             if (mlx_engine.api().holds_pair(e.path)) continue;
+             idle[n_idle] = e;
+             n_idle += 1;
+@@ -1457,10 +1494,17 @@ pub const ModelRegistry = struct {
+         var free = room;
+         var n: usize = 0;
+         while (free < need and n < out.len) : (n += 1) {
+-            self.markEvictingLocked(idle[n]);
++            if (!self.markEvictingLocked(idle[n])) {
++                for (out[0..n]) |v| self.unmarkEvictingLocked(v);
++                return 0;
++            }
+             out[n] = idle[n];
+             free +|= idle[n].bytes_resident;
+         }
++        if (free < need) {
++            for (out[0..n]) |v| self.unmarkEvictingLocked(v);
++            return 0;
++        }
+         return n;
+     }
+ 
+@@ -3073,3 +3117,130 @@ test "fios current cold load claim refuses independent uncertainty" {
+     try std.testing.expectEqual(before, reg.generation.load(.acquire));
+     try std.testing.expect(owners.shared().knownUncertain(io));
+ }
++
++// Model-free actual registry policy controls. No native model/backend exists.
++test "fios current registry retained response excludes LRU and idle victims" {
++    const io = std.testing.io;
++    const owners = @import("../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(201));
++    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 1, 0, null);
++    defer reg.deinit();
++    const entry = try makeReadyStub(reg, "fixture/retained-response", 1024);
++    entry.fios_owner_guard = true;
++    const token = try owners.shared().enter(io);
++    try owners.shared().bind(io, token, entry.id);
++    try owners.shared().active(io, token);
++    try owners.shared().responding(io, token);
++    try owners.shared().retain(io, token);
++    try owners.shared().leave(io, token); // Connection exits; response capture remains.
++    defer owners.shared().leave(io, token) catch unreachable;
++    try testing.expectEqual(@as(u32, 0), entry.refcount.load(.acquire));
++    reg.mutex.lockUncancelable(io);
++    defer reg.mutex.unlock(io);
++    try testing.expect(reg.pickLruEvictable("fixture/incoming", false) == null);
++    try testing.expect(!ModelRegistry.idleEvictable(entry, entry.last_used_ms.load(.acquire) + 900_000, 900_000));
++    try testing.expect(reg.pickIdleEvictable(entry.last_used_ms.load(.acquire) + 900_000, 900_000) == null);
++}
++
++test "fios current registry forced planning retains known request ownership" {
++    const io = std.testing.io;
++    const owners = @import("../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(202));
++    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 1, 0, null);
++    defer reg.deinit();
++    const entry = try makeReadyStub(reg, "fixture/forced-owner", 1024);
++    entry.fios_owner_guard = true;
++    const token = try owners.shared().enter(io);
++    defer owners.shared().leave(io, token) catch unreachable;
++    try owners.shared().bind(io, token, entry.id);
++    try owners.shared().active(io, token);
++    var out: [2]*LoadedModel = undefined;
++    reg.mutex.lockUncancelable(io);
++    defer reg.mutex.unlock(io);
++    try testing.expect(reg.planEvictionsLocked("fixture/incoming", entry, &out, 1024) == null);
++    try testing.expectEqual(LoadState.ready, entry.state);
++    try testing.expectEqual(@as(u64, 1024), reg.current_resident_bytes);
++}
++
++test "fios current registry transition excludes binding until exact rollback" {
++    const io = std.testing.io;
++    const owners = @import("../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(203));
++    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 1, 0, null);
++    defer reg.deinit();
++    const entry = try makeReadyStub(reg, "fixture/transition", 1024);
++    entry.fios_owner_guard = true;
++    reg.mutex.lockUncancelable(io);
++    defer reg.mutex.unlock(io);
++    _ = reg.markEvictingLocked(entry);
++    var marked = true;
++    defer if (marked) reg.unmarkEvictingLocked(entry);
++    try testing.expectEqual(@as(usize, 1), owners.shared().snapshot(io).model_mutations);
++    const token = try owners.shared().enter(io);
++    defer owners.shared().leave(io, token) catch unreachable;
++    try testing.expectError(error.ModelTransition, owners.shared().bind(io, token, entry.id));
++    reg.unmarkEvictingLocked(entry);
++    marked = false;
++    try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).model_mutations);
++    try owners.shared().bind(io, token, entry.id);
++    try testing.expectEqual(LoadState.ready, entry.state);
++}
++
++test "fios current registry RAM planning retains known owned resident bytes" {
++    const io = std.testing.io;
++    const owners = @import("../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(204));
++    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
++    defer reg.deinit();
++    const first = try makeReadyStub(reg, "fixture/ram-first", 1024);
++    const second = try makeReadyStub(reg, "fixture/ram-owned", 1024);
++    first.fios_owner_guard = true;
++    second.fios_owner_guard = true;
++    const token = try owners.shared().enter(io);
++    defer owners.shared().leave(io, token) catch unreachable;
++    try owners.shared().bind(io, token, second.id);
++    try owners.shared().active(io, token);
++    try owners.shared().responding(io, token);
++    var out: [2]*LoadedModel = undefined;
++    reg.mutex.lockUncancelable(io);
++    defer reg.mutex.unlock(io);
++    try testing.expectEqual(@as(usize, 0), reg.planRamEvictionsLocked("fixture/incoming", &out, 0, 1536));
++    try testing.expectEqual(LoadState.ready, first.state);
++    try testing.expectEqual(LoadState.ready, second.state);
++    try testing.expectEqual(@as(u64, 2048), reg.current_resident_bytes);
++}
++
++
++test "fios current registry transition uses cached metadata under its mutex" {
++    const io = std.testing.io;
++    const owners = @import("../../fios/request_ownership.zig");
++    const Probe = struct {
++        var calls = std.atomic.Value(u32).init(0);
++        fn check() bool {
++            _ = calls.fetchAdd(1, .monotonic);
++            return false;
++        }
++    };
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(205));
++    const reg = try ModelRegistry.init(std.heap.page_allocator, io, null, 1, 0, null);
++    defer reg.deinit();
++    const entry = try makeReadyStub(reg, "fixture/cached-transition", 1024);
++    entry.fios_owner_guard = true;
++    try owners.shared().enrollDiagnosticUncertaintyProbe(io, &Probe.check);
++    const before = Probe.calls.load(.monotonic);
++    reg.mutex.lockUncancelable(io);
++    const marked = reg.markEvictingLocked(entry);
++    if (marked) reg.unmarkEvictingLocked(entry);
++    reg.mutex.unlock(io);
++    try testing.expect(marked);
++    try testing.expectEqual(before, Probe.calls.load(.monotonic));
++    // The ordinary outer entry still observes its independently enrolled source.
++    const ticket = try owners.shared().beginModelMutation(io, "fixture/outside-registry");
++    defer owners.shared().endModelMutation(io, ticket) catch unreachable;
++    try testing.expect(Probe.calls.load(.monotonic) > before);
++}
+diff --git a/src/sdk/util/err_name.zig b/src/sdk/util/err_name.zig
+index d8e9d64..9b2363d 100644
+--- a/src/sdk/util/err_name.zig
++++ b/src/sdk/util/err_name.zig
+@@ -27,6 +27,8 @@ pub const Known = error{
+     WriteFailed,
+     QueueFull,
+     ModelBusy,
++    ModelOwned,
++    NativeCleanupUncertain,
+     NotEmbeddingModel,
+     NoVisionEncoder,
+     Timeout,
+@@ -65,3 +67,8 @@ test "err_name: a known name comes back as the same error; an unknown one keeps
+     try std.testing.expectEqualStrings("InvalidQwen4Indexer", last());
+     try check(null);
+ }
++
++test "fios current owner refusal names cross the engine boundary" {
++    try std.testing.expectError(error.ModelOwned, check("ModelOwned"));
++    try std.testing.expectError(error.NativeCleanupUncertain, check("NativeCleanupUncertain"));
++}

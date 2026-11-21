@@ -1,0 +1,641 @@
+diff --git a/src/engines/ane/engine.zig b/src/engines/ane/engine.zig
+index 50a2d3c..fe5ec09 100644
+--- a/src/engines/ane/engine.zig
++++ b/src/engines/ane/engine.zig
+@@ -182,7 +182,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+ 
+         fn sourceCleanupUnknown() bool {
+             const options = @import("build_options");
+-            return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++            return @import("../../fios/current_ane_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+         }
+ 
+         fn close(e: *anyopaque) callconv(.c) void {
+diff --git a/src/engines/ane/lm.zig b/src/engines/ane/lm.zig
+index ad612f5..8ea2a54 100644
+--- a/src/engines/ane/lm.zig
++++ b/src/engines/ane/lm.zig
+@@ -129,22 +129,17 @@ pub fn lanesFor(arch: Arch, engines: u32) u32 {
+ 
+ /// Run requests in order on this thread.
+ fn runReqs(rs: []const rt.Request) !void {
++    return runReqsImpl(rs);
++}
++
++fn runReqsImpl(rs: anytype) !void {
+     var err: rt.ErrBuf = .{};
+     for (rs) |r| {
+-        // Two loads of one program evaluated at once for the first time can come back "Request
+-        // cancelled"; no request writes its own inputs, so running it again is exact.
+-        var tries: u32 = 0;
+-        while (true) : (tries += 1) {
+-            r.run(&err) catch {
+-                if (tries < 2) {
+-                    log.debug("[ane] run retried: {s}\n", .{err.text()});
+-                    continue;
+-                }
+-                log.err("[ane] run: {s}\n", .{err.text()});
+-                return error.RunFailed;
+-            };
+-            break;
+-        }
++        r.run(&err) catch |failure| {
++            _ = rt.cleanupUnknown();
++            log.err("[ane] run: {s}\n", .{err.text()});
++            return failure;
++        };
+     }
+ }
+ 
+@@ -383,13 +378,14 @@ pub const Model = struct {
+ 
+     /// Build (or restore from the compile cache) every program of the pack at `dir`, loaded `opts.slots` times.
+     pub fn open(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, arch: Arch, opts: Options) !*Model {
++        if (rt.cleanupUnknown()) return error.LoadFailed;
+         if (!rt.available()) return error.AneUnavailable;
+         const self = try allocator.create(Model);
+-        errdefer allocator.destroy(self);
++        errdefer if (!rt.cleanupUnknown()) allocator.destroy(self);
+         self.* = undefined;
+         self.allocator = allocator;
+         self.arena = .init(allocator);
+-        errdefer self.arena.deinit();
++        errdefer if (!rt.cleanupUnknown()) self.arena.deinit();
+         const a = self.arena.allocator();
+         self.arch = arch;
+         self.instances = @max(opts.slots, 1);
+@@ -402,7 +398,7 @@ pub const Model = struct {
+         self.mask_emb = &.{};
+         self.lanes = if (opts.lanes > 0) opts.lanes else lanesFor(arch, ane.aneInstanceCount(ane.chipBrand()));
+         self.pack = try pack_mod.Pack.open(io, allocator, dir);
+-        errdefer self.pack.close();
++        errdefer if (!rt.cleanupUnknown()) self.pack.close();
+         const pfx = self.pack.layerPrefix() orelse return error.LoadFailed;
+         self.prefix = pfx;
+         var nb: [256]u8 = undefined;
+@@ -412,10 +408,11 @@ pub const Model = struct {
+         self.ctxs = try a.dupe(u32, opts.ctxs);
+         std.mem.sort(u32, self.ctxs, {}, std.sort.asc(u32));
+         if (opts.drafter) |d| self.openDrafter(io, d) catch |err| {
++            if (rt.cleanupUnknown()) return err;
+             log.warn("[ane] drafter not loaded ({s}): one token per call\n", .{@errorName(err)});
+             self.dcfg = null;
+         };
+-        errdefer if (self.dpack) |d| d.close();
++        errdefer if (!rt.cleanupUnknown()) if (self.dpack) |d| d.close();
+ 
+         // This build's cache entries: one set per model and configuration (`rt.cacheLineage`). One
+         // build at a time: the cache's lineage is process-wide.
+@@ -440,7 +437,7 @@ pub const Model = struct {
+         report(opts.progress, .load_total, @intCast(B.n));
+         var build = B;
+         const workers = try allocator.alloc(std.Thread, lanes - 1);
+-        defer allocator.free(workers);
++        defer if (!rt.cleanupUnknown()) allocator.free(workers);
+         var spawned: usize = 0;
+         for (workers) |*w| {
+             w.* = std.Thread.spawn(.{}, Build.run, .{&build}) catch break;
+@@ -449,18 +446,19 @@ pub const Model = struct {
+         build.run();
+         for (workers[0..spawned]) |w| w.join();
+         if (build.failed) |err| {
++            if (rt.cleanupUnknown()) return err;
+             for (self.units, 0..) |u, i| if (build.done[i]) u.prog.deinit();
+             for (0..self.lanes) |l| if (build.done[nunits + l]) self.heads[l].deinit();
+             if (build.done[nunits + self.lanes]) self.cores.deinit();
+             if (self.dcfg != null and build.done[nunits + self.lanes + 1]) self.dprog.?.deinit();
+             return err;
+         }
+-        errdefer {
++        errdefer if (!rt.cleanupUnknown()) {
+             for (self.units) |u| u.prog.deinit();
+             for (self.heads[0..self.lanes]) |h| h.deinit();
+             self.cores.deinit();
+             if (self.dprog) |d| d.deinit();
+-        }
++        };
+         for (0..self.chunks) |ci| {
+             const info = self.units[ci * self.lanes].info;
+             self.weight_bytes += q35.unitBytes(arch, info.first, info.count, 1);
+@@ -655,7 +653,7 @@ pub const Model = struct {
+         if (dc.block != P or dc.hidden != self.arch.hidden or dc.mask_token >= self.arch.vocab) return error.DrafterMismatch;
+         for (dc.taps) |t| if (t + 1 >= self.arch.layers) return error.DrafterMismatch;
+         const dp = try pack_mod.Pack.open(io, self.allocator, ddir);
+-        errdefer dp.close();
++        errdefer if (!rt.cleanupUnknown()) dp.close();
+         self.selector = try dflash.Selector.of(dp, self.arch.vocab, dc.rank);
+         self.mask_emb = try a.alloc(f32, self.arch.hidden);
+         self.embed.row(dc.mask_token, self.mask_emb);
+@@ -664,6 +662,7 @@ pub const Model = struct {
+     }
+ 
+     pub fn deinit(self: *Model) void {
++        if (rt.cleanupUnknown()) return;
+         for (self.units) |u| u.prog.deinit();
+         for (self.heads[0..self.lanes]) |h| h.deinit();
+         self.cores.deinit();
+@@ -947,9 +946,10 @@ pub const Engine = struct {
+ 
+     /// Slot `instance` of `model`: its buffers at the smallest context, an empty state at position 0.
+     pub fn open(model: *Model, io: std.Io, instance: u32) !*Engine {
++        if (rt.cleanupUnknown()) return error.LoadFailed;
+         const allocator = model.allocator;
+         const self = try allocator.create(Engine);
+-        errdefer allocator.destroy(self);
++        errdefer if (!rt.cleanupUnknown()) allocator.destroy(self);
+         self.* = .{
+             .allocator = allocator,
+             .arena = .init(allocator),
+@@ -966,7 +966,7 @@ pub const Engine = struct {
+             .rows = undefined,
+             .emb_scratch = undefined,
+         };
+-        errdefer self.release();
++        errdefer if (!rt.cleanupUnknown()) self.release();
+         const a = self.arena.allocator();
+         const A = model.arch;
+         self.inv = try a.alloc(f64, A.rot / 2);
+@@ -1010,9 +1010,9 @@ pub const Engine = struct {
+         const a = self.arena.allocator();
+         const dp = m.dprog.?;
+         const draft = try dflash.bind(a, dp, self.instance, dp.function("draft") catch return error.LoadFailed);
+-        errdefer dflash.release(draft);
++        errdefer if (!rt.cleanupUnknown()) dflash.release(draft);
+         const ctx64 = try dflash.bind(a, dp, self.instance, dp.function("ctx64") catch return error.LoadFailed);
+-        errdefer dflash.release(ctx64);
++        errdefer if (!rt.cleanupUnknown()) dflash.release(ctx64);
+         var o: usize = 0;
+         for (0..m.lanes) |l| {
+             var err: rt.ErrBuf = .{};
+@@ -1203,7 +1203,7 @@ pub const Engine = struct {
+         if (self.plans[key]) |*p| return p;
+         const m = self.model;
+         var rs: Rounds = .{};
+-        errdefer rs.deinit(self.allocator);
++        errdefer if (!rt.cleanupUnknown()) rs.deinit(self.allocator);
+         for (0..m.chunks) |c| {
+             const info = m.units[c * m.lanes].info;
+             if (m.fused()) {
+@@ -1238,7 +1238,7 @@ pub const Engine = struct {
+         const m = self.model;
+         const ai = m.ctxIndex(self.ctx);
+         var rs: Rounds = .{};
+-        errdefer rs.deinit(self.allocator);
++        errdefer if (!rt.cleanupUnknown()) rs.deinit(self.allocator);
+         for (0..m.chunks) |c| {
+             const info = m.units[c * m.lanes].info;
+             for (0..info.count) |jj| {
+@@ -1405,6 +1405,7 @@ pub const Engine = struct {
+     }
+ 
+     fn release(self: *Engine) void {
++        if (rt.cleanupUnknown()) return;
+         if (self.lane1) |lt| lt.stop();
+         self.lane1 = null;
+         self.dropPlans();
+@@ -1445,6 +1446,7 @@ pub const Engine = struct {
+     }
+ 
+     pub fn deinit(self: *Engine) void {
++        if (rt.cleanupUnknown()) return;
+         if (self.cache) |c| {
+             c.mu.lockUncancelable(self.io);
+             self.follow(null);
+@@ -2128,6 +2130,7 @@ pub const Pool = struct {
+     engines: []*Engine,
+ 
+     pub fn open(allocator: std.mem.Allocator, io: std.Io, dir: []const u8, arch: Arch, opts: Options, limits: ?CacheLimits) !Pool {
++        if (rt.cleanupUnknown()) return error.LoadFailed;
+         const model = try Model.open(allocator, io, dir, arch, opts);
+         errdefer model.deinit();
+         // Before the engines: an engine's deinit still reads the cache it follows.
+@@ -2136,17 +2139,17 @@ pub const Pool = struct {
+             c.* = .init(allocator, if (l.max_bytes == 0) std.math.maxInt(u64) else l.max_bytes, l.max_states);
+             break :blk c;
+         } else null;
+-        errdefer if (cache) |c| {
++        errdefer if (!rt.cleanupUnknown()) if (cache) |c| {
+             c.deinit();
+             allocator.destroy(c);
+         };
+         const engines = try allocator.alloc(*Engine, model.instances);
+         var opened: usize = 0;
+-        errdefer {
++        errdefer if (!rt.cleanupUnknown()) {
+             var i = opened;
+             while (i > 0) : (i -= 1) engines[i - 1].deinit();
+             allocator.free(engines);
+-        }
++        };
+         for (engines, 0..) |*e, i| {
+             e.* = try Engine.open(model, io, @intCast(i));
+             opened += 1;
+@@ -2157,6 +2160,7 @@ pub const Pool = struct {
+ 
+     /// The engines, their shared cache, the engine list and the model.
+     pub fn close(self: Pool, allocator: std.mem.Allocator) void {
++        if (rt.cleanupUnknown()) return;
+         var i = self.engines.len;
+         while (i > 0) : (i -= 1) self.engines[i - 1].deinit();
+         if (self.cache) |c| {
+@@ -2643,3 +2647,41 @@ test "pack on the ANE: two slots interleaved token by token decode like each alo
+         l2 = try e1.step(t2);
+     }
+ }
++
++// Direct bookkeeping outcomes only; no ANE API or native request is invoked.
++test "fios current ane reported run failure is not replayed" {
++    const owners = @import("../../fios/request_ownership.zig");
++    const outcome = @import("../../fios/current_ane_run_uncertainty.zig");
++    try owners.shared().initialize(testing.io, @splat(254));
++    try testing.expect(!outcome.known());
++    const MockRun = struct {
++        var calls: usize = 0;
++        fn run(_: @This(), _: *rt.ErrBuf) error{RunFailed}!void {
++            calls += 1;
++            outcome.observeOutcome(false);
++            return error.RunFailed;
++        }
++    };
++    try testing.expectError(error.RunFailed, runReqsImpl(@as([]const MockRun, &.{.{}})));
++    if (MockRun.calls != 1) std.debug.print("FIO_CURRENT_ANE_REPLAYED_REPORTED_UNCERTAINTY\n", .{});
++    try testing.expectEqual(@as(usize, 1), MockRun.calls);
++    try testing.expect(outcome.known());
++    try testing.expect(owners.shared().knownUncertain(testing.io));
++    outcome.observeOutcome(true);
++    try testing.expect(outcome.known());
++    try testing.expect(@import("../../fios/current_ane_locked_cleanup_uncertainty.zig").known(testing.io, false, false));
++    try testing.expect(owners.shared().knownUncertain(testing.io));
++}
++test "fios current ane outcome uncertainty survives source initialization" {
++    const owners = @import("../../fios/request_ownership.zig");
++    const outcome = @import("../../fios/current_ane_run_uncertainty.zig");
++    try testing.expect(!outcome.known());
++    outcome.observeOutcome(true);
++    try testing.expect(!outcome.known());
++    outcome.observeOutcome(false);
++    try owners.shared().initialize(testing.io, @splat(255));
++    try testing.expect(outcome.known());
++    try testing.expect(@import("../../fios/current_ane_locked_cleanup_uncertainty.zig").known(testing.io, false, false));
++    outcome.observeOutcome(true);
++    try testing.expect(outcome.known() and owners.shared().knownUncertain(testing.io));
++}
+diff --git a/src/engines/ane/rt.zig b/src/engines/ane/rt.zig
+index 6de44ba..c2b77cb 100644
+--- a/src/engines/ane/rt.zig
++++ b/src/engines/ane/rt.zig
+@@ -10,6 +10,7 @@
+ const std = @import("std");
+ const env = @import("../../env.zig");
+ const builtin = @import("builtin");
++const outcome = @import("../../fios/current_ane_run_uncertainty.zig");
+ 
+ pub const Io = extern struct {
+     name: [128]u8,
+@@ -55,6 +56,11 @@ extern fn CFRelease(cf: *anyopaque) void;
+ 
+ pub const Error = error{ AneUnavailable, CompileFailed, NoSuchFunction, BindFailed, RunFailed, LayoutMismatch, OutOfMemory };
+ 
++pub fn cleanupUnknown() bool {
++    const options = @import("build_options");
++    return @import("../../fios/current_ane_cleanup_uncertainty.zig").known(std.Io.Threaded.global_single_threaded.io(), options.fios_source_sdk, options.llama_engine);
++}
++
+ pub fn available() bool {
+     if (comptime !builtin.os.tag.isDarwin()) return false;
+     return msv_ane_bridge_available() != 0;
+@@ -135,6 +141,7 @@ pub const Surface = struct {
+     bytes: usize,
+ 
+     pub fn create(bytes: usize) Error!Surface {
++        if (cleanupUnknown()) return error.OutOfMemory;
+         if (comptime !builtin.os.tag.isDarwin()) return error.AneUnavailable;
+         const s = msv_ane_bridge_surface(bytes) orelse return error.OutOfMemory;
+         const base: [*]u8 = @ptrCast(IOSurfaceGetBaseAddress(s) orelse return error.OutOfMemory);
+@@ -144,6 +151,7 @@ pub const Surface = struct {
+     }
+ 
+     pub fn release(self: Surface) void {
++        if (cleanupUnknown()) return;
+         if (comptime builtin.os.tag.isDarwin()) CFRelease(self.ref);
+     }
+ };
+@@ -155,12 +163,14 @@ pub const Program = struct {
+     /// pinned to that ANE instance (0 = the system picks). Takes the weight blob (allocated with
+     /// `std.heap.c_allocator`, freed by the bridge).
+     pub fn create(name: [:0]const u8, mil: [:0]const u8, weights: []u8, hints: []const u32, err: *ErrBuf) Error!Program {
++        if (cleanupUnknown()) return error.CompileFailed;
+         if (!available()) return error.AneUnavailable;
+         const h = msv_ane_program_create(name.ptr, mil.ptr, if (weights.len > 0) weights.ptr else null, weights.len, @intCast(hints.len), hints.ptr, &err.buf, err.buf.len) orelse return error.CompileFailed;
+         return .{ .handle = h };
+     }
+ 
+     pub fn deinit(self: Program) void {
++        if (cleanupUnknown()) return;
+         msv_ane_program_free(self.handle);
+     }
+ 
+@@ -189,6 +199,7 @@ pub const Program = struct {
+ 
+     /// A request for `proc` on `instance`, its i-th input bound to `inputs[i]` (in `io` order).
+     pub fn request(self: Program, instance: u32, proc: u32, inputs: []const ?*Surface_, outputs: []const ?*Surface_, err: *ErrBuf) Error!Request {
++        if (cleanupUnknown()) return error.BindFailed;
+         const r = msv_ane_request_create(self.handle, instance, proc, inputs.ptr, @intCast(inputs.len), outputs.ptr, @intCast(outputs.len), &err.buf, err.buf.len) orelse return error.BindFailed;
+         return .{ .handle = r };
+     }
+@@ -198,10 +209,15 @@ pub const Request = struct {
+     handle: *Request_,
+ 
+     pub fn run(self: Request, err: *ErrBuf) Error!void {
+-        if (msv_ane_request_eval(self.handle, &err.buf, err.buf.len) == 0) return error.RunFailed;
++        if (cleanupUnknown()) return error.RunFailed;
++        const ok = msv_ane_request_eval(self.handle, &err.buf, err.buf.len) != 0;
++        outcome.observeOutcome(ok);
++        const uncertain = cleanupUnknown();
++        if (!ok or uncertain) return error.RunFailed;
+     }
+ 
+     pub fn deinit(self: Request) void {
++        if (cleanupUnknown()) return;
+         msv_ane_request_free(self.handle);
+     }
+ };
+@@ -212,11 +228,13 @@ pub const SurfaceRef = ?*Surface_;
+ /// cache never evicts that set while it builds, and drops the group's other variants first. Empty
+ /// strings untag.
+ pub fn cacheLineage(group: [:0]const u8, variant: [:0]const u8) void {
++    if (cleanupUnknown()) return;
+     if (comptime builtin.os.tag.isDarwin()) msv_ane_cache_lineage(group.ptr, variant.ptr);
+ }
+ 
+ /// After a build under the current lineage: its group's entries it did not restore or store go.
+ pub fn cacheSweep() void {
++    if (cleanupUnknown()) return;
+     if (comptime builtin.os.tag.isDarwin()) msv_ane_cache_sweep();
+ }
+ 
+diff --git a/src/engines/ds4/engine.zig b/src/engines/ds4/engine.zig
+index cbbd5bd..49e3bc0 100644
+--- a/src/engines/ds4/engine.zig
++++ b/src/engines/ds4/engine.zig
+@@ -191,7 +191,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+ 
+         fn sourceCleanupUnknown() bool {
+             const options = @import("build_options");
+-            return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++            return @import("../../fios/current_ane_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+         }
+ 
+         fn close(e: *anyopaque) callconv(.c) void {
+diff --git a/src/engines/ds4/load.zig b/src/engines/ds4/load.zig
+index 7f80eda..00e0c30 100644
+--- a/src/engines/ds4/load.zig
++++ b/src/engines/ds4/load.zig
+@@ -46,7 +46,7 @@ pub fn open(comptime bridge: type, io: std.Io, gpa: std.mem.Allocator, path: []c
+ 
+ fn sourceCleanupUnknown(io: std.Io) bool {
+     const options = @import("build_options");
+-    return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++    return @import("../../fios/current_ane_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+ }
+ 
+ test "open: a support GGUF beside the model reaches ds4 only for an arch that takes one" {
+diff --git a/src/engines/llama/engine.zig b/src/engines/llama/engine.zig
+index cfe755f..3a9975c 100644
+--- a/src/engines/llama/engine.zig
++++ b/src/engines/llama/engine.zig
+@@ -225,7 +225,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+ 
+         fn sourceCleanupUnknown() bool {
+             const options = @import("build_options");
+-            return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++            return @import("../../fios/current_ane_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+         }
+ 
+         fn close(e: *anyopaque) callconv(.c) void {
+diff --git a/src/engines/llama/load.zig b/src/engines/llama/load.zig
+index 38048ea..66b061d 100644
+--- a/src/engines/llama/load.zig
++++ b/src/engines/llama/load.zig
+@@ -52,5 +52,5 @@ pub fn open(comptime bridge: type, io: std.Io, gpa: std.mem.Allocator, path: []c
+ 
+ fn sourceCleanupUnknown(io: std.Io) bool {
+     const options = @import("build_options");
+-    return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++    return @import("../../fios/current_ane_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+ }
+diff --git a/src/engines/mlx/plugin/driver.zig b/src/engines/mlx/plugin/driver.zig
+index 00ebb0c..0db818a 100644
+--- a/src/engines/mlx/plugin/driver.zig
++++ b/src/engines/mlx/plugin/driver.zig
+@@ -275,7 +275,7 @@ pub fn loadMap(io: std.Io, a: std.mem.Allocator, config: *ModelConfig, model_dir
+ 
+ fn fiosLoadUncertain(io: std.Io) bool {
+     const options = @import("build_options");
+-    return @import("../../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++    return @import("../../../fios/current_ane_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+ }
+ 
+ // Local resource retirement only, never native terminal/admission proof.
+@@ -451,7 +451,7 @@ fn adoptRotations(xfm: *Transformer, table: *const abi.ModelTable, m: *anyopaque
+ pub fn tryUnbind(b: *Bound, a: std.mem.Allocator) bool {
+     if (b.fios_unbind_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
+     const options = @import("build_options");
+-    const cleanup = @import("../../../fios/current_ds4_cleanup_uncertainty.zig");
++    const cleanup = @import("../../../fios/current_ane_cleanup_uncertainty.zig");
+     const io = std.Io.Threaded.global_single_threaded.io();
+     if (cleanup.known(io, options.fios_source_sdk, options.llama_engine)) return false;
+     b.table.unload(b.model);
+diff --git a/src/engines/mlx/transformer.zig b/src/engines/mlx/transformer.zig
+index 922139e..206b6a1 100644
+--- a/src/engines/mlx/transformer.zig
++++ b/src/engines/mlx/transformer.zig
+@@ -808,7 +808,7 @@ pub const Transformer = struct {
+ 
+     fn fiosCleanupUnknown() bool {
+         const options = @import("build_options");
+-        return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(std.Io.Threaded.global_single_threaded.io(), options.fios_source_sdk, options.llama_engine);
++        return @import("../../fios/current_ane_cleanup_uncertainty.zig").known(std.Io.Threaded.global_single_threaded.io(), options.fios_source_sdk, options.llama_engine);
+     }
+ 
+     pub fn deinit(self: *Transformer) void {
+diff --git a/src/engines/own_thread/book.zig b/src/engines/own_thread/book.zig
+index 0615bcf..1e1c9af 100644
+--- a/src/engines/own_thread/book.zig
++++ b/src/engines/own_thread/book.zig
+@@ -4,8 +4,8 @@
+ 
+ const std = @import("std");
+ const build_options = @import("build_options");
+-const cleanup = @import("../../fios/current_ds4_cleanup_uncertainty.zig");
+-const locked_cleanup = @import("../../fios/current_ds4_locked_cleanup_uncertainty.zig");
++const cleanup = @import("../../fios/current_ane_cleanup_uncertainty.zig");
++const locked_cleanup = @import("../../fios/current_ane_locked_cleanup_uncertainty.zig");
+ const fios_ownership = @import("../../fios/request_ownership.zig");
+ const abi = @import("../../abi/engine.zig");
+ 
+diff --git a/src/fios/current_ane_backend_uncertainty.zig b/src/fios/current_ane_backend_uncertainty.zig
+new file mode 100644
+index 0000000..93f9751
+--- /dev/null
++++ b/src/fios/current_ane_backend_uncertainty.zig
+@@ -0,0 +1,6 @@
++//! Fixed negative-only ANE/DS4/SDK/llama composition. Zero is no proof.
++const base = @import("current_ds4_backend_uncertainty.zig");
++const ane = @import("current_ane_run_uncertainty.zig");
++pub fn known(comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
++    return ane.known() or base.known(sdk_enabled, llama_enabled);
++}
+diff --git a/src/fios/current_ane_cleanup_uncertainty.zig b/src/fios/current_ane_cleanup_uncertainty.zig
+new file mode 100644
+index 0000000..45be933
+--- /dev/null
++++ b/src/fios/current_ane_cleanup_uncertainty.zig
+@@ -0,0 +1,19 @@
++//! Negative cleanup evidence only; no native completion or admission authority.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++const backend = @import("current_ane_backend_uncertainty.zig");
++
++pub fn known(io: std.Io, comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
++    const native_unknown = backend.known(sdk_enabled, llama_enabled);
++    const source = owners.shared();
++    source.mutex.lockUncancelable(io);
++    const started = source.initialized;
++    source.mutex.unlock(io);
++    if (native_unknown) {
++        if (started) source.fence(io);
++        return true;
++    }
++    // Legacy metadata-only callers can precede source startup. Missing startup
++    // is never positive native authority, and cannot hide an actual fence.
++    return started and source.backendKnownUncertain(io);
++}
+diff --git a/src/fios/current_ane_locked_cleanup_uncertainty.zig b/src/fios/current_ane_locked_cleanup_uncertainty.zig
+new file mode 100644
+index 0000000..37b0da0
+--- /dev/null
++++ b/src/fios/current_ane_locked_cleanup_uncertainty.zig
+@@ -0,0 +1,21 @@
++//! Negative cleanup evidence under an existing engine/book mutex. The fixed
++//! backend getters and cached source state invoke no dynamic source callback.
++//! This supplies neither native completion nor admission authority.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++const backend = @import("current_ane_backend_uncertainty.zig");
++
++pub fn known(io: std.Io, comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
++    const native_unknown = backend.known(sdk_enabled, llama_enabled);
++    const source = owners.shared();
++    source.mutex.lockUncancelable(io);
++    const started = source.initialized;
++    source.mutex.unlock(io);
++    if (native_unknown) {
++        if (started) source.fence(io);
++        return true;
++    }
++    // Legacy metadata-only callers may precede startup; absence is never
++    // positive authority and cannot hide the independent native flags.
++    return started and source.knownUncertain(io);
++}
+diff --git a/src/fios/current_ane_run_uncertainty.zig b/src/fios/current_ane_run_uncertainty.zig
+new file mode 100644
+index 0000000..37b1410
+--- /dev/null
++++ b/src/fios/current_ane_run_uncertainty.zig
+@@ -0,0 +1,10 @@
++//! Process-wide negative evidence from a reported ANE run outcome only.
++//! Success, local cleanup and a new source epoch cannot reset this latch.
++//! No device call, callback, allocation or positive terminal/admission claim.
++const std = @import("std");
++const shared_util = @import("../sdk/util/shared.zig");
++const storage = shared_util.Shared(std.atomic.Value(bool), "fios_ane_reported_run_uncertainty", .init(false));
++pub fn known() bool { return storage.get().load(.acquire); }
++pub fn observeOutcome(success: bool) void {
++    if (!success) storage.get().store(true, .release);
++}
+diff --git a/src/host/engines/served.zig b/src/host/engines/served.zig
+index 424f63c..4e1cb6d 100644
+--- a/src/host/engines/served.zig
++++ b/src/host/engines/served.zig
+@@ -114,7 +114,7 @@ pub const Served = struct {
+     // helper also lets ordinary metadata tests exercise the exact open body.
+     fn openWithTable(gpa: std.mem.Allocator, kind: Kind, t: *const abi.Engine, spec: Spec, progress: *load_progress.Progress, gauges: *Gauges, metrics: ?*metrics_mod.Metrics) !*Served {
+         const io = std.Io.Threaded.global_single_threaded.io();
+-        const cleanup = @import("../../fios/current_ds4_cleanup_uncertainty.zig");
++        const cleanup = @import("../../fios/current_ane_cleanup_uncertainty.zig");
+         if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return error.NativeCleanupUncertain;
+         const s = try gpa.create(Served);
+         // The callback receives &s.host. An uncertain open cannot prove that
+@@ -164,7 +164,7 @@ pub const Served = struct {
+     pub fn tryClose(s: *Served) bool {
+         if (s.fios_close_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
+         const io = std.Io.Threaded.global_single_threaded.io();
+-        const cleanup = @import("../../fios/current_ds4_cleanup_uncertainty.zig");
++        const cleanup = @import("../../fios/current_ane_cleanup_uncertainty.zig");
+         if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return false;
+         s.table.close(s.handle);
+         if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return false;
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index 0c88a68..0a633bb 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -1000,5 +1000,5 @@ test "idleEvictTickMs: sweeps well inside the window without spinning" {
+ // neither a missing/false fence nor a local destructor is terminal proof.
+ fn fiosKnownBackendUncertain() bool {
+     const options = @import("build_options");
+-    return @import("../../fios/current_ds4_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
++    return @import("../../fios/current_ane_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
+ }
+diff --git a/src/host/media_jobs/plugin/engine.zig b/src/host/media_jobs/plugin/engine.zig
+index 75549b1..e1265df 100644
+--- a/src/host/media_jobs/plugin/engine.zig
++++ b/src/host/media_jobs/plugin/engine.zig
+@@ -72,7 +72,7 @@ pub const Engine = struct {
+     /// Loads the pack at `model_dir` through `t` on stream `s`; a refusal is logged with the plugin's reason.
+     pub fn load(io: std.Io, allocator: std.mem.Allocator, model_dir: []const u8, t: *const MediaTable, s: mlx.mlx_stream) !*Engine {
+         const options = @import("build_options");
+-        const cleanup = @import("../../../fios/current_ds4_cleanup_uncertainty.zig");
++        const cleanup = @import("../../../fios/current_ane_cleanup_uncertainty.zig");
+         if (cleanup.known(io, options.fios_source_sdk, options.llama_engine)) return error.NativeCleanupUncertain;
+         if (model_dir.len == 0 or !std.fs.path.isAbsolute(model_dir)) return error.FileNotFound;
+         var dir = try std.Io.Dir.openDirAbsolute(io, model_dir, .{});
+@@ -117,7 +117,7 @@ pub const Engine = struct {
+     pub fn tryDeinit(self: *Engine) bool {
+         if (self.fios_deinit_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
+         const options = @import("build_options");
+-        const cleanup = @import("../../../fios/current_ds4_cleanup_uncertainty.zig");
++        const cleanup = @import("../../../fios/current_ane_cleanup_uncertainty.zig");
+         if (cleanup.known(self.io, options.fios_source_sdk, options.llama_engine)) return false;
+         self.table.unload(self.handle);
+         if (cleanup.known(self.io, options.fios_source_sdk, options.llama_engine)) return false;
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index f537cff..eb8ee25 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -37,14 +37,14 @@ const mlx_engine = @import("../engines/mlx.zig");
+ /// Negative cleanup evidence only; never native completion or admission.
+ pub fn cleanupUncertain(io: std.Io) bool {
+     const options = @import("build_options");
+-    return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++    return @import("../../fios/current_ane_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+ }
+ 
+ /// Cached/fixed negative evidence under the registry mutex. No dynamic
+ /// source callback is invoked here; this is not an atomic native admission.
+ pub fn cleanupUncertainLocked(io: std.Io) bool {
+     const options = @import("build_options");
+-    return @import("../../fios/current_ds4_locked_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++    return @import("../../fios/current_ane_locked_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
+ }
+ 
+ /// Bumped every time a model becomes `.ready`; readers compare against the value they last acted on.
+@@ -707,7 +707,7 @@ pub const ModelRegistry = struct {
+         // scheduler is not permission to discard independent native uncertainty
+         // or entries still held by original request/status borrowers.
+         const options = @import("build_options");
+-        if (@import("../../fios/current_ds4_cleanup_uncertainty.zig").known(self.io, options.fios_source_sdk, options.llama_engine)) return;
++        if (@import("../../fios/current_ane_cleanup_uncertainty.zig").known(self.io, options.fios_source_sdk, options.llama_engine)) return;
+         self.mutex.lockUncancelable(self.io);
+         var entries = self.entries.valueIterator();
+         var borrowed = false;

@@ -1,0 +1,7 @@
+import Darwin
+
+// Inert executable: deliver EOF before the child exits. No subprocesses or I/O
+// other than closing its own output descriptors.
+close(STDOUT_FILENO)
+close(STDERR_FILENO)
+_ = sleep(8)

@@ -1,0 +1,64 @@
+const std=@import("std");
+const options=@import("build_options");
+const fios_origins=@import("../../sdk/util/warm_request_origins.zig");
+const fios_unproven_prefetch=@import("../../sdk/util/engram_prefetch_uncertainty.zig").storage;
+threadlocal var context:u64=0;
+var captures=std.atomic.Value(u32).init(0);
+var releases=std.atomic.Value(u32).init(0);
+var uncertainty_calls=std.atomic.Value(u32).init(0);
+var reads=std.atomic.Value(u32).init(0);
+var observed=std.atomic.Value(u64).init(0);
+var missing=false;
+var refuse_enter=false;
+var refuse_leave=false;
+// MODELED_HOST_ABI_BEGIN
+export fn fios_native_request_owners_capture() ?*anyopaque {if(missing)return null;_=captures.fetchAdd(1,.acq_rel);return @ptrFromInt(4096);}
+export fn fios_native_request_owners_enter(p:?*anyopaque)u64 {if(p==null or refuse_enter)return 0;context=17;return 1;}
+export fn fios_native_request_owners_leave(p:u64)c_int {if(p!=1 or context!=17 or refuse_leave)return 1;context=0;return 0;}
+export fn fios_native_request_owners_release(_: ?*anyopaque)void {_=releases.fetchAdd(1,.acq_rel);}
+export fn fios_native_request_owners_uncertain()void {_=uncertainty_calls.fetchAdd(1,.acq_rel);}
+// MODELED_HOST_ABI_END
+const Table=struct {
+ const Raw=struct {fn deinit(_: @This(),_:std.mem.Allocator)void{}};
+ fn read(_: *const Table,_:std.mem.Allocator,_:[]const u32)!Raw {observed.store(context,.release);_=reads.fetchAdd(1,.acq_rel);return .{};}
+};
+fn tick()void {const ts:std.c.timespec=.{.sec=0,.nsec=std.time.ns_per_ms};_=std.c.nanosleep(&ts,null);}
+fn waitRead()!void {for(0..2000)|_| {if(reads.load(.acquire)>0)return;tick();}return error.TestTimeout;}
+fn start()!*Prefetch {const t=struct{var value=Table{};};return Prefetch.start(std.testing.allocator,&.{&t.value},&.{.{.at=0,.len=1,.ids=&.{7}}},1,1);}
+fn fail(comptime msg:[]const u8)!void {std.debug.print("{s}\n",.{msg});return error.TestUnexpectedResult;}
+test "original request retained across IO and until finish" {
+ const p=try start();var consumed=false;defer if(!consumed)p.finish();try waitRead();
+ if(captures.load(.acquire)!=1 or releases.load(.acquire)!=0 or observed.load(.acquire)!=17)try fail("ENGRAM_ORIGINAL_CUSTODY_MISSING");
+ p.finish();consumed=true;try std.testing.expectEqual(@as(u32,1),releases.load(.acquire));
+ try std.testing.expect(fios_unproven_prefetch.get().load(.acquire));
+}
+test "missing original refuses before IO" {
+ missing=true;
+ if(start())|p| {p.finish();try fail("ENGRAM_MISSING_ORIGINAL_ACCEPTED");}else|e|try std.testing.expectEqual(error.FiosPrefetchOrigins,e);
+ try std.testing.expectEqual(@as(u32,0),reads.load(.acquire));
+ try std.testing.expect(uncertainty_calls.load(.acquire)>0);
+}
+test "entry refusal retains original and performs no IO" {
+ refuse_enter=true;const p=try start();var consumed=false;defer if(!consumed)p.finish();p.thread.?.join();p.thread=null;
+ if(captures.load(.acquire)!=1 or reads.load(.acquire)!=0)try fail("ENGRAM_ENTRY_REFUSAL_IGNORED");
+ for(p.grids)|g|for(g.items)|item|try std.testing.expectEqual(@as(u8,2),item.state.load(.acquire));
+ p.finish();consumed=true;try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));
+ try std.testing.expect(uncertainty_calls.load(.acquire)>0);
+ try std.testing.expect(fios_unproven_prefetch.get().load(.acquire));
+}
+test "restoration refusal quarantines original descriptor" {
+ refuse_leave=true;const p=try start();var consumed=false;defer if(!consumed)p.finish();p.thread.?.join();p.thread=null;
+ if(captures.load(.acquire)!=1 or observed.load(.acquire)!=17)try fail("ENGRAM_RESTORATION_CUSTODY_MISSING");
+ p.finish();consumed=true;try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));
+ try std.testing.expect(uncertainty_calls.load(.acquire)>0);
+ try std.testing.expect(fios_unproven_prefetch.get().load(.acquire));
+}
+test "allocation failure has no published effects" {
+ const t=Table{};try std.testing.expectError(error.OutOfMemory,Prefetch.start(std.testing.failing_allocator,&.{&t},&.{.{.at=0,.len=1,.ids=&.{7}}},1,1));
+ try std.testing.expectEqual(@as(u32,0),captures.load(.acquire));try std.testing.expectEqual(@as(u32,0),reads.load(.acquire));
+}
+test "legacy behavior retains independent negative fence" {
+ const p=try start();defer p.finish();try waitRead();try std.testing.expectEqual(@as(u32,0),captures.load(.acquire));
+ try std.testing.expect(fios_unproven_prefetch.get().load(.acquire));
+}
+@@PREFETCH@@

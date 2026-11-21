@@ -1,0 +1,275 @@
+import Foundation
+import Darwin
+
+func runArtifactTests() throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:directory) }
+    let job=UUID().uuidString.lowercased(), owner=String(repeating:"a",count:64)
+    var disk:UInt64?=20<<30
+    var ticks:[TimeInterval]=[],clockReads=0
+    var store:ArtifactStore?=try ArtifactStore(directory:directory,availableBytes:{disk},readUptime:{
+        clockReads+=1
+        return ticks.isEmpty ? 100:ticks.removeFirst()
+    })
+    let id=try store!.publish(job:job,ownerHash:owner,data:Data("private result".utf8),now:1000)
+    clockReads=0
+    guard try store!.retrieve(id:id,ownerHash:owner,now:1001)==Data("private result".utf8),clockReads>=3 else { fatalError("Artifact mismatch") }
+    let phases=clockReads
+    for final in [109.999,110,100.25,Double.nan] {
+        ticks=[100]+Array(repeating:100.5,count:phases-2)+[final]
+        do {
+            let value=try store!.retrieve(id:id,ownerHash:owner,now:1001)
+            guard final==109.999,value==Data("private result".utf8) else {fatalError("Artifact read completed past original clock bound")}
+        } catch ArtifactError.unavailable {
+            guard final != 109.999 else {fatalError("Valid artifact read refused")}
+        }
+        guard ticks.isEmpty else {fatalError("Artifact test did not reach final clock")}
+    }
+    do { _=try store!.retrieve(id:id,ownerHash:String(repeating:"b",count:64),now:1001);fatalError("Foreign owner read artifact") } catch ArtifactError.unauthorized {}
+    do { _=try store!.retrieve(id:"../../outside",ownerHash:owner,now:1001);fatalError("Traversal accepted") } catch ArtifactError.invalid {}
+    var download=try store!.download(id:id,ownerHash:owner,now:1001)
+    guard case .begin(let exported,let bytes,_)=try download.next(now:1001),exported==id,bytes==14,
+          case .chunk(let chunkIndex,let encoded)=try download.next(now:1002),chunkIndex==0,Data(base64Encoded:encoded)==Data("private result".utf8),
+          case .end=try download.next(now:1003) else { fatalError("Owner-bound artifact framing failed") }
+    do { _=try download.next(now:1003);fatalError("Completed download replayed") } catch ArtifactError.unavailable {}
+    var expired=try store!.download(id:id,ownerHash:owner,now:1001)
+    do { _=try expired.next(now:31001);fatalError("Expired download continued") } catch ArtifactError.unavailable {}
+    do { _=try expired.next(now:1002);fatalError("Expired stream revived on clock rollback") } catch ArtifactError.unavailable {}
+    let blob=directory.appendingPathComponent(id+".blob")
+    let writer=try FileHandle(forWritingTo:blob)
+    try writer.write(contentsOf:Data("PRIVATE result".utf8));try writer.close()
+    do { _=try store!.retrieve(id:id,ownerHash:owner,now:1001);fatalError("Modified artifact accepted") } catch ArtifactError.invalid {}
+    let restore=try FileHandle(forWritingTo:blob)
+    try restore.write(contentsOf:Data("private result".utf8));try restore.close()
+    disk=nil
+    do { _=try store!.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([1]),now:1001);fatalError("Unknown disk headroom admitted export") } catch ArtifactError.capacity {}
+    disk=20<<30
+    store=nil
+    // Crash after durable reservation/blob fsync but before ready publication.
+    let indexURL=directory.appendingPathComponent("index.json")
+    var index=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    var metadata=index["records"] as! [[String:Any]]
+    metadata[0]["state"]="pending";index["records"]=metadata
+    let pendingBytes=try JSONSerialization.data(withJSONObject:index)
+    try AtomicState.write(pendingBytes,to:indexURL)
+    // The small index read finishes first; expire the following blob read.
+    var recoveryTicks:[TimeInterval]=[100,100,100,100,200,210]
+    do {
+        _=try ArtifactStore(directory:directory,readUptime:{recoveryTicks.isEmpty ? 210:recoveryTicks.removeFirst()})
+        fatalError("Timing failure accepted pending publication recovery")
+    } catch ArtifactError.unavailable {}
+    guard recoveryTicks.isEmpty,try Data(contentsOf:indexURL)==pendingBytes,
+          try Data(contentsOf:blob)==Data("private result".utf8) else {
+        fatalError("Timing failure changed durable pending publication")
+    }
+    store=try ArtifactStore(directory:directory)
+    guard try store!.retrieve(id:id,ownerHash:owner,now:1002)==Data("private result".utf8) else { fatalError("Restart lost artifact") }
+    do { _=try store!.publish(job:job,ownerHash:owner,data:Data(repeating:0,count:16<<20),now:1003);fatalError("Per-job export cap exceeded") } catch ArtifactError.capacity {}
+    let second=try store!.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data("second export".utf8),now:1004)
+    let survivor=try store!.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data("retained export".utf8),now:1005)
+    let retention=1000+Int64(86_400_000)
+    var nearRetention=try store!.download(id:id,ownerHash:owner,now:retention-2)
+    guard case .begin=try nearRetention.next(now:retention-1) else {fatalError("Valid final retention tick lost artifact begin")}
+    do { _=try nearRetention.next(now:retention);fatalError("New stream extended the original artifact retention") } catch ArtifactError.unavailable {}
+    do { _=try nearRetention.next(now:retention-1);fatalError("Artifact stream revived after retention expiry") } catch ArtifactError.unavailable {}
+    try store!.expire(now:retention)
+    do { _=try store!.retrieve(id:id,ownerHash:owner,now:1000+86_400_000);fatalError("Expired artifact readable") } catch ArtifactError.unavailable {}
+    store=nil
+    store=try ArtifactStore(directory:directory)
+    do {_=try store!.download(id:id,ownerHash:owner,now:retention);fatalError("Pruned export returned after reopen")}
+    catch ArtifactError.unavailable {}
+    guard try store!.retrieve(id:second,ownerHash:owner,now:retention+3)==Data("second export".utf8) else {
+        fatalError("Another export's original retention was shortened")
+    }
+    do {_=try store!.download(id:second,ownerHash:owner,now:retention+4);fatalError("Reopen extended independent artifact retention")}
+    catch ArtifactError.unavailable {}
+    // Reopen after the durable deletion marker but before the owned unlink.
+    store=nil
+    index=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    metadata=index["records"] as! [[String:Any]]
+    guard let deletion=metadata.firstIndex(where:{$0["id"] as? String==second}),
+          let pendingSurvivor=metadata.firstIndex(where:{$0["id"] as? String==survivor}) else {throw ArtifactError.invalid}
+    metadata[deletion]["state"]="deleting"
+    metadata[pendingSurvivor]["state"]="pending"
+    index["records"]=metadata
+    let mixedBytes=try JSONSerialization.data(withJSONObject:index)
+    try AtomicState.write(mixedBytes,to:indexURL)
+    var mixedTicks:[TimeInterval]=[100,100,100,100,200,210]
+    do {
+        _=try ArtifactStore(directory:directory,readUptime:{mixedTicks.isEmpty ? 210:mixedTicks.removeFirst()})
+        fatalError("Mixed recovery ignored pending read cutoff")
+    } catch ArtifactError.unavailable {}
+    guard mixedTicks.isEmpty,try Data(contentsOf:indexURL)==mixedBytes,
+          try Data(contentsOf:directory.appendingPathComponent(second+".blob"))==Data("second export".utf8),
+          try Data(contentsOf:directory.appendingPathComponent(survivor+".blob"))==Data("retained export".utf8) else {
+        fatalError("Pending deadline changed mixed recovery custody")
+    }
+    store=try ArtifactStore(directory:directory)
+    guard !FileManager.default.fileExists(atPath:directory.appendingPathComponent(second+".blob").path),
+          try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
+        fatalError("Deletion recovery left marked blob or changed independent export")
+    }
+    // Model interruption after unlink but before clearing the durable marker.
+    store=nil
+    metadata[pendingSurvivor]["state"]="ready";index["records"]=metadata
+    let restartIntent=try JSONSerialization.data(withJSONObject:index)
+    try AtomicState.write(restartIntent,to:indexURL)
+    var restartSyncs=0
+    do {
+        _=try ArtifactStore(directory:directory,syncDeletionDirectory:{_ in restartSyncs+=1;throw ArtifactError.storage})
+        fatalError("Restart cleared already-unlinked intent without successful sync")
+    } catch ArtifactError.storage {}
+    guard restartSyncs==1,try Data(contentsOf:indexURL)==restartIntent else {fatalError("Restart sync failure rewrote durable intent")}
+    store=try ArtifactStore(directory:directory,syncDeletionDirectory:{target in
+        restartSyncs+=1;try ArtifactStore.syncDirectory(target)
+    })
+    guard restartSyncs==2 else {fatalError("Restart retry skipped exact absence sync")}
+    let cleaned=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    let remaining=cleaned["records"] as! [[String:Any]]
+    guard remaining.count==1,remaining.first?["id"] as? String==survivor,remaining.first?["state"] as? String=="ready",
+          try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
+        fatalError("Already-unlinked deletion replay changed independent artifact state")
+    }
+    store=nil
+    let repairedIndex=try Data(contentsOf:indexURL)
+    store=try ArtifactStore(directory:directory)
+    guard try Data(contentsOf:indexURL)==repairedIndex else {fatalError("Clean reopen rewrote recovered mixed index")}
+    let incompleteJob=UUID().uuidString.lowercased()
+    let incomplete=try store!.publish(job:incompleteJob,ownerHash:owner,data:Data("incomplete export".utf8),now:retention+4)
+    store=nil
+    let incompleteBlob=directory.appendingPathComponent(incomplete+".blob")
+    let incompleteWriter=try FileHandle(forWritingTo:incompleteBlob)
+    try incompleteWriter.truncate(atOffset:1);try incompleteWriter.close()
+    index=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    metadata=index["records"] as! [[String:Any]]
+    guard let incompleteRow=metadata.firstIndex(where:{$0["id"] as? String==incomplete}) else {throw ArtifactError.invalid}
+    metadata[incompleteRow]["state"]="pending";index["records"]=metadata
+    try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
+    store=try ArtifactStore(directory:directory,availableBytes:{disk})
+    do {_=try store!.download(id:incomplete,ownerHash:owner,now:retention+4);fatalError("Interrupted artifact became readable")}
+    catch ArtifactError.unavailable {}
+    let afterRecovery=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    let failedRows=afterRecovery["records"] as! [[String:Any]]
+    guard failedRows.first(where:{$0["id"] as? String==incomplete})?["state"] as? String=="failed",
+          try Data(contentsOf:incompleteBlob)==Data("i".utf8),
+          try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
+        fatalError("Incomplete publication recovery removed diagnostic bytes or changed independent export")
+    }
+    let mismatchedBytes=Data("digest mismatch".utf8),mismatchedJob=UUID().uuidString.lowercased()
+    let mismatched=try store!.publish(job:mismatchedJob,ownerHash:owner,data:mismatchedBytes,now:retention+4)
+    store=nil
+    let mismatchedBlob=directory.appendingPathComponent(mismatched+".blob")
+    var changed=mismatchedBytes;changed[changed.startIndex] ^= 1
+    try changed.write(to:mismatchedBlob)
+    index=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    metadata=index["records"] as! [[String:Any]]
+    guard let mismatchedRow=metadata.firstIndex(where:{$0["id"] as? String==mismatched}) else {throw ArtifactError.invalid}
+    metadata[mismatchedRow]["state"]="pending";index["records"]=metadata
+    try AtomicState.write(JSONSerialization.data(withJSONObject:index),to:indexURL)
+    store=try ArtifactStore(directory:directory,availableBytes:{disk})
+    do {_=try store!.download(id:mismatched,ownerHash:owner,now:retention+4);fatalError("Size alone promoted a pending export")}
+    catch ArtifactError.unavailable {}
+    let reopenedMetadata=try JSONSerialization.jsonObject(with:Data(contentsOf:indexURL)) as! [String:Any]
+    guard (reopenedMetadata["records"] as? [[String:Any]])?.first(where:{$0["id"] as? String==mismatched})?["state"] as? String=="failed",
+          try Data(contentsOf:mismatchedBlob)==changed,
+          try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
+        fatalError("Digest refusal lost diagnostic bytes or changed independent export")
+    }
+    disk=(UInt64(10)<<30)+1
+    do {_=try store!.publish(job:incompleteJob,ownerHash:owner,data:Data([1]),now:retention+4);fatalError("Failed publication refunded original disk commitment")}
+    catch ArtifactError.capacity {}
+    guard try Data(contentsOf:incompleteBlob)==Data("i".utf8) else {fatalError("Capacity refusal changed failed export")}
+    let survivorBlob=directory.appendingPathComponent(survivor+".blob")
+    let parked=directory.appendingPathComponent(UUID().uuidString.lowercased())
+    try FileManager.default.moveItem(at:survivorBlob,to:parked)
+    do {
+        defer {try? FileManager.default.removeItem(at:survivorBlob);try? FileManager.default.moveItem(at:parked,to:survivorBlob)}
+        guard mkfifo(survivorBlob.path,0o600)==0 else {throw ArtifactError.storage}
+        do {_=try store!.download(id:survivor,ownerHash:owner,now:retention+4);fatalError("Nonregular artifact was readable")}
+        catch ArtifactError.invalid {}
+    }
+    guard try store!.retrieve(id:survivor,ownerHash:owner,now:retention+4)==Data("retained export".utf8) else {
+        fatalError("Nonregular read refusal changed owner export")
+    }
+    // A forged storage object cannot redirect writes or retrieval into a host file.
+    let foreign=directory.appendingPathComponent("forged")
+    try FileManager.default.createSymbolicLink(atPath:foreign.path,withDestinationPath:"/etc/hosts")
+    store=nil
+    do { _=try ArtifactStore(directory:directory);fatalError("Unexpected storage symlink accepted") } catch ArtifactError.invalid {}
+    let deletionDirectory=directory.appendingPathComponent("deletion-commit-fixture")
+    var failDeletionIntent=false,failDeletionSync=false,failDeletionCommit=false,failAfterVisibleCommit=false
+    var deletionSyncs=0
+    let deletionStore=try ArtifactStore(directory:deletionDirectory,availableBytes:{50<<30},writeIndex:{bytes,target in
+        let object=try JSONSerialization.jsonObject(with:bytes) as! [String:Any]
+        let deleting=(object["records"] as! [[String:Any]]).contains(where:{$0["state"] as? String=="deleting"})
+        if (failDeletionIntent && deleting) || (failDeletionCommit && !deleting) {throw ArtifactError.storage}
+        try AtomicState.write(bytes,to:target)
+        // Simulate an ambiguous write error after replacement is visible.
+        if failAfterVisibleCommit,!deleting {throw ArtifactError.storage}
+    },syncDeletionDirectory:{target in
+        deletionSyncs+=1
+        if failDeletionSync {throw ArtifactError.storage}
+        try ArtifactStore.syncDirectory(target)
+    })
+    let deleted=try deletionStore.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([42]),now:1000)
+    let preserved=try deletionStore.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([43,44]),now:2000)
+    let deletionIndex=deletionDirectory.appendingPathComponent("index.json")
+    let originalIndex=try Data(contentsOf:deletionIndex)
+    failDeletionIntent=true
+    do {try deletionStore.expire(now:86_401_000);fatalError("Deletion intent write did not fail")}catch ArtifactError.storage {}
+    guard try Data(contentsOf:deletionIndex)==originalIndex,
+          try Data(contentsOf:deletionDirectory.appendingPathComponent(deleted+".blob"))==Data([42]),
+          deletionStore.retainedBytes==3,deletionSyncs==0 else {fatalError("Undurable deletion intent changed disk custody")}
+    failDeletionIntent=false
+    failDeletionSync=true
+    do {try deletionStore.expire(now:86_401_000);fatalError("Directory sync failure allowed final index commit")}catch ArtifactError.storage {}
+    let unsynced=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
+    guard (unsynced["records"] as! [[String:Any]]).first?["state"] as? String=="deleting",
+          !FileManager.default.fileExists(atPath:deletionDirectory.appendingPathComponent(deleted+".blob").path),
+          deletionStore.retainedBytes==3,deletionSyncs==1 else {fatalError("Failed directory sync released deletion intent")}
+    failDeletionSync=false
+    failDeletionCommit=true
+    do {try deletionStore.expire(now:86_401_000);fatalError("Final deletion index write did not fail")}catch ArtifactError.storage {}
+    let committedIntent=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
+    guard (committedIntent["records"] as! [[String:Any]]).first?["state"] as? String=="deleting",
+          !FileManager.default.fileExists(atPath:deletionDirectory.appendingPathComponent(deleted+".blob").path),
+          deletionStore.retainedBytes==3,
+          try deletionStore.retrieve(id:preserved,ownerHash:owner,now:86_401_000)==Data([43,44]) else {fatalError("Failed final deletion commit released custody or lost retained sibling")}
+    failDeletionCommit=false
+    failAfterVisibleCommit=true
+    do {try deletionStore.expire(now:86_401_001);fatalError("Visible final replacement did not surface injected error")}catch ArtifactError.storage {}
+    let afterAmbiguous=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
+    guard (afterAmbiguous["records"] as! [[String:Any]]).compactMap({$0["id"] as? String})==[preserved],
+          deletionStore.retainedBytes==3 else {fatalError("Visible but unacknowledged write released custody")}
+    failAfterVisibleCommit=false
+    try deletionStore.expire(now:86_401_002)
+    let afterRetry=try JSONSerialization.jsonObject(with:Data(contentsOf:deletionIndex)) as! [String:Any]
+    guard (afterRetry["records"] as! [[String:Any]]).compactMap({$0["id"] as? String})==[preserved],deletionStore.retainedBytes==2,deletionSyncs==4,
+          try deletionStore.retrieve(id:preserved,ownerHash:owner,now:86_401_002)==Data([43,44]) else {
+        fatalError("Exact deletion intent did not retry its durable commit")
+    }
+    let reopenedDirectory=directory.appendingPathComponent("visible-commit-reopen")
+    var visibleFailure=false
+    let survivingID:String
+    do {
+        let beforeRestart=try ArtifactStore(directory:reopenedDirectory,availableBytes:{50<<30},writeIndex:{bytes,target in
+            try AtomicState.write(bytes,to:target)
+            if visibleFailure {
+                let document=try JSONSerialization.jsonObject(with:bytes) as! [String:Any]
+                if (document["records"] as! [[String:Any]]).count==1 {throw ArtifactError.storage}
+            }
+        })
+        _=try beforeRestart.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([45]),now:1000)
+        survivingID=try beforeRestart.publish(job:UUID().uuidString.lowercased(),ownerHash:owner,data:Data([46]),now:2000)
+        visibleFailure=true
+        do {try beforeRestart.expire(now:86_401_000);fatalError("Injected visible write failure not surfaced")}catch ArtifactError.storage {}
+        guard beforeRestart.retainedBytes==2 else {fatalError("Unacknowledged write cleared charge before restart")}
+    }
+    let reopenedIndex=reopenedDirectory.appendingPathComponent("index.json")
+    let visibleBytes=try Data(contentsOf:reopenedIndex)
+    let afterRestart=try ArtifactStore(directory:reopenedDirectory)
+    guard afterRestart.retainedBytes==1,
+          try afterRestart.retrieve(id:survivingID,ownerHash:owner,now:86_401_001)==Data([46]),
+          try Data(contentsOf:reopenedIndex)==visibleBytes else {fatalError("Restart resurrected expired charge or rewrote ready sibling")}
+    print("PASS: private generated artifacts, owner/hash/length checks, restart, finite quotas, expiry and traversal/symlink refusal")
+}

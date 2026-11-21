@@ -1,0 +1,102 @@
+diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m
+index 5519022..427115f 100644
+--- a/lib/ane/ane_bridge.m
++++ b/lib/ane/ane_bridge.m
+@@ -996,6 +996,7 @@ struct msv_ane_program {
+     bool fios_close_attempted;
+     struct msv_ane_request *fios_requests;
+     void *fios_constructor_inputs;
++    void *fios_descriptor, *fios_pending_model;
+ #endif
+     void *models;      /* NSArray of _ANEInMemoryModel, one per instance */
+     void *attributes;  /* NSDictionary: the first instance's modelAttributes */
+@@ -1017,6 +1018,24 @@ struct msv_ane_request {
+     void *options;
+ };
+ 
++#ifdef FIOS_ANE_SOURCE
++/* Capture declared CPU owners before descriptor creation. Adoption holds the
++ * returned model before an array growth can occur; refusal never reconstructs
++ * ownership from a fresh copy after the foreign effect. */
++static void fios_ane_program_capture_inputs(msv_ane_program *p, NSData *program,
++        NSData *weights, NSMutableArray *models, NSMutableArray *options) {
++    p->models=(__bridge_retained void *)models;
++    p->options=(__bridge_retained void *)options;
++    p->fios_constructor_inputs=(__bridge_retained void *)@[program,weights];
++}
++static void fios_ane_program_adopt_model(msv_ane_program *p, NSMutableArray *models, id model) {
++    p->fios_pending_model=(__bridge_retained void *)model;
++    [models addObject:model];
++    id adopted=(__bridge_transfer id)p->fios_pending_model;
++    p->fios_pending_model=NULL;(void)adopted;
++}
++#endif
++
+ #ifdef FIOS_ANE_SOURCE
+ /* Callers retain their owning program for API entry. This metadata lock does
+  * not establish new-reader/all-client admission or native completion. */
+@@ -1137,13 +1156,16 @@ msv_ane_program *msv_ane_program_create(const char *name, const char *mil,
+     @autoreleasepool {
+         NSData *weights = [NSData dataWithBytesNoCopy:weights_owned length:weight_bytes freeWhenDone:YES];
+         NSData *program = [NSData dataWithBytes:mil length:strlen(mil)];
++#ifdef FIOS_ANE_SOURCE
++        NSMutableArray *models = [NSMutableArray array];
++        NSMutableArray *options_list = [NSMutableArray array];
++        fios_ane_program_capture_inputs(p,program,weights,models,options_list);
++        id descriptor = bridge_descriptor(program, weights);
++        p->fios_descriptor=(__bridge_retained void *)descriptor;
++#else
+         id descriptor = bridge_descriptor(program, weights);
+         NSMutableArray *models = [NSMutableArray array];
+         NSMutableArray *options_list = [NSMutableArray array];
+-#ifdef FIOS_ANE_SOURCE
+-        p->models=(__bridge_retained void *)models;
+-        p->options=(__bridge_retained void *)options_list;
+-        p->fios_constructor_inputs=(__bridge_retained void *)@[program,weights,descriptor ?: [NSNull null]];
+ #endif
+         double started = bridge_seconds();
+         for (uint32_t i = 0; i < instances; i++) {
+@@ -1158,7 +1180,7 @@ msv_ane_program *msv_ane_program_create(const char *name, const char *mil,
+                 goto fail;
+             }
+ #ifdef FIOS_ANE_SOURCE
+-            [models addObject:model];
++            fios_ane_program_adopt_model(p,models,model);
+ #endif
+             if (i == 0) {
+                 NSString *directory = nil;
+@@ -1202,6 +1224,7 @@ msv_ane_program *msv_ane_program_create(const char *name, const char *mil,
+ #ifdef FIOS_ANE_SOURCE
+         /* The raw parent and its original arrays/inputs stay owned; a local
+          * constructor return cannot release independent native uncertainty. */
++        if (p->fios_pending_model) fios_ane_fence(FIOS_ANE_PARENT);
+         if (msv_ane_source_uncertainty()) return NULL;
+ #endif
+         for (id m in models) {
+@@ -1216,6 +1239,8 @@ msv_ane_program *msv_ane_program_create(const char *name, const char *mil,
+         if (p->models) { id value=(__bridge_transfer id)p->models;(void)value; }
+         if (p->options) { id value=(__bridge_transfer id)p->options;(void)value; }
+         if (p->fios_constructor_inputs) { id value=(__bridge_transfer id)p->fios_constructor_inputs;(void)value; }
++        if (p->fios_descriptor) { id value=(__bridge_transfer id)p->fios_descriptor;(void)value; }
++        if (p->fios_pending_model) { id value=(__bridge_transfer id)p->fios_pending_model;(void)value; }
+ #endif
+         if (p->staging_directory) {
+             if (bridge_staging_release(p->staging_directory))
+@@ -1264,7 +1289,7 @@ bool msv_ane_program_try_free(msv_ane_program *p) {
+ #else
+     if (!p) return true;
+     pthread_mutex_lock(&fios_ane_mutex);
+-    if (msv_ane_source_uncertainty() || p->fios_close_attempted || p->fios_children) {
++    if (msv_ane_source_uncertainty() || p->fios_close_attempted || p->fios_children || p->fios_pending_model) {
+         p->fios_close_attempted=true;fios_ane_fence(FIOS_ANE_PARENT);
+         pthread_mutex_unlock(&fios_ane_mutex);return false;
+     }
+@@ -1284,6 +1309,8 @@ bool msv_ane_program_try_free(msv_ane_program *p) {
+         if (p->attributes) { id value=(__bridge_transfer id)p->attributes;p->attributes=NULL;(void)value; }
+         if (p->options) { id value=(__bridge_transfer id)p->options;p->options=NULL;(void)value; }
+         if (p->fios_constructor_inputs) { id value=(__bridge_transfer id)p->fios_constructor_inputs;p->fios_constructor_inputs=NULL;(void)value; }
++        if (p->fios_descriptor) { id value=(__bridge_transfer id)p->fios_descriptor;p->fios_descriptor=NULL;(void)value; }
++        if (p->fios_pending_model) { id value=(__bridge_transfer id)p->fios_pending_model;p->fios_pending_model=NULL;(void)value; }
+         if (p->staging_directory) {
+             if (bridge_staging_release(p->staging_directory))
+                 [[NSFileManager defaultManager] removeItemAtPath:@(p->staging_directory) error:nil];

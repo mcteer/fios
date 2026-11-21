@@ -1,0 +1,56 @@
+--- a/lib/ane/ane_bridge.m
++++ b/lib/ane/ane_bridge.m
+@@ -911,6 +911,9 @@
+         return 0;
+     }
+     int ok = 0;
++#ifdef FIOS_ANE_SOURCE
++    @try {
++#endif
+     @autoreleasepool {
+         NSArray *requests = (__bridge NSArray *)handle->requests;
+         if (procedure >= requests.count) {
+@@ -953,6 +956,16 @@
+                         failure ?
+                         failure.localizedDescription.UTF8String : "?");
+     }
++#ifdef FIOS_ANE_SOURCE
++    } @catch (NSException *exception) {
++        (void)exception;
++        // A foreign exception is not a terminal/native cleanup receipt.
++        // Retain the original object and any active reservation in quarantine.
++        fios_ane_fence(FIOS_ANE_EVAL);
++        bridge_fail(error, error_size, "ANE evaluation exception; ownership uncertain");
++        return 0;
++    }
++#endif
+     return ok;
+ }
+ 
+@@ -1627,6 +1640,9 @@
+     pthread_mutex_unlock(&fios_ane_mutex);
+ #endif
+     int ok = 0;
++#ifdef FIOS_ANE_SOURCE
++    @try {
++#endif
+     @autoreleasepool {
+         NSError *failure = nil;
+         ok = ((BOOL(*)(id, SEL, unsigned int, id, id, NSError **))objc_msgSend)(
+@@ -1642,6 +1658,16 @@
+     if (!msv_ane_source_uncertainty()) r->fios_active=false;
+     else ok=0; /* A returned call/zero local active bit is no device proof. */
+     pthread_mutex_unlock(&fios_ane_mutex);
++#endif
++#ifdef FIOS_ANE_SOURCE
++    } @catch (NSException *exception) {
++        (void)exception;
++        // A foreign exception is not a terminal/native cleanup receipt.
++        // Retain the original object and any active reservation in quarantine.
++        fios_ane_fence(FIOS_ANE_EVAL);
++        bridge_fail(error, error_size, "ANE evaluation exception; ownership uncertain");
++        return 0;
++    }
+ #endif
+     return ok;
+ }

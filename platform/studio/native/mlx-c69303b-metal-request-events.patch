@@ -1,0 +1,272 @@
+--- a/mlx/stream.h
++++ b/mlx/stream.h
+@@ -109,6 +109,20 @@
+ // otherwise preserves default behavior but makes enabled custody uncertain.
+ MLX_API void fios_before_clear_streams();
+ 
++// Optional command-buffer events. No whole-request or all-client proof.
++#define MLX_FIOS_REQUEST_METAL_EVENTS_V1 1
++struct MLX_API FiosMetalRequestEventHooksV1 {
++  uint32_t version, size;
++  int (*observe)(void* original_context, uint64_t event_id, uint32_t phase);
++};
++MLX_API bool fios_register_metal_request_event_hooks_v1(const FiosMetalRequestEventHooksV1* hooks);
++MLX_API bool fios_metal_request_events_enabled();
++struct MLX_API FiosMetalRequestEventState {
++  uint64_t pending, scopes;
++  bool enabled, uncertain;
++};
++MLX_API FiosMetalRequestEventState fios_metal_request_event_state();
++
+ // Actual Metal buffer/callback captures ONLY; not all contexts or lifecycle.
+ struct MLX_API FiosMetalBufferState {
+   uint64_t epoch, pending, captures;
+@@ -122,6 +136,7 @@
+ MLX_API std::shared_ptr<FiosRequestOwners> fios_take_metal_request_owners(const std::shared_ptr<FiosMetalCapture>& capture);
+ MLX_API std::shared_ptr<FiosMetalCapture> fios_metal_capture_begin(const std::shared_ptr<FiosMetalBuffer>& task);
+ MLX_API void fios_metal_capture_end(const std::shared_ptr<FiosMetalCapture>& capture, bool failed);
++MLX_API void fios_metal_capture_scope_retired(const std::shared_ptr<FiosMetalCapture>& capture, bool failed);
+ MLX_API void fios_metal_submitted(const std::shared_ptr<FiosMetalBuffer>& task);
+ MLX_API void fios_metal_completed(const std::shared_ptr<FiosMetalBuffer>& task, bool failed);
+ MLX_API void fios_metal_failed(const std::shared_ptr<FiosMetalBuffer>& task);
+--- a/mlx/stream.cpp
++++ b/mlx/stream.cpp
+@@ -54,6 +54,7 @@
+   uint64_t host_pending = 0, host_active = 0, next_host_hold = 0;
+   uint64_t host_held = 0, host_owner = 0, host_creation = 0;
+   uint64_t metal_pending = 0, metal_captures = 0, next_metal_hold = 0;
++  uint64_t metal_events = 0, metal_scopes = 0;
+   uint64_t metal_held = 0, metal_owner = 0;
+   bool ever_metal = false;
+   bool ever_host = false, ever_clear = false;
+@@ -441,8 +442,93 @@
+   return true;
+ }
+ 
++namespace {
++constinit std::atomic<const FiosMetalRequestEventHooksV1*> fios_metal_event_hooks{nullptr};
++constinit std::atomic<uint64_t> fios_next_metal_event{0};
++void fios_metal_event_fence(const std::shared_ptr<FiosRequestOwners>& owners) {
++  {
++    std::lock_guard lock(fios_registry.mutex);
++    fios_mark_uncertain(41);
++  }
++  if (owners) owners->hooks->uncertain();
++  else if (const auto hooks = fios_request_hooks.load(std::memory_order_acquire)) hooks->uncertain();
++}
++}
++bool fios_register_metal_request_event_hooks_v1(const FiosMetalRequestEventHooksV1* hooks) {
++  if (!hooks || hooks->version != 1 || hooks->size != sizeof(*hooks) || !hooks->observe) return false;
++  std::lock_guard lock(fios_registry.mutex);
++  if (!fios_registry.enabled || fios_registry.uncertain || fios_registry.ever_created ||
++      fios_registry.ever_host || fios_registry.ever_metal ||
++      !fios_request_hooks.load(std::memory_order_acquire)) return false;
++  const FiosMetalRequestEventHooksV1* expected = nullptr;
++  return fios_metal_event_hooks.compare_exchange_strong(expected, hooks, std::memory_order_release, std::memory_order_relaxed);
++}
++bool fios_metal_request_events_enabled() {
++  return fios_metal_event_hooks.load(std::memory_order_acquire) != nullptr;
++}
++struct FiosMetalRequestEvent {
++  const FiosMetalRequestEventHooksV1* hooks;
++  std::shared_ptr<FiosRequestOwners> owners;
++  uint64_t id;
++  std::atomic<bool> finished{false};
++  FiosMetalRequestEvent(const FiosMetalRequestEventHooksV1* h,
++      std::shared_ptr<FiosRequestOwners> o, uint64_t i) : hooks(h), owners(std::move(o)), id(i) {}
++  bool report(uint32_t phase) noexcept {
++    try { if (hooks->observe(owners->context, id, phase) == 0) return true; }
++    catch (...) {}
++    fios_metal_event_fence(owners);
++    return false;
++  }
++  ~FiosMetalRequestEvent() {
++    if (!finished.exchange(true, std::memory_order_acq_rel)) {
++      report(3);fios_metal_event_fence(owners);
++    }
++  }
++};
++static std::shared_ptr<FiosMetalRequestEvent> fios_reserve_metal_request_event(std::shared_ptr<FiosRequestOwners> owners) {
++  const auto hooks = fios_metal_event_hooks.load(std::memory_order_acquire);
++  if (!hooks) return {};
++  if (!owners) {fios_metal_event_fence(owners);throw std::runtime_error("Metal event origin unavailable");}
++  auto id = fios_next_metal_event.load(std::memory_order_acquire);
++  while (true) {
++    if (id == std::numeric_limits<uint64_t>::max()) {
++      fios_metal_event_fence(owners);throw std::runtime_error("Metal event sequence exhausted");
++    }
++    if (fios_next_metal_event.compare_exchange_weak(id, id + 1, std::memory_order_acq_rel)) break;
++  }
++  bool refused = false;
++  {
++    std::lock_guard lock(fios_registry.mutex);
++    refused = fios_registry.uncertain || fios_registry.metal_events >= fios_limit;
++    if (!refused) {++fios_registry.metal_events;fios_bump();}
++  }
++  if (refused) {fios_metal_event_fence(owners);throw std::runtime_error("Metal event budget unavailable");}
++  std::shared_ptr<FiosMetalRequestEvent> event;
++  try {event = std::make_shared<FiosMetalRequestEvent>(hooks, owners, id + 1);}
++  catch (...) {fios_metal_event_fence(owners);throw;}
++  if (!event->report(1)) {
++    event->finished.store(true, std::memory_order_release);
++    throw std::runtime_error("Metal event observer unavailable");
++  }
++  return event;
++}
++static void fios_finish_metal_request_event(const std::shared_ptr<FiosMetalRequestEvent>& event, bool failed) {
++  if (!event || event->finished.exchange(true, std::memory_order_acq_rel)) return;
++  const bool uncertain = failed || fios_known_source_uncertain();
++  const bool accepted = event->report(uncertain ? 3 : 2);
++  bool release = false;
++  if (!uncertain && accepted) {
++    std::lock_guard lock(fios_registry.mutex);
++    release = !fios_registry.uncertain && fios_registry.metal_events;
++    if (release) {--fios_registry.metal_events;fios_bump();}
++  }
++  if (!release) fios_metal_event_fence(event->owners);
++}
++
+ struct FiosMetalBuffer {
+   std::shared_ptr<FiosRequestOwners> request_owners;
++  std::shared_ptr<FiosMetalRequestEvent> event;
++  uint64_t pending_scopes = 0;
+   bool tracked = false, submitted = false, completed = false, retired = false;
+   uint64_t captures = 0;
+   ~FiosMetalBuffer() {
+@@ -459,10 +545,11 @@
+ };
+ struct FiosMetalCapture {
+   bool owners_taken = false;
++  bool scope_tracked = false, scope_retired = false;
+   std::shared_ptr<FiosMetalBuffer> task;
+   bool done = false;
+   ~FiosMetalCapture() {
+-    if (!task || done) return;
++    if (!task || (done && (!scope_tracked || scope_retired))) return;
+     std::lock_guard lock(fios_registry.mutex);
+     fios_mark_uncertain(13);
+   }
+@@ -538,8 +625,13 @@
+   if (task->submitted) {fios_mark_uncertain(25);return {};}
+   if (task->captures >= fios_capture_per_buffer_limit) {fios_mark_uncertain(26);return {};}
+   if (fios_registry.metal_captures >= fios_capture_global_limit) {fios_mark_uncertain(27);return {};}
++  if (fios_metal_request_events_enabled() && fios_registry.metal_scopes >= fios_capture_global_limit) {
++    fios_mark_uncertain(45);return {};
++  }
+   auto capture = std::make_shared<FiosMetalCapture>();
+   capture->task = task;
++  capture->scope_tracked = fios_metal_request_events_enabled();
++  if (capture->scope_tracked) {++task->pending_scopes;++fios_registry.metal_scopes;}
+   ++task->captures;++fios_registry.metal_captures;fios_bump();
+   return capture;
+ }
+@@ -566,11 +658,55 @@
+   fios_bump();released = fios_retire_metal_locked(task);
+   } // Native descriptor release occurs after this metadata lock.
+ }
++void fios_metal_capture_scope_retired(const std::shared_ptr<FiosMetalCapture>& capture, bool failed) {
++  if (!capture || !capture->scope_tracked) return;
++  std::shared_ptr<FiosMetalRequestEvent> event;
++  bool invalid = false;
++  {
++    std::lock_guard lock(fios_registry.mutex);
++    auto& task = *capture->task;
++    invalid = !capture->done || capture->scope_retired || !task.pending_scopes || !fios_registry.metal_scopes;
++    if (invalid) fios_mark_uncertain(42);
++    else {
++      capture->scope_retired = true;
++      --task.pending_scopes;--fios_registry.metal_scopes;fios_bump();
++      if (failed) fios_mark_uncertain(43);
++      if (task.completed && !task.captures && !task.pending_scopes) event = std::move(task.event);
++    }
++  }
++  if (invalid) fios_metal_event_fence({});
++  fios_finish_metal_request_event(event, failed);
++}
+ void fios_metal_submitted(const std::shared_ptr<FiosMetalBuffer>& task) {
+-  if (!task) return;
+-  std::lock_guard lock(fios_registry.mutex);
+-  if (task->retired || task->submitted) {fios_mark_uncertain(19);return;}
+-  task->submitted = true;fios_bump();
++  if (!task) {
++    if (fios_metal_request_events_enabled()) {
++      fios_metal_event_fence({});throw std::runtime_error("Metal event submission unavailable");
++    }
++    return;
++  }
++  std::shared_ptr<FiosRequestOwners> owners;
++  bool invalid = false;
++  {
++    std::lock_guard lock(fios_registry.mutex);
++    invalid = task->retired || task->submitted;
++    if (invalid) fios_mark_uncertain(19);
++    else {task->submitted = true;fios_bump();owners = task->request_owners;}
++  }
++  if (invalid) {
++    if (fios_metal_request_events_enabled()) {
++      fios_metal_event_fence(owners);throw std::runtime_error("Metal event submission repeated");
++    }
++    return;
++  }
++  auto event = fios_reserve_metal_request_event(owners);
++  if (!event) return;
++  {
++    std::lock_guard lock(fios_registry.mutex);
++    invalid = task->retired || !task->submitted || task->event;
++    if (invalid) fios_mark_uncertain(44);
++    else task->event = std::move(event);
++  }
++  if (invalid) {fios_metal_event_fence(owners);throw std::runtime_error("Metal event changed before commit");}
+ }
+ void fios_metal_completed(const std::shared_ptr<FiosMetalBuffer>& task, bool failed) {
+   if (!task) return;
+@@ -596,6 +732,11 @@
+   if (!fios_registry.enabled) return;
+   fios_bump();fios_mark_uncertain(23);
+ }
++FiosMetalRequestEventState fios_metal_request_event_state() {
++  std::lock_guard lock(fios_registry.mutex);
++  return {fios_registry.metal_events, fios_registry.metal_scopes,
++          fios_metal_request_events_enabled(), fios_registry.uncertain};
++}
+ FiosMetalBufferState fios_metal_buffer_state() {
+   std::lock_guard lock(fios_registry.mutex);
+   return {fios_registry.epoch, fios_registry.metal_pending, fios_registry.metal_captures,
+@@ -605,7 +746,7 @@
+   std::lock_guard lock(fios_registry.mutex);
+   if (!fios_registry.enabled || fios_registry.uncertain || !fios_owner || !creation || !host ||
+       fios_registry.epoch != epoch || fios_registry.metal_held || fios_registry.metal_pending ||
+-      fios_registry.metal_captures || fios_registry.held != creation || fios_registry.host_held != host ||
++      fios_registry.metal_captures || fios_registry.metal_events || fios_registry.metal_scopes || fios_registry.held != creation || fios_registry.host_held != host ||
+       fios_registry.host_creation != creation || fios_registry.held_owner != fios_owner ||
+       fios_registry.host_owner != fios_owner) return 0;
+   if (fios_registry.next_metal_hold == std::numeric_limits<uint64_t>::max()) {
+@@ -622,6 +763,7 @@
+       !fios_owner || fios_registry.epoch != expected_epoch || fios_registry.pending ||
+       fios_registry.host_pending || fios_registry.host_active ||
+       fios_registry.metal_pending || fios_registry.metal_captures ||
++      fios_registry.metal_events || fios_registry.metal_scopes ||
+       fios_registry.held || fios_registry.host_held || fios_registry.metal_held) return 0;
+   if (fios_registry.next_hold == std::numeric_limits<uint64_t>::max() ||
+       fios_registry.next_host_hold == std::numeric_limits<uint64_t>::max() ||
+@@ -646,7 +788,8 @@
+   if (!ticket || fios_registry.metal_held != ticket || !fios_owner ||
+       fios_registry.metal_owner != fios_owner || fios_registry.host_owner != fios_owner ||
+       fios_registry.held_owner != fios_owner || !fios_registry.host_held || !fios_registry.held ||
+-      fios_registry.metal_pending || fios_registry.metal_captures) return false;
++      fios_registry.metal_pending || fios_registry.metal_captures ||
++      fios_registry.metal_events || fios_registry.metal_scopes) return false;
+   if (!fios_bump()) return false;
+   fios_registry.metal_held = fios_registry.metal_owner = 0;
+   fios_registry.host_held = fios_registry.host_owner = fios_registry.host_creation = 0;
+--- a/mlx/backend/metal/device.cpp
++++ b/mlx/backend/metal/device.cpp
+@@ -62,6 +62,8 @@
+   } catch (...) {
+     record("Native Metal owner context unavailable");fios_metal_capture_end(capture, true);
+   }
++  // The callback body, captured objects and owner TLS scope have retired.
++  fios_metal_capture_scope_retired(capture, error.valid());
+ }
+ 
+ 

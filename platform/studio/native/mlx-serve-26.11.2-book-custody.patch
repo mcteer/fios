@@ -1,0 +1,88 @@
+diff --git a/src/engines/own_thread/book.zig b/src/engines/own_thread/book.zig
+index 7b69163..57a0146 100644
+--- a/src/engines/own_thread/book.zig
++++ b/src/engines/own_thread/book.zig
+@@ -3,6 +3,7 @@
+ //! contract of `abi/engine.zig`. The book's lock is never held across a `Sink.event`.
+ 
+ const std = @import("std");
++const fios_ownership = @import("../../fios/request_ownership.zig");
+ const abi = @import("../../abi/engine.zig");
+ 
+ /// The adapters' Io: the C ABI hands an engine none, and mutexes, conditions and clocks need no more than this.
+@@ -16,6 +17,8 @@ pub fn nowNs() u64 {
+ 
+ /// One request, owned by its book from `add` to `done`.
+ pub const Req = struct {
++    // Trusted original attribution survives caller/connection retirement.
++    fios_owner: ?fios_ownership.Retained = null,
+     id: u64,
+     sink: abi.Sink,
+     prompt: []u32,
+@@ -143,6 +146,8 @@ pub const Book = struct {
+     }
+ 
+     fn copy(b: *Book, id: u64, r: *const abi.Request, sink: abi.Sink) !*Req {
++        const fio_owner = try fios_ownership.retainCurrent(io);
++        errdefer if (fio_owner) |held| { _ = held.releaseIfCertain(io); };
+         const req = try b.gpa.create(Req);
+         errdefer b.gpa.destroy(req);
+         const prompt = try b.gpa.dupe(u32, abi.items(u32, r.prompt));
+@@ -153,6 +158,7 @@ pub const Book = struct {
+         var sampling = r.sampling;
+         sampling.logit_bias = abi.span(abi.Bias, bias);
+         req.* = .{
++            .fios_owner = fio_owner,
+             .id = id,
+             .sink = sink,
+             .prompt = prompt,
+@@ -167,6 +173,12 @@ pub const Book = struct {
+     }
+ 
+     fn free(b: *Book, r: *Req) void {
++        const fio_owner = r.fios_owner;
++        // Callback-free cached check: free() also runs under the book mutex.
++        // Original references stay quarantined on independent uncertainty;
++        // this local descriptor's lifetime is never native terminality.
++        defer if (fio_owner) |held| { _ = held.releaseIfCertain(io); };
++
+         b.gpa.free(r.prompt);
+         b.gpa.free(r.eos);
+         b.gpa.free(r.bias);
+@@ -342,3 +354,36 @@ test "book: an undeclared cap is refused by name; past the queue is busy; status
+     b.done(a, .cancelled, "");
+     b.done(w, .cancelled, "");
+ }
++
++test "fios current book retains original request through queue and callback" {
++    const owners = @import("../../fios/request_ownership.zig");
++    // The real book uses its own native Io; initialize the source with the
++    // test runtime's Io to exercise the actual shared-mutex handoff too.
++    try owners.shared().initialize(testing.io, @splat(47));
++    const root = try owners.shared().enter(testing.io);
++    var root_live = true;
++    defer if (root_live) owners.shared().leave(testing.io, root) catch {};
++    const correlation: owners.CorrelationID = @splat(53);
++    try owners.shared().associate(testing.io, root, correlation);
++    try owners.shared().bind(testing.io, root, "fixture/own-thread-request");
++    owners.current().* = root;
++    defer owners.current().* = null;
++    var b: Book = .{ .gpa = testing.allocator, .max_waiting = 2 };
++    defer b.deinit();
++    var seen: Seen = .{};
++    var verdict: abi.Verdict = .{};
++    const request = b.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 }, seen.sink(), &verdict).?;
++    try testing.expectEqual(abi.Verdict.Code.ok, verdict.code);
++    try owners.shared().leave(testing.io, root);
++    root_live = false;
++    owners.current().* = null;
++    const queued = owners.shared().correlationSnapshot(testing.io, correlation);
++    try testing.expectEqual(request, b.next(false).?);
++    b.done(request, .stop, "");
++    try testing.expectEqual(@as(usize, 1), seen.n_events);
++    try testing.expectEqual(Reason.stop, seen.reason);
++    if (!queued.found) std.debug.print("FIO_CURRENT_BOOK_LOST_REQUEST_CUSTODY\n", .{});
++    try testing.expect(queued.found);
++    try testing.expectEqual(root.sequence, queued.root_sequence);
++    try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
++}

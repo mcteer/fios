@@ -1,0 +1,157 @@
+--- a/ds4_metal.m
++++ b/ds4_metal.m
+@@ -10462,6 +10462,7 @@
+     void *big_in;
+     uint64_t big_bytes;
+     uint32_t poll;          /* release through the poll region */
++    void *fios_origins; /* Original source request context; never native terminality. */
+ } ds4_gpu_tp_request;
+ 
+ enum { DS4_GPU_TP_QUEUE = 1024 };
+@@ -10603,6 +10604,44 @@
+ #define FIOS_DS4_TP_ACTIVE_CUSTODY 1
+ static unsigned g_fios_tp_service_active; // protected by g_tp_mutex
+ static uint64_t g_fios_tp_owner;
++static void *g_fios_tp_active_origins; // guarded by g_tp_mutex; retained on refusal
++// No callbacks while holding g_tp_mutex. These are local origin metadata only.
++static int fios_ds4_tp_capture_origins(void **result) {
++    *result = NULL;
++    const int state=atomic_load_explicit(&g_fios_request_owners_state,memory_order_acquire);
++    if (state==0) return 1; // Original standalone/default behavior.
++    if (state!=2 || atomic_load_explicit(&g_fios_pending_uncertain,memory_order_acquire)) {
++        fios_ds4_request_fence();return 0;
++    }
++    *result=g_fios_request_owners.capture();
++    if (!*result) {fios_ds4_request_fence();return 0;}
++    return 1;
++}
++static void fios_ds4_tp_release_unpublished(void *origins) {
++    if (origins) g_fios_request_owners.release(origins);
++}
++static int fios_ds4_tp_enter_origins(void *origins,uint64_t *scope) {
++    *scope=0;
++    if (!origins) {
++        if (atomic_load_explicit(&g_fios_request_owners_state,memory_order_acquire)==0) return 1;
++        fios_ds4_request_fence();return 0;
++    }
++    *scope=g_fios_request_owners.enter(origins);
++    if (!*scope) {fios_ds4_request_fence();return 0;}
++    return 1;
++}
++static int fios_ds4_tp_finish_origins(void *origins,uint64_t scope) {
++    // Query while the exact scope is still installed; no enclosing queue lock.
++    if (origins && (!scope || g_fios_request_owners.covers_current(origins)!=1))
++        fios_ds4_request_fence();
++    if (scope && g_fios_request_owners.leave(scope)!=0) {
++        fios_ds4_request_fence();return 0;
++    }
++    if (atomic_load_explicit(&g_fios_pending_uncertain,memory_order_acquire)) return 0;
++    if (origins) g_fios_request_owners.release(origins);
++    return !atomic_load_explicit(&g_fios_pending_uncertain,memory_order_acquire);
++}
++
+ // Same non-wrapping per-thread token primitive as the ordinary producer;
+ // numeric kernel/pthread IDs cannot adopt a departed creator's custody.
+ static uint64_t ds4_gpu_fios_keepalive_owner(void);
+@@ -10839,10 +10878,15 @@
+             break;
+         }
+         ds4_gpu_tp_request req = g_tp_queue[g_tp_queue_head];
++        g_fios_tp_active_origins = req.fios_origins;
++        g_tp_queue[g_tp_queue_head].fios_origins = NULL;
+         g_tp_queue_head = (g_tp_queue_head + 1) % DS4_GPU_TP_QUEUE;
+         g_tp_queue_count--;
+         g_fios_tp_service_active = 1;
+         pthread_mutex_unlock(&g_tp_mutex);
++
++        uint64_t fios_scope=0;
++        const int fios_entered=fios_ds4_tp_enter_origins(req.fios_origins,&fios_scope);
+ 
+         /* Wait for the GPU to reach this gate.  Tight spin: gate arrival is
+          * on the decode critical path and normally tens of microseconds
+@@ -10918,7 +10962,7 @@
+             if (profile) g_tp_stat_cbwait_ms += ds4_gpu_now_ms() - t1;
+         }
+         int ok = 0;
+-        if (!g_tp_shutdown && !g_tp_failed_flag) {
++        if (!g_tp_shutdown && !g_tp_failed_flag && fios_entered) {
+             if (req.big_bytes > 0) {
+                 if (g_tp_big_exchange_fn)
+                     ok = g_tp_big_exchange_fn(g_tp_exchange_ud, req.layer,
+@@ -11049,7 +11093,13 @@
+                         (unsigned long long)g_tp_stat_poll_count);
+             }
+         }
++        if (g_tp_failed_flag || (!ok && req.fios_origins)) fios_ds4_request_fence();
++        if (!fios_entered || !fios_ds4_tp_finish_origins(req.fios_origins,fios_scope)) {
++            g_fios_tp_uncertain=1;fios_ds4_request_fence();
++            return NULL; // Keep original active context and queued custody.
++        }
+         pthread_mutex_lock(&g_tp_mutex);
++        g_fios_tp_active_origins = NULL;
+         g_fios_tp_service_active = 0;
+         pthread_mutex_unlock(&g_tp_mutex);
+     }
+@@ -11489,9 +11539,12 @@
+             if (!fios_ds4_request_prepare(g_batch_cb)) return 0;
+             [g_batch_cb encodeWaitForEvent:g_tp_cpu_event value:seq];
+         }
++        void *fios_origins=NULL;
++        if (!fios_ds4_tp_capture_origins(&fios_origins)) return 0;
+         pthread_mutex_lock(&g_tp_mutex);
+         if (g_tp_queue_count >= DS4_GPU_TP_QUEUE) {
+             pthread_mutex_unlock(&g_tp_mutex);
++            fios_ds4_tp_release_unpublished(fios_origins);
+             fprintf(stderr, "ds4: TP gate queue overflow\n");
+             return 0;
+         }
+@@ -11505,6 +11558,7 @@
+         g_tp_queue[tail].big_out = NULL;
+         g_tp_queue[tail].big_in = NULL;
+         g_tp_queue[tail].big_bytes = 0;
++        g_tp_queue[tail].fios_origins = fios_origins;
+         g_tp_queue_count++;
+         pthread_cond_signal(&g_tp_cond);
+         pthread_mutex_unlock(&g_tp_mutex);
+@@ -11553,9 +11607,12 @@
+         }
+         if (!fios_ds4_request_prepare(g_batch_cb)) return 0;
+         [g_batch_cb encodeWaitForEvent:g_tp_batch_cpu_event value:seq];
++        void *fios_origins=NULL;
++        if (!fios_ds4_tp_capture_origins(&fios_origins)) return 0;
+         pthread_mutex_lock(&g_tp_mutex);
+         if (g_tp_queue_count >= DS4_GPU_TP_QUEUE) {
+             pthread_mutex_unlock(&g_tp_mutex);
++            fios_ds4_tp_release_unpublished(fios_origins);
+             fprintf(stderr, "ds4: TP gate queue overflow\n");
+             return 0;
+         }
+@@ -11569,6 +11626,7 @@
+         g_tp_queue[tail].big_out = NULL;
+         g_tp_queue[tail].big_in = NULL;
+         g_tp_queue[tail].big_bytes = 0;
++        g_tp_queue[tail].fios_origins = fios_origins;
+         g_tp_queue_count++;
+         pthread_cond_signal(&g_tp_cond);
+         pthread_mutex_unlock(&g_tp_mutex);
+@@ -11595,9 +11653,12 @@
+     ds4_gpu_close_batch_encoder();
+     if (!fios_ds4_request_prepare(g_batch_cb)) return 0;
+     [g_batch_cb encodeSignalEvent:g_tp_batch_gpu_event value:seq];
++    void *fios_origins=NULL;
++    if (!fios_ds4_tp_capture_origins(&fios_origins)) return 0;
+     pthread_mutex_lock(&g_tp_mutex);
+     if (g_tp_queue_count >= DS4_GPU_TP_QUEUE) {
+         pthread_mutex_unlock(&g_tp_mutex);
++        fios_ds4_tp_release_unpublished(fios_origins);
+         fprintf(stderr, "ds4: TP gate queue overflow\n");
+         return 0;
+     }
+@@ -11611,6 +11672,7 @@
+     g_tp_queue[tail].big_in = in_ptr;
+     g_tp_queue[tail].big_bytes = bytes;
+     g_tp_queue[tail].poll = 0;
++    g_tp_queue[tail].fios_origins = fios_origins;
+     g_tp_queue_count++;
+     pthread_cond_signal(&g_tp_cond);
+     pthread_mutex_unlock(&g_tp_mutex);

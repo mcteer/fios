@@ -1,0 +1,54 @@
+--- a/src/engines/mlx/cache/budget.zig
++++ b/src/engines/mlx/cache/budget.zig
+@@ -32,26 +32,33 @@
+ /// raise a budget but never lower it; lowering evicts entries the settled figure would keep.
+ pub fn reviseHotCacheBudgets(sch: *Scheduler, grow_only: bool) void {
+     const resolve = sch.prefix_cache_mem_resolver orelse return;
+-    sch.registry.mutex.lockUncancelable(sch.io);
+-    // The resolver publishes the process-global budget the admission guard reads, so the
+-    // current model goes last.
+-    for ([_]bool{ false, true }) |current_pass| {
+-        var it = sch.registry.entries.valueIterator();
+-        while (it.next()) |entry_ptr| {
+-            const entry = entry_ptr.*;
+-            if ((entry == sch.current_model) != current_pass) continue;
+-            if (entry.state != .ready) continue;
+-            const hc = if (entry.prefix_cache) |h| h else continue;
+-            if (!hc.ram_enabled) continue;
+-            const config = entry.config orelse continue;
+-            var idle: u64 = 0;
+-            const budget = resolve(config, sch.prefix_cache_mem_bytes, .{ .exclude_bytes = hc.residentBytes(), .quiet = true }, &idle);
+-            if (grow_only and prefix_cache_mod.HotPrefixCache.budgetShrinks(hc.max_kv_bytes, budget)) continue;
+-            hc.setBudget(budget);
+-            hc.ssd_idle_mem = idle;
++    if (model_registry_mod.cleanupUncertain(sch.io)) return;
++    {
++        sch.registry.mutex.lockUncancelable(sch.io);
++        defer sch.registry.mutex.unlock(sch.io);
++        // The resolver publishes the process-global budget the admission guard reads, so the
++        // current model goes last.
++        for ([_]bool{ false, true }) |current_pass| {
++            var it = sch.registry.entries.valueIterator();
++            while (it.next()) |entry_ptr| {
++                const entry = entry_ptr.*;
++                if ((entry == sch.current_model) != current_pass) continue;
++                if (entry.state != .ready) continue;
++                const hc = if (entry.prefix_cache) |h| h else continue;
++                if (!hc.ram_enabled) continue;
++                const config = entry.config orelse continue;
++                if (model_registry_mod.cleanupUncertainLocked(sch.io)) return;
++                var idle: u64 = 0;
++                const budget = resolve(config, sch.prefix_cache_mem_bytes, .{ .exclude_bytes = hc.residentBytes(), .quiet = true }, &idle);
++                if (model_registry_mod.cleanupUncertainLocked(sch.io)) return;
++                if (grow_only and prefix_cache_mod.HotPrefixCache.budgetShrinks(hc.max_kv_bytes, budget)) continue;
++                hc.setBudget(budget);
++                if (model_registry_mod.cleanupUncertainLocked(sch.io)) return;
++                hc.ssd_idle_mem = idle;
++            }
+         }
+     }
+-    sch.registry.mutex.unlock(sch.io);
++    if (model_registry_mod.cleanupUncertain(sch.io)) return;
+     publishHotCacheResidency(sch);
+ }
+ 

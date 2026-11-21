@@ -1,0 +1,75 @@
+// Actual metadata helper; CPU registry and loader substitute, no models.
+const std = @import("std");
+const fios_ownership = @import("fios/request_ownership.zig");
+const scenario = @import("build_options").scenario;
+const Entry = struct { id: []const u8 };
+var first: Entry = .{ .id = "fixture/exact-admin-load" };
+var second: Entry = .{ .id = "fixture/later-default" };
+var default_changed = false;
+var loads: usize = 0;
+const Registry = struct {
+    fn resolveEntry(_: *@This(), id: []const u8) !*Entry {
+        if (std.mem.eql(u8,id,first.id)) return &first;
+        if (std.mem.eql(u8,id,second.id)) return &second;
+        if (id.len==0 or std.mem.eql(u8,id,"mlx-serve")) return if(default_changed) &second else &first;
+        return error.UnknownModelId;
+    }
+};
+const Scheduler = struct {
+    io: std.Io, registry: *Registry,
+    fn ensureLoaded(self: *@This(), id: []const u8) !*Entry {
+        const selected=try self.registry.resolveEntry(id);
+        if (scenario != 6) {
+            const snap=fios_ownership.shared().snapshot(self.io);
+            if(snap.model_count!=1 or !std.mem.eql(u8,snap.models[0].id[0..snap.models[0].len],first.id)) {
+                std.debug.print("FIO_ADMIN_LOAD_UNBOUND_BEFORE_PREPARATION\n",.{});
+                return error.UnboundAdminLoad;
+            }
+            if (selected!=&first) return error.DefaultChangedTarget;
+        }
+        loads+=1;
+        return selected;
+    }
+};
+// ACTUAL_HELPER
+pub fn main(init:std.process.Init)!void {
+    const io=init.io;
+    try fios_ownership.shared().initialize(io,@splat(72));
+    var reg:Registry=.{};
+    var sch:Scheduler=.{.io=io,.registry=&reg};
+    const root=try fios_ownership.shared().enter(io);
+    const cid:fios_ownership.CorrelationID=@splat(34);
+    try fios_ownership.shared().associate(io,root,cid);
+    fios_ownership.current().*=if(scenario==6)null else root;
+    defer fios_ownership.current().*=null;
+    const ticket:?fios_ownership.ModelMutation=if(scenario==5)try fios_ownership.shared().beginModelMutation(io,first.id) else null;
+    if(scenario==3){const other=try fios_ownership.shared().enter(io);try fios_ownership.shared().bind(io,other,second.id);}
+    if(scenario==4)fios_ownership.shared().fence(io);
+    const requested=if(scenario==1 or scenario==7) "" else if(scenario==2) "mlx-serve" else if(scenario==8) "fixture/missing" else first.id;
+    const outcome=loadTargetWithOwnership(&sch,requested);
+    if(scenario==3 or scenario==4 or scenario==5 or scenario==8){
+        const expected:anyerror=if(scenario==3)error.ModelConflict else if(scenario==4)error.CoverageUncertain else if(scenario==5)error.ModelTransition else error.UnknownModelId;
+        if(outcome)|_|return error.RefusalLost else |err|{if(err!=expected)return error.WrongRefusal;}
+        const refused=fios_ownership.shared().snapshot(io);
+        const lineage=fios_ownership.shared().correlationSnapshot(io,cid);
+        if(refused.owned!=(if(scenario==3)@as(usize,2) else 1) or !lineage.found or lineage.root_sequence!=root.sequence or lineage.ingress!=1)return error.RefusalLostOriginal;
+        if(refused.uncertain!=(scenario==4))return error.RefusalChangedUncertainty;
+        if(loads!=0)return error.RefusedLoaderExecuted;
+        if(ticket)|held|try fios_ownership.shared().endModelMutation(io,held);
+        if(scenario==4 and !fios_ownership.shared().snapshot(io).uncertain)return error.UncertaintyCleared;
+    }else{
+        const target=try outcome;
+        if(scenario==7)default_changed=true;
+        _=try sch.ensureLoaded(target);
+        if(loads!=1)return error.WrongLoadCount;
+        if(scenario==6){if(fios_ownership.shared().snapshot(io).model_count!=0)return error.LegacyChanged;}
+        else{
+            const held=(try fios_ownership.retainCurrent(io)).?;
+            try fios_ownership.shared().leave(io,root);
+            const lineage=fios_ownership.shared().correlationSnapshot(io,cid);
+            if(!lineage.found or lineage.root_sequence!=root.sequence or lineage.preparing!=1)return error.OriginalLineageLost;
+            if(!held.releaseIfCertain(io))return error.RetainedReleaseFailed;
+        }
+    }
+    std.debug.print("PASS: actual admin load retains resolved original request\n",.{});
+}

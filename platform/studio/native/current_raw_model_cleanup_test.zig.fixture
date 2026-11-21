@@ -1,0 +1,59 @@
+
+test "fios current raw MLX state API preserves individual pre-epoch uncertainty" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const owners = @import("../../../fios/request_ownership.zig");
+    const shell = @import("../modules/shell.zig").moduleShell;
+    const Transformer = @import("../transformer.zig").Transformer;
+    const Config = @import("../../../sdk/config/model.zig").ModelConfig;
+    const mlxc = @import("../../../mlx/ffi.zig");
+    owners.shared().primary_guard = false;
+    const Trace = struct {
+        transformer: usize = 0,
+        freed: bool = false,
+        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.transformer) self.freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    for ([_]bool{ false, true }) |unknown| {
+        const trace = try page.create(Trace);
+        trace.* = .{};
+        const allocator = trace.allocator();
+        const reg = try registry.ModelRegistry.init(allocator, io, null, 2, 0, null);
+        const entry = try reg.registerStub("fixture/raw-preinit-cleanup", "/fixture/no-model", 123);
+        const xfm = try allocator.create(Transformer);
+        const config = std.mem.zeroInit(Config, .{ .model_type = "llama", .num_hidden_layers = 0 });
+        xfm.* = try shell(allocator, config, mlxc.gpuStream());
+        trace.transformer = @intFromPtr(xfm);
+        entry.transformer = xfm;
+        entry.bytes_resident = 123;
+        if (unknown) {
+            reg.mutex.lockUncancelable(io);
+            reg.markLoadUncertainLocked(entry);
+            reg.mutex.unlock(io);
+        }
+        freeMlx(entry);
+        if (unknown) {
+            if (trace.freed) std.debug.print("FIO_CURRENT_RAW_MLX_FREE_DROPPED_PER_MODEL_CUSTODY\n", .{});
+            try std.testing.expect(!trace.freed); // Witness before graph access.
+            try std.testing.expect(entry.transformer == xfm and !entry.fios_local_free_finished);
+            unloadResident(entry);
+            try std.testing.expect(!trace.freed and entry.transformer == xfm);
+            try std.testing.expectEqual(@as(u64, 123), entry.bytes_resident);
+            try std.testing.expect(owners.shared().knownUncertain(io));
+        } else {
+            try std.testing.expect(trace.freed and entry.transformer == null and entry.fios_local_free_finished);
+            unloadResident(entry);
+            try std.testing.expectEqual(@as(u64, 0), entry.bytes_resident);
+            reg.deinit();
+            page.destroy(trace);
+        }
+    }
+}

@@ -1,0 +1,18 @@
+--- a/lib/llama_shim/llama_shim.cpp
++++ b/lib/llama_shim/llama_shim.cpp
+@@ -405,8 +405,15 @@
+     try {
+         // The vendor wait precedes any batch/context destruction. Its void
+         // result is not a correlated all-client completion/admission issuer.
++#ifdef LLAMA_FIOS_CHECKED_SYNC_V1
++        if ((c->tgt && llama_fios_synchronize_checked_v1(c->tgt) != 1) ||
++            (c->dft && llama_fios_synchronize_checked_v1(c->dft) != 1)) {
++            fios_llama_mark_uncertain(c->e); return 0;
++        }
++#else
+         if (c->tgt) llama_synchronize(c->tgt);
+         if (c->dft) llama_synchronize(c->dft);
++#endif
+         if (c->dbatch) { llama_batch_ext_free(c->dbatch); c->dbatch = NULL; }
+         if (c->dft) { llama_free(c->dft); c->dft = NULL; }
+         if (c->batch) { llama_batch_ext_free(c->batch); c->batch = NULL; }

@@ -1,0 +1,4 @@
+// Missing checked-ABI compile witness only; never executed against old source.
+int fios_fixture_ane_checked_null_preflight(void) {
+    return msv_ane_program_try_free(NULL) && msv_ane_request_try_free(NULL);
+}

@@ -1,0 +1,59 @@
+const std=@import("std");
+const owners=@import("fios/request_ownership.zig");
+const facts=@import("fios/current_registry_activity.zig");
+const protocol=@import("fios/control_protocol.zig");
+const Entry=struct{id:[]const u8,state:enum{unloaded,loading,ready,error_state,evicting},fios_load_uncertain:std.atomic.Value(bool)=.init(false)};
+const Registry=struct{mutex:std.Io.Mutex=.init,entries:std.StringHashMap(*Entry),generation:std.atomic.Value(u64)=.init(7)};
+const Context=struct{
+    registry:*Registry,
+    invalid:u8=0,
+    fn read(raw:*anyopaque,io:std.Io,tracker:*owners.Tracker)anyerror!facts.Observation {
+        const self:*Context=@ptrCast(@alignCast(raw));var value=try facts.captureKnown(io,tracker,self.registry);
+        if(self.invalid==1){value.models[0].claimable=true;value.models[0].transitioning=true;value.transitioning=true;}
+        if(self.invalid==2){value.models[0].ready_declared=true;value.models[0].claimable=false;}
+        return value;
+    }
+    fn source(self:*Context)protocol.RegistryActivitySource{return .{.context=self,.read=read};}
+};
+fn request(instance:[16]u8,version:u8)[32]u8{var bytes:[32]u8=@splat(0);@memcpy(bytes[0..4],"FIA9");bytes[4]=version;@memcpy(bytes[8..24],&instance);return bytes;}
+fn row(frame:*const [protocol.registry_response_size]u8,id:[]const u8)!usize{
+    const count=std.mem.readInt(u32,frame[72..76],.big);
+    for(0..count)|index|{const offset=96+index*protocol.registry_record_size;const length=std.mem.readInt(u16,frame[offset..][0..2],.big);if(std.mem.eql(u8,frame[offset+24..][0..length],id))return offset;}
+    return error.MissingFixtureRow;
+}
+test "fios registry claimability retains legacy flags and publishes exact unloaded availability" {
+    const io=std.testing.io;var tracker:owners.Tracker=.{.primary_guard=true};try tracker.initialize(io,@splat(181));
+    var registry:Registry=.{.entries=std.StringHashMap(*Entry).init(std.testing.allocator)};defer registry.entries.deinit();
+    var a:Entry=.{.id="fixture/a",.state=.unloaded};var b:Entry=.{.id="fixture/b",.state=.ready};try registry.entries.put(a.id,&a);try registry.entries.put(b.id,&b);
+    const root=try @import("fios/current_registry_claim.zig").claim(io,&tracker,&registry,a.id,@splat(1));defer tracker.leave(io,root) catch {};
+    var context:Context=.{.registry=&registry};
+    const legacy=protocol.dispatchRegistryActivity(&tracker,io,&request(@splat(181),3),context.source());
+    const current=protocol.dispatchRegistryActivity(&tracker,io,&request(@splat(181),4),context.source());
+    try std.testing.expect(legacy[4]==3 and legacy[5]==0 and current[4]==4 and current[5]==0);
+    const la=try row(&legacy,a.id);const lb=try row(&legacy,b.id);const ca=try row(&current,a.id);const cb=try row(&current,b.id);
+    try std.testing.expectEqual(@as(u8,0),legacy[la+3]);try std.testing.expectEqual(@as(u8,0),legacy[lb+3]);
+    try std.testing.expect(current[ca+2]==0 and current[ca+3]==4 and current[cb+2]==1 and current[cb+3]==4);
+    try std.Io.Dir.cwd().writeFile(io,.{.sub_path="claimability-native-frame.bin",.data=&current});
+    try std.testing.expect(a.state==.unloaded and b.state==.ready);
+}
+test "fios registry claimability refuses failed transitioning and uncertain target declarations" {
+    const io=std.testing.io;var tracker:owners.Tracker=.{.primary_guard=true};try tracker.initialize(io,@splat(182));
+    var registry:Registry=.{.entries=std.StringHashMap(*Entry).init(std.testing.allocator)};defer registry.entries.deinit();
+    var a:Entry=.{.id="fixture/a",.state=.unloaded};try registry.entries.put(a.id,&a);
+    const root=try @import("fios/current_registry_claim.zig").claim(io,&tracker,&registry,a.id,@splat(1));defer tracker.leave(io,root) catch {};
+    var context:Context=.{.registry=&registry};
+    a.state=.error_state;const failed=protocol.dispatchRegistryActivity(&tracker,io,&request(@splat(182),4),context.source());const fi=try row(&failed,a.id);
+    try std.testing.expect(failed[5]==0 and failed[fi+2]==0 and failed[fi+3]==0);
+    a.state=.loading;const loading=protocol.dispatchRegistryActivity(&tracker,io,&request(@splat(182),4),context.source());const li=try row(&loading,a.id);
+    try std.testing.expect(loading[5]==0 and loading[li+3]==1 and loading[76]==1);
+    a.state=.ready;a.fios_load_uncertain.store(true,.release);const uncertain=protocol.dispatchRegistryActivity(&tracker,io,&request(@splat(182),4),context.source());const ui=try row(&uncertain,a.id);
+    try std.testing.expect(uncertain[5]==0 and uncertain[7]==1 and uncertain[ui+2]==1 and uncertain[ui+3]==2);
+}
+test "fios registry claimability rejects contradictory producer flags and unsupported versions" {
+    const io=std.testing.io;var tracker:owners.Tracker=.{.primary_guard=true};try tracker.initialize(io,@splat(183));
+    var registry:Registry=.{.entries=std.StringHashMap(*Entry).init(std.testing.allocator)};defer registry.entries.deinit();
+    var a:Entry=.{.id="fixture/a",.state=.ready};try registry.entries.put(a.id,&a);var context:Context=.{.registry=&registry};
+    for([_]u8{1,2})|invalid|{context.invalid=invalid;const frame=protocol.dispatchRegistryActivity(&tracker,io,&request(@splat(183),4),context.source());try std.testing.expectEqual(@intFromEnum(protocol.Status.invalid),frame[5]);}
+    context.invalid=0;const unknown=protocol.dispatchRegistryActivity(&tracker,io,&request(@splat(183),5),context.source());try std.testing.expectEqual(@intFromEnum(protocol.Status.invalid),unknown[5]);
+    const absent=protocol.dispatchRegistryActivity(&tracker,io,&request(@splat(183),4),null);try std.testing.expectEqual(@intFromEnum(protocol.Status.maintenance),absent[5]);
+}

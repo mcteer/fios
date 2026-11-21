@@ -1,0 +1,47 @@
+// Source-fixture composition only. The SDK-built MLX dependency and every
+// reachable C++ module must use the same Apple headers/runtime, including
+// std::function destruction and the existing exception/error channel.
+// A successful link with Zig's bundled libc++ is not this ABI guarantee.
+pub fn sourceSystemCxx(b: *std.Build, root: *std.Build.Module, host: Host) void {
+    const frameworks = host.frameworks orelse @panic("Fios source SDK needs an explicit Apple SDK");
+    const suffix = "/System/Library/Frameworks";
+    if (!std.mem.endsWith(u8, frameworks, suffix) or frameworks.len <= suffix.len)
+        @panic("Fios source SDK framework path is invalid");
+    const sdk = frameworks[0 .. frameworks.len - suffix.len];
+    if (!std.fs.path.isAbsolute(sdk)) @panic("Fios source SDK path must be absolute");
+    const runtime = b.fmt("{s}/usr/lib/libc++.1.tbd", .{sdk});
+    var needs_runtime = false;
+    var runtime_inputs: usize = 0;
+    var visited = std.AutoHashMap(*std.Build.Module, void).init(b.allocator);
+    defer visited.deinit();
+    var pending: std.ArrayList(*std.Build.Module) = .empty;
+    defer pending.deinit(b.allocator);
+    pending.append(b.allocator, root) catch @panic("OOM");
+    while (pending.pop()) |module| {
+        const entry = visited.getOrPut(module) catch @panic("OOM");
+        if (entry.found_existing) continue;
+        if (visited.count() > 4096) @panic("Fios source SDK module graph is too large");
+        module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/c++/v1", .{sdk}) });
+        if (module.link_libcpp orelse false) {
+            module.link_libcpp = false;
+            module.link_libc = true;
+            needs_runtime = true;
+        }
+        for (module.link_objects.items) |object| switch (object) {
+            .static_path => |file| switch (file) {
+                .cwd_relative => |name| {
+                    if (std.mem.eql(u8, name, runtime)) runtime_inputs += 1;
+                },
+                else => {},
+            },
+            else => {},
+        };
+        for (module.import_table.values()) |child| {
+            pending.append(b.allocator, child) catch @panic("OOM");
+        }
+    }
+    // Zig's Mach-O linker does not coalesce repeated dylib stub inputs.
+    // One reachable runtime serves the whole import graph, including cycles.
+    if (runtime_inputs > 1) @panic("Duplicate Fios source C++ runtime inputs");
+    if (needs_runtime and runtime_inputs == 0) root.addObjectFile(.{ .cwd_relative = runtime });
+}

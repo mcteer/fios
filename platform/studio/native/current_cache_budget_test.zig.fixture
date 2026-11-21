@@ -1,0 +1,53 @@
+const std = @import("std");
+const scenario = @import("build_options").scenario;
+var uncertain = scenario == 1;
+var registry_held = false;
+var seen: [2]u8 = .{0,0};
+var resolves: usize = 0;
+var budget_calls: usize = 0;
+var published: usize = 0;
+const model_registry_mod = struct { fn cleanupUncertain(_: std.Io) bool { std.debug.assert(!registry_held); return uncertain; } fn cleanupUncertainLocked(_: std.Io) bool { std.debug.assert(registry_held); return uncertain; } };
+const Config = struct { id: u8 };
+const Options = struct { exclude_bytes: u64, quiet: bool };
+fn resolveBudget(config: *const Config, _: u64, options: Options, idle: *u64) u64 { std.debug.assert(options.quiet and options.exclude_bytes == 40); seen[resolves] = config.id; resolves += 1; idle.* = 42; if (scenario == 2) uncertain = true; return if (scenario == 5) 10 else 30; }
+const Cache = struct {
+    ram_enabled: bool = true, max_kv_bytes: u64 = 20, ssd_idle_mem: u64 = 0,
+    fn residentBytes(_: *@This()) u64 { return 40; }
+    fn setBudget(self: *@This(), next: u64) void { budget_calls += 1; self.max_kv_bytes = next; if (scenario == 3) uncertain = true; }
+};
+const prefix_cache_mod = struct { const HotPrefixCache = struct { fn budgetShrinks(current: u64, next: u64) bool { return next != 0 and (current == 0 or next < current); } }; };
+const Entry = struct { state: enum { ready, unloaded } = .ready, prefix_cache: ?*Cache, config: ?*const Config };
+const Entries = struct {
+    values: [2]*Entry,
+    const Iterator = struct { values: *[2]*Entry, index: usize = 0, fn next(self: *@This()) ?**Entry { if (self.index == 2) return null; defer self.index += 1; return &self.values[self.index]; } };
+    fn valueIterator(self: *@This()) Iterator { return .{ .values = &self.values }; }
+};
+const Mutex = struct {
+    held: bool = false,
+    fn lockUncancelable(self: *@This(), _: std.Io) void { std.debug.assert(!self.held); self.held = true; registry_held = true; if (scenario == 4) uncertain = true; }
+    fn unlock(self: *@This(), _: std.Io) void { std.debug.assert(self.held); self.held = false; registry_held = false; }
+};
+const Registry = struct { mutex: Mutex = .{}, entries: Entries };
+const Scheduler = struct { io: std.Io, registry: *Registry, current_model: *Entry, prefix_cache_mem_resolver: ?*const fn (*const Config,u64,Options,*u64) u64 = resolveBudget, prefix_cache_mem_bytes: u64 = 100 };
+fn publishHotCacheResidency(sch: *Scheduler) void { std.debug.assert(!sch.registry.mutex.held); published += 1; }
+// ACTUAL_REVISE
+pub fn main(init: std.process.Init) !void {
+    var a: Cache = .{ .ram_enabled = scenario != 7 }; var b: Cache = .{ .ram_enabled = scenario != 7 }; const ca: Config = .{.id=1}; const cb: Config = .{.id=2};
+    var ea: Entry = .{ .prefix_cache = &a, .config = &ca }; var eb: Entry = .{ .prefix_cache = &b, .config = &cb };
+    var registry: Registry = .{ .entries = .{ .values = .{ &ea, &eb } } };
+    var sch: Scheduler = .{ .io = init.io, .registry = &registry, .current_model = &ea, .prefix_cache_mem_resolver = if (scenario == 6) null else resolveBudget };
+    reviseHotCacheBudgets(&sch, scenario == 5);
+    const expected_resolves: usize = if (scenario == 0 or scenario == 5) 2 else if (scenario == 2 or scenario == 3) 1 else 0;
+    const expected_budget: usize = if (scenario == 0) 2 else if (scenario == 3) 1 else 0;
+    const expected_published: usize = if (scenario == 0 or scenario == 5 or scenario == 7) 1 else 0;
+    if (resolves != expected_resolves or budget_calls != expected_budget or published != expected_published) {
+        std.debug.print("FIO_BUDGET_REVISION_DURING_UNCERTAINTY\n", .{}); return error.UncertainBudget;
+    }
+    if (registry.mutex.held or registry_held) return error.RegistryLockLeaked;
+    if (expected_resolves > 0 and seen[0] != 2 or expected_resolves > 1 and seen[1] != 1) return error.ModelOrderChanged;
+    const idle: u64 = if (scenario == 0) 42 else 0;
+    if (a.ssd_idle_mem != idle or b.ssd_idle_mem != idle) return error.UncertainBudgetPublished;
+    if (a.max_kv_bytes != @as(u64, if (scenario == 0) 30 else 20) or b.max_kv_bytes != @as(u64, if (scenario == 0 or scenario == 3) 30 else 20)) return error.BudgetChanged;
+    if (scenario >= 1 and scenario <= 4 and !uncertain) return error.ClearedUncertainty;
+    std.debug.print("PASS: actual budget revision preserves negative evidence, locks and current-model order; CPU substitutes only\n", .{});
+}

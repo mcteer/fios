@@ -1,0 +1,9 @@
+// Private ordinary metadata control, appended only by the component driver.
+extern "C" int fios_fixture_llama_parent_busy(void) {
+    auto *parent = new mlx_llama_engine();
+    auto *child = new mlx_llama_ctx();
+    if (!fios_llama_retain_parent(child, parent)) return 0;
+    if (mlx_llama_try_close(parent) != 0 || mlx_llama_source_uncertainty() != 1) return 0;
+    if (mlx_llama_ctx_try_free(child) != 0) return 0;
+    return child->fios_parent_owned && parent->fios_children == 1;
+}

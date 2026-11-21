@@ -1,0 +1,36 @@
+/* Actual watchdog and host-event signal; only the final parked wait is substituted. */
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+static int stop_fixture_wait(pthread_cond_t*,pthread_mutex_t*);
+static int observe_fixture_unlock(pthread_mutex_t*);
+static int exposed_before_negative=0;
+#define pthread_cond_wait stop_fixture_wait
+#define pthread_mutex_unlock observe_fixture_unlock
+#include "pool.c"
+#undef pthread_mutex_unlock
+#undef pthread_cond_wait
+static int stop_fixture_wait(pthread_cond_t *cv,pthread_mutex_t *m){(void)cv;(void)m;wd_stop=1;return 0;}
+static int observe_fixture_unlock(pthread_mutex_t *m){
+ if(m==&mu && gates[0].forced==GF_WATCHDOG && ev_target>ev_sent && !fios_q3ld_cleanup_uncertain())exposed_before_negative=1;
+ return pthread_mutex_unlock(m);
+}
+void q3ld_mtl_signal(void *event,uint64_t value){(void)event;(void)value;abort();}
+int main(void){
+ if(q3ld_init()!=0)abort();
+ int64_t counters[SC_N]={0},event=0;sc=counters;running=1;ev_kind=EVK_HOST;ev_obj=&event;
+ if(FIO_SCENARIO!=1){g_head=0;g_tail=1;gates[0].remaining=FIO_SCENARIO==2?0:1;gates[0].deadline=0;gates[0].value=1;}
+ if(FIO_SCENARIO==2){ev_advance();ev_flush();}
+ if(FIO_SCENARIO==3)wd_stop=1;
+ wd_main(NULL);
+ if(FIO_SCENARIO==0){
+  if(event!=1 || gates[0].forced!=GF_WATCHDOG || counters[SC_EV_WD_FORCED]!=1)return 2;
+  if(exposed_before_negative || !fios_q3ld_cleanup_uncertain()){fputs("FIO_STREAM_WATCHDOG_FORCED_BEFORE_NEGATIVE\n",stderr);return 1;}
+  if(q3ld_stop()!=-3 || !running || ev_obj!=&event)return 3;
+ }else{
+  if(fios_q3ld_cleanup_uncertain() || exposed_before_negative || counters[SC_EV_WD_FORCED]!=0 || gates[0].forced)return 4;
+  if(event!=(FIO_SCENARIO==2?1:0))return 5;
+ }
+ fputs("PASS: watchdog force preserves negative before event visibility; ordinary controls unchanged\n",stderr);return 0;
+}

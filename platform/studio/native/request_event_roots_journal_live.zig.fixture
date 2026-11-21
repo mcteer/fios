@@ -1,0 +1,192 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const sdk = @import("fios/sdk_request_ownership.zig");
+const transport = @import("fios/control_transport.zig");
+const protocol = @import("fios/control_protocol.zig");
+const book_mod = @import("engines/own_thread/book.zig");
+const actor = @import("fios/current_slot_origins.zig");
+const abi = @import("abi/engine.zig");
+extern fn fios_bridge_gpu_graph() c_int;
+extern fn fios_bridge_library_matches([*:0]const u8) c_int;
+extern "c" fn alarm(c_uint) c_uint;
+fn normalQueueCapture(io: std.Io) !void {
+    const tracker = owners.shared();
+    const a = try tracker.enter(io);
+    try tracker.associate(io, a, @splat(9));
+    try tracker.bind(io, a, "fixture/native-events");
+    try tracker.active(io, a);
+    const b = try tracker.enter(io);
+    try tracker.associate(io, b, @splat(8));
+    try tracker.bind(io, b, "fixture/native-events");
+    try tracker.active(io, b);
+    const a_origins = try tracker.retainTokens(io, &.{a});
+    const b_origins = try tracker.retainTokens(io, &.{b});
+    const first = try tracker.beginQueued(io, &a_origins);
+    const second = try tracker.beginQueued(io, &a_origins);
+    const other = try tracker.beginQueued(io, &b_origins);
+    a_origins.release(io); b_origins.release(io);
+    var request: [64]u8 = @splat(0);
+    @memcpy(request[0..4], "FIQ9"); request[4] = 3;
+    @memset(request[8..24], 7); @memset(request[24..56], 9);
+    var reply = protocol.dispatchQueuedLineage(tracker, io, &request);
+    if (reply[4] != 3 or reply[5] != 0 or reply[7] != 0 or
+        std.mem.readInt(u32, reply[112..116], .big) != 2 or
+        std.mem.readInt(u32, reply[116..120], .big) != 0) return error.QueueCaptureUnavailable;
+    try tracker.activateQueued(io, first);
+    reply = protocol.dispatchQueuedLineage(tracker, io, &request);
+    if (std.mem.readInt(u32, reply[112..116], .big) != 1 or
+        std.mem.readInt(u32, reply[116..120], .big) != 1) return error.QueueCaptureUnavailable;
+    const separate = tracker.correlationSnapshot(io, @splat(8));
+    if (separate.queued_operations != 1 or separate.active_operations != 0) return error.QueueCaptureUnavailable;
+    try tracker.leave(io, a);
+    const retained = tracker.correlationSnapshot(io, @splat(9));
+    if (!retained.found or retained.queued_operations != 1 or retained.active_operations != 1) return error.QueueCaptureUnavailable;
+    try tracker.retireQueued(io, first); try tracker.retireQueued(io, second);
+    try tracker.retireQueued(io, other); try tracker.leave(io, b);
+    if (tracker.snapshot(io).owned != 0) return error.QueueCaptureUnavailable;
+}
+
+fn normalBookOverlap(io: std.Io) !void {
+    const tracker = owners.shared();
+    const a = try tracker.enter(io); const b = try tracker.enter(io);
+    try tracker.associate(io, a, @splat(6)); try tracker.associate(io, b, @splat(5));
+    try tracker.bind(io, a, "fixture/native-events"); try tracker.bind(io, b, "fixture/native-events");
+    try tracker.active(io, a); try tracker.active(io, b);
+    const Sink = struct {
+        fn event(context: *anyopaque, _: u64, value: *const abi.Event) callconv(.c) abi.Action {
+            const count: *u8 = @ptrCast(@alignCast(context));
+            if (value.kind == .finished) count.* += 1;
+            return .go;
+        }
+    };
+    const Capture = struct {
+        fn expect(io_value: std.Io, id: u8, root: u64, queued: u32, active: u32) !void {
+            var request: [64]u8 = @splat(0);
+            @memcpy(request[0..4], "FIQ9"); request[4] = 3;
+            @memset(request[8..24], 7); @memset(request[24..56], id);
+            const reply = protocol.dispatchQueuedLineage(owners.shared(), io_value, &request);
+            if (reply[5] != 0 or reply[6] != 1 or reply[7] != 0 or
+                std.mem.readInt(u64, reply[64..72], .big) != root or
+                std.mem.readInt(u32, reply[112..116], .big) != queued or
+                std.mem.readInt(u32, reply[116..120], .big) != active) return error.BookOverlapUnavailable;
+        }
+    };
+    var book: book_mod.Book = .{ .gpa = std.heap.c_allocator, .max_waiting = 2 };
+    defer book.deinit();
+    var finished: u8 = 0; var verdict: abi.Verdict = .{};
+    owners.current().* = a;
+    const first = book.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 },
+        .{ .ctx = &finished, .event = Sink.event }, &verdict) orelse return error.BookOverlapUnavailable;
+    owners.current().* = b;
+    const second = book.add(.{}, 2, &.{ .prompt = abi.span(u32, &.{2}), .max_tokens = 1 },
+        .{ .ctx = &finished, .event = Sink.event }, &verdict) orelse return error.BookOverlapUnavailable;
+    owners.current().* = null; owners.current_group().* = null;
+    try tracker.leave(io, a); try tracker.leave(io, b);
+    try Capture.expect(io, 6, a.sequence, 1, 0); try Capture.expect(io, 5, b.sequence, 1, 0);
+    if (book.next(false) != first) return error.BookOverlapUnavailable;
+    var first_work = (try actor.retain(io, @as([]const *book_mod.Req, &.{first}))) orelse return error.BookOverlapUnavailable;
+    try first_work.enter(io);
+    try Capture.expect(io, 6, a.sequence, 0, 1); try Capture.expect(io, 5, b.sequence, 1, 0);
+    book.done(first, .stop, "");
+    if (!first_work.finish(io) or finished != 1 or tracker.correlationSnapshot(io, @splat(6)).found) return error.BookOverlapUnavailable;
+    try Capture.expect(io, 5, b.sequence, 1, 0);
+    if (book.next(false) != second) return error.BookOverlapUnavailable;
+    var second_work = (try actor.retain(io, @as([]const *book_mod.Req, &.{second}))) orelse return error.BookOverlapUnavailable;
+    try second_work.enter(io);
+    try Capture.expect(io, 5, b.sequence, 0, 1);
+    book.done(second, .stop, "");
+    if (!second_work.finish(io) or finished != 2 or tracker.snapshot(io).owned != 0) return error.BookOverlapUnavailable;
+}
+
+const GraphWorker = struct {
+    io: std.Io,
+    book: *book_mod.Book,
+    request: *book_mod.Req,
+    failure: ?anyerror = null,
+    succeeded: bool = false,
+    fn run(self: *GraphWorker) void {
+        self.perform() catch |err| { self.failure = err; return; };
+        self.succeeded = true;
+    }
+    fn perform(self: *GraphWorker) !void {
+        if (owners.current().* != null or owners.current_group().* != null) return error.CallerContextPresent;
+        if (self.book.next(false) != self.request) return error.QueuePickupUnavailable;
+        var work = (try actor.retain(self.io, @as([]const *book_mod.Req, &.{self.request}))) orelse return error.QueuePickupUnavailable;
+        try work.enter(self.io);
+        var advance: [1]u8 = undefined;
+        if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
+        if (fios_bridge_gpu_graph() != 1) return error.GPUCallbackUnavailable;
+        self.book.done(self.request, .stop, "");
+        if (!work.finish(self.io) or owners.current().* != null or owners.current_group().* != null) return error.QueueRetirementUnavailable;
+    }
+};
+
+pub fn main() !void {
+    _ = alarm(30);
+    const io = std.Io.Threaded.global_single_threaded.io();
+    try owners.shared().initialize(io, @splat(7));
+    try sdk.initialize(io);
+    try normalQueueCapture(io);
+    try normalBookOverlap(io);
+    if (fios_bridge_library_matches(@import("build_options").sdk_library) != 1) return error.SDKUnavailable;
+    const bridge = (try transport.Bridge.startWithRequestEvents(io, std.heap.c_allocator, "events-fios-source-fixture", null, null, null, null, null, sdk.requestEventDiagnostic)) orelse return error.MissingBridge;
+    defer bridge.stop();
+    const ready = "{\"ready\":true}\n";
+    if (std.c.write(1, ready.ptr, ready.len) != ready.len) return error.OutputUnavailable;
+    // The Swift client registers its journal-derived request before this graph.
+    var correlation: [32]u8 = undefined;
+    var offset: usize = 0;
+    while (offset < correlation.len) {
+        const n = std.c.read(0, correlation[offset..].ptr, correlation.len - offset);
+        if (n <= 0) return error.InputUnavailable;
+        offset += @intCast(n);
+    }
+    const registered = owners.shared().correlationSnapshot(io, correlation);
+    if (!registered.found) return error.MissingOriginalRoot;
+    const incoming = try owners.shared().enter(io);
+    try owners.shared().associateHandoff(io, incoming, correlation, registered.root_sequence);
+    try owners.shared().bind(io, incoming, "fixture/native-events");
+    try owners.shared().active(io, incoming);
+    owners.current().* = incoming;
+    const group = [_]owners.Token{incoming};
+    owners.current_group().* = &group;
+    // Reuse the actual native request Book and actor entry; no model is loaded.
+    var book: book_mod.Book = .{ .gpa = std.heap.c_allocator, .max_waiting = 1 };
+    defer book.deinit();
+    const Sink = struct {
+        fn event(context: *anyopaque, _: u64, event_value: *const abi.Event) callconv(.c) abi.Action {
+            const finished: *u8 = @ptrCast(@alignCast(context));
+            if (event_value.kind == .finished) finished.* += 1;
+            return .go;
+        }
+    };
+    var finished: u8 = 0;
+    var verdict: abi.Verdict = .{};
+    const request = book.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 },
+        .{ .ctx = &finished, .event = Sink.event }, &verdict) orelse return error.QueuePublicationUnavailable;
+    if (verdict.code != .ok) return error.QueuePublicationUnavailable;
+    // Worker entry must restore the request; no caller TLS may supply attribution.
+    owners.current().* = null; owners.current_group().* = null;
+    var advance: [1]u8 = undefined;
+    if (std.c.read(0, &advance, 1) != 1) return error.InputUnavailable;
+    const cancelled = advance[0] == 'c';
+    if (cancelled) {
+        book.cancel(1);
+        if (!request.isCancelled()) return error.QueueCancellationUnavailable;
+        book.done(request, .cancelled, "");
+        if (finished != 1) return error.QueueRetirementUnavailable;
+    } else {
+        var worker: GraphWorker = .{ .io = io, .book = &book, .request = request };
+        const thread = try std.Thread.spawn(.{ .stack_size = 4 << 20 }, GraphWorker.run, .{&worker});
+        thread.join();
+        if (worker.failure) |err| return err;
+        if (!worker.succeeded or finished != 1) return error.QueueRetirementUnavailable;
+    }
+    owners.current().* = null; owners.current_group().* = null;
+    try owners.shared().responding(io, incoming);
+    const done: []const u8 = if (cancelled) "{\"graph_done\":false}\n" else "{\"graph_done\":true}\n";
+    if (std.c.write(1, done.ptr, done.len) != done.len) return error.OutputUnavailable;
+    var input: [1]u8 = undefined;
+    _ = std.c.read(0, &input, 1);
+    try owners.shared().leave(io, incoming);
+}

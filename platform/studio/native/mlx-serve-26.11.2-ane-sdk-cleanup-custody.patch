@@ -1,0 +1,319 @@
+diff --git a/src/engines/mlx/ane_prefill.zig b/src/engines/mlx/ane_prefill.zig
+index bfaf2d3..d72f217 100644
+--- a/src/engines/mlx/ane_prefill.zig
++++ b/src/engines/mlx/ane_prefill.zig
+@@ -601,9 +601,11 @@ pub fn buildAnePrefill(
+         log.warn("[ane] engine init failed ({s}) — disabled\n", .{@errorName(err)});
+         return;
+     };
++    // Reserve the original optional engine before fallible build effects.
++    if (ane_offload.fios_ane_cleanup) self.ane_prefill = eng;
+     const rests = self.allocator.alloc(AneChanRest, cfg.num_hidden_layers) catch {
+         log.warn("[ane] channel rest table alloc failed — disabled\n", .{});
+-        eng.deinit();
++        if (eng.tryDeinit() and ane_offload.fios_ane_cleanup) self.ane_prefill = null;
+         return;
+     };
+     @memset(rests, .{});
+@@ -705,7 +707,8 @@ pub fn buildAnePrefill(
+     const gdn_built = eng.coveredGdnLayers();
+     if (built == 0 and gdn_built == 0) {
+         log.warn("[ane] no layer produced an ANE program — disabled\n", .{});
+-        eng.deinit();
++        if (!eng.tryDeinit()) return;
++        if (ane_offload.fios_ane_cleanup) self.ane_prefill = null;
+         for (rests) |*r| r.deinit();
+         self.allocator.free(rests);
+         self.ane_chan = null;
+diff --git a/src/engines/mlx/transformer.zig b/src/engines/mlx/transformer.zig
+index 3b7ee3a..b992bd3 100644
+--- a/src/engines/mlx/transformer.zig
++++ b/src/engines/mlx/transformer.zig
+@@ -331,7 +331,6 @@ pub inline fn cli() *CliState {
+     return cli_shared.get();
+ }
+ 
+-
+ const model_mod = @import("../../sdk/config/model.zig");
+ const log = @import("../../sdk/util/log.zig");
+ const io_util_mod = @import("../../sdk/util/io_util.zig");
+@@ -494,7 +493,6 @@ pub const Transformer = struct {
+     // Single-threaded: generation runs on one thread per Transformer.
+     capture_hidden: ?*mlx.mlx_array = null,
+ 
+-
+     // Prompt cache for prefix reuse across requests
+     prompt_cache: ?PrefillCache,
+ 
+@@ -823,9 +821,9 @@ pub const Transformer = struct {
+         lane_qmm.release(@intFromPtr(self));
+         if (fiosCleanupUnknown()) return false;
+         if (self.ane_prefill) |eng| {
+-            eng.deinit();
+-            if (fiosCleanupUnknown()) return false;
++            if (!eng.tryDeinit()) return false;
+             self.ane_prefill = null;
++            if (fiosCleanupUnknown()) return false;
+         }
+         if (self.ane_chan) |rests| {
+             for (rests) |*r| r.deinit();
+diff --git a/src/sdk/ane/offload.zig b/src/sdk/ane/offload.zig
+index be925e0..a1ad4a8 100644
+--- a/src/sdk/ane/offload.zig
++++ b/src/sdk/ane/offload.zig
+@@ -30,6 +30,8 @@ const std = @import("std");
+ pub const source_guard = @import("source_guard.zig");
+ const env = @import("../../env.zig");
+ const builtin = @import("builtin");
++const build_options = @import("build_options");
++pub const fios_ane_cleanup = @hasDecl(build_options, "fios_source_ane") and build_options.fios_source_ane;
+ const log = @import("../util/log.zig");
+ const mlx = @import("../../mlx/ffi.zig");
+ const status = @import("../util/system.zig");
+@@ -88,6 +90,7 @@ extern fn msv_ane_bank_finish(
+     err_size: usize,
+ ) ?*MsvAneMlp;
+ extern fn msv_ane_mlp_free(m: ?*MsvAneMlp) void;
++extern fn msv_ane_mlp_try_free(m: ?*MsvAneMlp) bool;
+ extern fn msv_ane_mlp_input(m: ?*MsvAneMlp) ?[*]f16;
+ extern fn msv_ane_mlp_output(m: ?*MsvAneMlp) ?[*]f16;
+ extern fn msv_ane_mlp_eval(m: ?*MsvAneMlp, procedure: u32, err: [*]u8, err_size: usize) c_int;
+@@ -770,6 +773,7 @@ const Pending = struct {
+ /// the dual round).
+ pub const Unit = struct {
+     parent: *AnePrefill,
++    fios_deinit_attempted: bool = false,
+     /// 0 = no affinity hint; 1..N name a die (M3 Ultra's are 1 and 2).
+     instance: c_int,
+     /// Per-layer MLP procedure refs; null = not offloaded on this unit.
+@@ -1036,17 +1040,52 @@ pub const Unit = struct {
+     }
+ 
+     fn deinit(self: *Unit) void {
++        _ = self.tryDeinit();
++    }
++    fn tryDeinit(self: *Unit) bool {
++        return self.tryDeinitWith(fios_ane_cleanup, source_guard.known, msv_ane_mlp_try_free);
++    }
++    fn tryDeinitWith(self: *Unit, comptime enabled: bool, comptime negative: fn () bool, comptime close: anytype) bool {
++        if (!self.prepareDeinitWith(enabled, negative, close)) return false;
++        self.retireAfterClose(enabled);
++        return true;
++    }
++    fn prepareDeinitWith(self: *Unit, comptime enabled: bool, comptime negative: fn () bool, comptime close: anytype) bool {
++        if (enabled) {
++            if (self.fios_deinit_attempted) return false;
++            self.fios_deinit_attempted = true;
++        }
+         if (self.thread) |t| {
+             self.mu.lockUncancelable(self.parent.io);
+             self.stop_flag = true;
+             self.cond.broadcast(self.parent.io);
+             self.mu.unlock(self.parent.io);
+             t.join();
++            if (enabled) self.thread = null;
++        }
++        // Reaping the local waiter is not native completion. Retain every
++        // remaining owner when the independent fence or checked child refuses.
++        if (enabled and negative()) return false;
++        const alloc = self.allocator();
++        if (!enabled) {
++            for (self.pending.items) |*p| p.deinit(alloc);
++            self.pending.deinit(alloc);
++        }
++        for (self.banks.items) |b| {
++            const accepted = close(b);
++            if (enabled and (!accepted or negative())) return false;
+         }
++        if (enabled and negative()) return false;
++        return true;
++    }
++    // Called only after every sibling accepted local close. No native proof is
++    // inferred, and partial child refusal retains all sibling CPU containers.
++    fn retireAfterClose(self: *Unit, comptime enabled: bool) void {
+         const alloc = self.allocator();
+-        for (self.pending.items) |*p| p.deinit(alloc);
+-        self.pending.deinit(alloc);
+-        for (self.banks.items) |b| msv_ane_mlp_free(b);
++        if (enabled) {
++            for (self.pending.items) |*p| p.deinit(alloc);
++            self.pending.deinit(alloc);
++        }
+         self.banks.deinit(alloc);
+         alloc.free(self.layers);
+         alloc.free(self.gdn_layers);
+@@ -1090,6 +1129,7 @@ pub const AnePrefill = struct {
+     share: f32 = 0,
+     int8_bytes: u64 = 0,
+     published: bool = false,
++    fios_deinit_attempted: bool = false,
+     engaged_logged: bool = false,
+     gdn_engaged_logged: bool = false,
+ 
+@@ -1100,9 +1140,10 @@ pub const AnePrefill = struct {
+     pub fn init(allocator: std.mem.Allocator, io: std.Io, num_layers: usize, hidden: u32, ffn: u32, rows: u32, chunk_rows: u32, gdn_qkv_out: u32, gdn_z_out: u32, units: u32) !*AnePrefill {
+         std.debug.assert(units >= 1 and units <= MAX_UNITS);
+         const self = try allocator.create(AnePrefill);
+-        errdefer allocator.destroy(self);
++        var retain = false;
++        errdefer if (!retain) allocator.destroy(self);
+         const unit_slice = try allocator.alloc(Unit, units);
+-        errdefer allocator.free(unit_slice);
++        errdefer if (!retain) allocator.free(unit_slice);
+         self.* = .{
+             .allocator = allocator,
+             .io = io,
+@@ -1115,7 +1156,17 @@ pub const AnePrefill = struct {
+             .rows = rows,
+             .chunk_rows = chunk_rows,
+         };
+-        errdefer for (self.units) |*u| u.deinit();
++        errdefer {
++            if (fios_ane_cleanup) {
++                for (self.units) |*u| {
++                    if (!u.prepareDeinitWith(true, source_guard.known, msv_ane_mlp_try_free)) retain = true;
++                }
++                if (source_guard.known()) retain = true;
++                if (!retain) for (self.units) |*u| u.retireAfterClose(true);
++            } else {
++                for (self.units) |*u| u.deinit();
++            }
++        }
+         const io_bytes = @as(usize, hidden) * rows * 2;
+         for (0..units) |u| {
+             const layers = try allocator.alloc(?ProgramRef, num_layers);
+@@ -1158,16 +1209,45 @@ pub const AnePrefill = struct {
+     }
+ 
+     pub fn deinit(self: *AnePrefill) void {
+-        if (self.published) {
++        _ = self.tryDeinit();
++    }
++    pub fn tryDeinit(self: *AnePrefill) bool {
++        return self.tryDeinitWith(fios_ane_cleanup, source_guard.known, msv_ane_mlp_try_free);
++    }
++    fn tryDeinitWith(self: *AnePrefill, comptime enabled: bool, comptime negative: fn () bool, comptime close: anytype) bool {
++        if (enabled) {
++            if (self.fios_deinit_attempted) return false;
++            self.fios_deinit_attempted = true;
++            if (negative()) return false;
++        }
++        // Snapshot owned CPU accounting before units retire their layer arrays.
++        // Gauges never prove native idle; private refusal leaves them unchanged.
++        const live_layers = if (self.published) self.coveredLayers() + self.coveredGdnLayers() else 0;
++        if (!enabled and self.published) {
+             _ = aneState().live_int8_bytes.fetchSub(self.int8_bytes, .monotonic);
+             _ = aneState().live_layers.fetchSub(@intCast(self.coveredLayers() + self.coveredGdnLayers()), .monotonic);
+         }
+         const allocator = self.allocator;
+         const base = self.units.ptr;
+         const cap = self.units_cap;
+-        for (self.units) |*u| u.deinit();
++        if (enabled) {
++            for (self.units) |*u| {
++                if (!u.prepareDeinitWith(true, negative, close)) return false;
++            }
++            if (negative()) return false;
++            for (self.units) |*u| u.retireAfterClose(true);
++        } else {
++            for (self.units) |*u| {
++                if (!u.tryDeinitWith(false, negative, close)) return false;
++            }
++        }
++        if (enabled and self.published) {
++            _ = aneState().live_int8_bytes.fetchSub(self.int8_bytes, .monotonic);
++            _ = aneState().live_layers.fetchSub(@intCast(live_layers), .monotonic);
++        }
+         allocator.free(base[0..cap]);
+         allocator.destroy(self);
++        return true;
+     }
+ 
+     /// Layers whose MLP slice is covered on EVERY unit (a layer covered by
+@@ -1947,3 +2027,86 @@ test "mediaGateRefusal: total-RAM bill, then the build peak against a swap floor
+ test "buildPeakBytes: three host f32 copies plus the MLX dequant transient" {
+     try testing.expectEqual(@as(u64, 4 * 4 * 8 * 4), buildPeakBytes(4, 8));
+ }
++
++// Model-free cleanup-result/allocator spies; no ANE model or GPU operation.
++const FiosSdkCleanupProbe = struct {
++    var calls: usize = 0;
++    var blocked: bool = false;
++    var mode: enum { healthy, refuse, after, second_refuse } = .healthy;
++    fn negative() bool {
++        return blocked;
++    }
++    fn close(_: ?*MsvAneMlp) bool {
++        calls += 1;
++        if (mode == .second_refuse and calls == 1) return true;
++        if (mode != .healthy) blocked = true;
++        return mode != .refuse and mode != .second_refuse;
++    }
++    const Trace = struct {
++        frees: usize = 0,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.frees += 1;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator {
++            return .{ .ptr = self, .vtable = &vtable };
++        }
++    };
++};
++fn fiosSdkCleanup(preexisting: bool, mode: @TypeOf(FiosSdkCleanupProbe.mode)) !void {
++    const P = FiosSdkCleanupProbe;
++    P.calls = 0;
++    P.blocked = preexisting;
++    P.mode = mode;
++    var trace: P.Trace = .{};
++    const a = trace.allocator();
++    const eng = try a.create(AnePrefill);
++    const count: usize = if (mode == .second_refuse) 2 else 1;
++    const units = try a.alloc(Unit, count);
++    eng.* = .{ .allocator = a, .io = testing.io, .units = units, .units_cap = count, .hidden = 1, .ffn = 1, .rows = 1, .chunk_rows = 1 };
++    const bank: *MsvAneMlp = @ptrFromInt(16); // Opaque identity, never dereferenced or passed to C.
++    for (units) |*u| {
++        u.* = .{ .parent = eng, .instance = 0, .layers = try a.alloc(?ProgramRef, 1), .gdn_layers = try a.alloc(?ProgramRef, 1) };
++        @memset(u.layers, null);
++        @memset(u.gdn_layers, null);
++        try u.banks.append(a, bank);
++    }
++    const accepted = eng.tryDeinitWith(true, P.negative, P.close);
++    const expected = !preexisting and mode == .healthy;
++    if (accepted != expected or (!expected and trace.frees != 0)) {
++        std.debug.print("FIO_ANE_SDK_PARENT_DROPPED_REFUSED_CHILD\n", .{});
++        try testing.expect(false); // Before reading a possibly disposed graph.
++    }
++    try testing.expectEqual(@as(usize, if (preexisting) 0 else count), P.calls);
++    if (expected) {
++        try testing.expect(trace.frees >= 5);
++        return;
++    }
++    try testing.expect(eng.units.ptr == units.ptr and units[0].parent == eng);
++    try testing.expect(units[0].banks.items.len == 1 and units[0].banks.items[0] == bank);
++    try testing.expect(!eng.tryDeinitWith(true, P.negative, P.close));
++    try testing.expectEqual(@as(usize, if (preexisting) 0 else count), P.calls);
++    try testing.expectEqual(@as(usize, 0), trace.frees);
++    // Only finite synthetic metadata remains until this isolated process exits.
++}
++test "fios current SDK ANE cleanup retains preexisting uncertainty" {
++    try fiosSdkCleanup(true, .healthy);
++}
++test "fios current SDK ANE cleanup retains child refusal" {
++    try fiosSdkCleanup(false, .refuse);
++}
++test "fios current SDK ANE cleanup retains post-close independent uncertainty" {
++    try fiosSdkCleanup(false, .after);
++}
++test "fios current SDK ANE cleanup accepts healthy local disposal" {
++    try fiosSdkCleanup(false, .healthy);
++}
++
++test "fios current SDK ANE cleanup retains earlier units when later child refuses" {
++    try fiosSdkCleanup(false, .second_refuse);
++}

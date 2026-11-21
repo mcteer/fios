@@ -1,0 +1,34 @@
+const std=@import("std");
+const fios_queued=@import("fios/queued_request_ownership.zig");
+const owners=@import("fios/request_ownership.zig");
+const options=@import("build_options");
+const Entry=struct {fios_owner_guard:bool};
+const Request=struct {entry:*Entry,fios_origins:?*const owners.Retained=null,fios_failed:bool=false,fios_cleanup_refused:bool=false,done:bool=false};
+const LoadRequest=Request;const UnloadRequest=Request;
+const Scheduler=struct {io:std.Io,ane_builds:std.atomic.Value(u32)=.init(1)};
+var effects:usize=0;var attributed:bool=false;
+fn effect(sch:*Scheduler,req:*Request) void {effects+=1;attributed=owners.current_group().*!=null;req.done=true;_=sch;}
+fn failLoadRequest(_: *Scheduler,req:*Request,_:anyerror) void {req.fios_failed=true;req.done=true;}
+fn finishUnloadRequest(_: *Scheduler,req:*Request) void {req.done=true;}
+// ACTUAL_PREFIX
+pub fn main(init:std.process.Init)!void {
+ const io=init.io;try owners.shared().initialize(io,@splat(92));
+ const root=try owners.shared().enter(io);try owners.shared().bind(io,root,"fixture/queued-required");
+ owners.current().*=root;var held=(try owners.retainCurrent(io)).?;owners.current().*=null;
+ var entry=Entry{.fios_owner_guard=options.scenario!=0};
+ var req=Request{.entry=&entry,.fios_origins=if(options.scenario==1) &held else null};
+ var sch=Scheduler{.io=io};
+ ACTUAL_CALL
+ const retained=owners.shared().snapshot(io);
+ if(retained.model_count!=1 or !std.mem.eql(u8,retained.models[0].id[0..retained.models[0].len],"fixture/queued-required")) return error.OriginalModelIdentityLost;
+ if(options.scenario==2) {
+  if(effects!=0 or !req.done or !req.fios_failed or !owners.shared().snapshot(io).uncertain) {std.debug.print("FIO_ENROLLED_QUEUE_WITHOUT_ORIGINS\n",.{});return error.MissingOriginIgnored;}
+  if(owners.shared().snapshot(io).owned!=1) return error.OriginalRootLost;
+ } else {
+  if(effects!=1 or !req.done or req.fios_failed or attributed!=(options.scenario==1) or owners.current_group().*!=null or owners.current().*!=null or owners.shared().snapshot(io).uncertain) return error.HealthyControl;
+  if(!held.releaseIfCertain(io)) return error.HealthyRelease;try owners.shared().leave(io,root);
+  if(owners.shared().snapshot(io).owned!=0) return error.LocalReferenceLeak;
+ }
+ if(options.handler==1 and sch.ane_builds.load(.acquire)!=0) return error.ANEBuildCounter;
+ std.debug.print("PASS: actual queued worker prefix preserves required origins and legacy controls\n",.{});
+}

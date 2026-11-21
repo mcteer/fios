@@ -1,0 +1,152 @@
+diff --git a/src/host/engines/served.zig b/src/host/engines/served.zig
+index 1a8d282..0c37e7f 100644
+--- a/src/host/engines/served.zig
++++ b/src/host/engines/served.zig
+@@ -94,6 +94,7 @@ pub const Served = struct {
+     progress: *load_progress.Progress,
+     gauges: *Gauges,
+     metrics: ?*metrics_mod.Metrics,
++    fios_close_attempted: std.atomic.Value(bool) = .init(false),
+ 
+     pub const Spec = struct {
+         model_dir: []const u8,
+@@ -139,10 +140,23 @@ pub const Served = struct {
+         return s;
+     }
+ 
+-    /// Cancels and finishes every request, then frees the engine.
+-    pub fn close(s: *Served) void {
++    /// Caller retains the enclosing reference through this call. A successful
++    /// local destruction is not proof of native completion. On refusal the
++    /// wrapper is retained, but a void callback may already have retired its
++    /// handle: neither reuse nor a second callback is permitted.
++    pub fn tryClose(s: *Served) bool {
++        if (s.fios_close_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
++        const io = std.Io.Threaded.global_single_threaded.io();
++        const cleanup = @import("../../fios/current_cleanup_uncertainty.zig");
++        if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return false;
+         s.table.close(s.handle);
++        if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return false;
+         s.gpa.destroy(s);
++        return true;
++    }
++
++    pub fn close(s: *Served) void {
++        _ = s.tryClose();
+     }
+ 
+     pub fn caps(s: *const Served) abi.Caps {
+@@ -307,3 +321,66 @@ test "fill: grows to the full count an entry point reports" {
+     defer testing.allocator.free(ids);
+     try testing.expectEqualSlices(u32, &.{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 }, ids);
+ }
++
++test "fios current served close retains callback uncertainty without replay" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../fios/request_ownership.zig");
++    const fake = @import("../../testing/fake_engine.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(113));
++    const Trace = struct {
++        freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        io: std.Io,
++        make_unknown: bool,
++        calls: usize = 0,
++        fn close(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            if (self.make_unknown) owners.shared().fence(self.io);
++        }
++    };
++    const engine_table = try page.create(abi.Engine);
++    engine_table.* = fake.own_thread;
++    engine_table.close = Probe.close;
++    for ([_]bool{ false, true }) |unknown| {
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const allocator = trace.allocator();
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .make_unknown = unknown };
++        const progress = try page.create(load_progress.Progress);
++        progress.* = .{};
++        const gauges = try page.create(Gauges);
++        gauges.* = .{};
++        const engine = try allocator.create(Served);
++        engine.* = .{ .gpa = allocator, .kind = .llama, .table = engine_table, .handle = probe, .info = undefined, .host = undefined, .progress = progress, .gauges = gauges, .metrics = null };
++        engine.close();
++        try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        if (unknown) {
++            if (trace.freed) std.debug.print("FIO_CURRENT_SERVED_DROPPED_UNCERTAIN_WRAPPER\n", .{});
++            try std.testing.expect(!trace.freed); // No baseline use-after-free.
++            engine.close();
++            try std.testing.expectEqual(@as(usize, 1), probe.calls);
++            try std.testing.expect(!trace.freed and owners.shared().knownUncertain(io));
++        } else {
++            try std.testing.expect(trace.freed);
++            page.destroy(probe);
++            page.destroy(progress);
++            page.destroy(gauges);
++            page.destroy(trace);
++        }
++    }
++}
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index c365a27..8e4c7d9 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -642,16 +642,7 @@ pub const ModelRegistry = struct {
+         // scheduler is not permission to discard independent native uncertainty
+         // or entries still held by original request/status borrowers.
+         const options = @import("build_options");
+-        const source = @import("../../fios/request_ownership.zig").shared();
+-        source.mutex.lockUncancelable(self.io);
+-        const source_started = source.initialized;
+-        source.mutex.unlock(self.io);
+-        const native_unknown = @import("../../fios/current_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
+-        if (native_unknown) {
+-            if (source_started) source.fence(self.io);
+-            return;
+-        }
+-        if (source_started and source.backendKnownUncertain(self.io)) return;
++        if (@import("../../fios/current_cleanup_uncertainty.zig").known(self.io, options.fios_source_sdk, options.llama_engine)) return;
+         self.mutex.lockUncancelable(self.io);
+         var entries = self.entries.valueIterator();
+         var borrowed = false;
+diff --git a/src/fios/current_cleanup_uncertainty.zig b/src/fios/current_cleanup_uncertainty.zig
+new file mode 100644
+index 0000000..38e9a2d
+--- /dev/null
++++ b/src/fios/current_cleanup_uncertainty.zig
+@@ -0,0 +1,19 @@
++//! Negative cleanup evidence only; no native completion or admission authority.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++const backend = @import("current_backend_uncertainty.zig");
++
++pub fn known(io: std.Io, comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
++    const native_unknown = backend.known(sdk_enabled, llama_enabled);
++    const source = owners.shared();
++    source.mutex.lockUncancelable(io);
++    const started = source.initialized;
++    source.mutex.unlock(io);
++    if (native_unknown) {
++        if (started) source.fence(io);
++        return true;
++    }
++    // Legacy metadata-only callers can precede source startup. Missing startup
++    // is never positive native authority, and cannot hide an actual fence.
++    return started and source.backendKnownUncertain(io);
++}

@@ -1,0 +1,13 @@
+(version 1)
+; A separately approved administrative source experiment, never a task grant.
+(allow default)
+(deny network*)
+(allow network-bind (local ip (param "FIOS_REVIEW_ENDPOINT")))
+(allow network-inbound (local ip (param "FIOS_REVIEW_ENDPOINT")))
+(allow network-bind (local unix-socket (subpath (param "FIOS_REVIEW_STATE"))))
+(allow network-inbound (local unix-socket (subpath (param "FIOS_REVIEW_STATE"))))
+(deny file-write*)
+(allow file-write* (subpath (param "FIOS_REVIEW_STATE")) (literal "/dev/null"))
+(deny process-fork)
+(deny process-exec)
+(allow process-exec (literal (param "FIOS_REVIEW_BINARY")))

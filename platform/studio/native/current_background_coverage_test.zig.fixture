@@ -1,0 +1,38 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const wire = @import("fios/control_protocol.zig");
+const current = @import("fios/current_backend_fences.zig");
+fn request(version: u8) [32]u8 {
+    var result: [32]u8 = @splat(0);@memcpy(result[0..4], "FIB9");result[4] = version;@memcpy(result[8..24], &@as([16]u8,@splat(121)));return result;
+}
+test "fios background coverage stays separate from cleanup and legacy reserved bytes" {
+    const io=std.testing.io;var tracker:owners.Tracker=.{.primary_guard=false};try tracker.initialize(io,@splat(121));
+    const Source=struct {fn read() wire.CurrentBackendFenceReadings {return .{.sdk_uncertain=false,.sdk_residency_refresh_untracked=true};}};
+    const old=wire.dispatchCurrentBackendFences(&tracker,io,&request(2),Source.read);
+    const new=wire.dispatchCurrentBackendFences(&tracker,io,&request(3),Source.read);
+    try std.testing.expect(old[4]==2 and old[6]==1 and old[7]==0 and std.mem.allEqual(u8,old[40..64],0));
+    try std.testing.expect(new[4]==3 and new[6]==1 and new[7]==0 and new[40]==2 and std.mem.allEqual(u8,new[41..64],0));
+    try std.Io.Dir.cwd().writeFile(io,.{.sub_path="background-native-frame.bin",.data=&new});
+}
+test "fios background coverage unavailable and observed false remain distinct" {
+    const io=std.testing.io;var tracker:owners.Tracker=.{.primary_guard=false};try tracker.initialize(io,@splat(121));
+    const Source=struct {fn read() wire.CurrentBackendFenceReadings {return .{.sdk_residency_refresh_untracked=false};}};
+    const missing=wire.dispatchCurrentBackendFences(&tracker,io,&request(3),null);
+    const observed=wire.dispatchCurrentBackendFences(&tracker,io,&request(3),Source.read);
+    try std.testing.expect(missing[40]==0 and observed[40]==1 and missing[7]==0 and observed[7]==0);
+}
+test "fios background coverage malformed or foreign requests never invoke source" {
+    const io=std.testing.io;var tracker:owners.Tracker=.{.primary_guard=false};try tracker.initialize(io,@splat(121));
+    const Source=struct {var calls:usize=0;fn read() wire.CurrentBackendFenceReadings {calls+=1;return .{.sdk_residency_refresh_untracked=true};}};
+    var malformed=request(4);const invalid=wire.dispatchCurrentBackendFences(&tracker,io,&malformed,Source.read);
+    try std.testing.expect(invalid[5]==@intFromEnum(wire.Status.invalid));
+    malformed=request(3);malformed[7]=1;const reserved=wire.dispatchCurrentBackendFences(&tracker,io,&malformed,Source.read);
+    try std.testing.expect(reserved[5]==@intFromEnum(wire.Status.invalid));
+    malformed=request(3);malformed[8]=0;const foreign=wire.dispatchCurrentBackendFences(&tracker,io,&malformed,Source.read);
+    try std.testing.expect(foreign[5]==@intFromEnum(wire.Status.wrong_instance) and Source.calls==0);
+}
+test "fios background coverage compiled out sources stay unavailable" {
+    const io=std.testing.io;var tracker:owners.Tracker=.{.primary_guard=false};try tracker.initialize(io,@splat(121));
+    const response=wire.dispatchCurrentBackendFences(&tracker,io,&request(3),current.read);
+    try std.testing.expect(response[6]==0 and response[7]==0 and response[40]==0);
+}

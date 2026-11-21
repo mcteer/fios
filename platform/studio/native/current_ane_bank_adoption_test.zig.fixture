@@ -1,0 +1,75 @@
+
+// CPU-only append/close-result controls; no native allocation/model/API failure.
+const FiosBankAdoptionProbe = struct {
+    var blocked: bool = false;
+    var accepts: bool = true;
+    var closes: usize = 0;
+    fn negative() bool {
+        return blocked;
+    }
+    fn close(_: ?*MsvAneMlp) bool {
+        closes += 1;
+        return accepts;
+    }
+    const Trace = struct {
+        refuse_append: bool,
+        frees: usize = 0,
+        fn alloc(raw: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (self.refuse_append) return null;
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.frees += 1;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator {
+            return .{ .ptr = self, .vtable = &vtable };
+        }
+    };
+};
+fn fiosBankAdoption(refuse_append: bool, blocked: bool, accepts: bool) !void {
+    const P = FiosBankAdoptionProbe;
+    P.blocked = blocked;
+    P.accepts = accepts;
+    P.closes = 0;
+    var trace: P.Trace = .{ .refuse_append = refuse_append };
+    var eng: AnePrefill = .{ .allocator = trace.allocator(), .io = testing.io, .units = &.{}, .units_cap = 0, .hidden = 1, .ffn = 1, .rows = 1, .chunk_rows = 1 };
+    var unit: Unit = .{ .parent = &eng, .instance = 0, .layers = &.{}, .gdn_layers = &.{} };
+    const compiled: *MsvAneMlp = @ptrFromInt(32); // CPU identity only, never passed to native C.
+    const result = unit.adoptBankWith(compiled, true, P.negative, P.close);
+    const retained = blocked or (refuse_append and !accepts);
+    try testing.expectEqual(!blocked and !refuse_append, result);
+    if (retained and unit.fios_unpublished_bank != compiled) {
+        std.debug.print("FIO_ANE_SDK_UNPUBLISHED_BANK_LOST\n", .{});
+        try testing.expect(false);
+    }
+    try testing.expectEqual(@as(usize, if (!blocked and refuse_append) 1 else 0), P.closes);
+    if (retained) {
+        if (unit.prepareDeinitWith(true, P.negative, P.close)) {
+            std.debug.print("FIO_ANE_SDK_PENDING_BANK_DISPOSED\n", .{});
+            try testing.expect(false);
+        }
+        try testing.expectEqual(@as(usize, 0), trace.frees);
+        try testing.expect(unit.fios_unpublished_bank == compiled and unit.banks.items.len == 0);
+    } else {
+        try testing.expect(unit.fios_unpublished_bank == null);
+        try testing.expectEqual(@as(usize, if (refuse_append) 0 else 1), unit.banks.items.len);
+        if (!refuse_append) try testing.expect(unit.banks.items[0] == compiled);
+        unit.banks.deinit(eng.allocator);
+    }
+}
+test "fios current SDK ANE adoption retains compiled bank after rejected cleanup" {
+    try fiosBankAdoption(true, false, false);
+}
+test "fios current SDK ANE adoption retains compiled bank after known uncertainty" {
+    try fiosBankAdoption(false, true, true);
+}
+test "fios current SDK ANE adoption preserves healthy array publication" {
+    try fiosBankAdoption(false, false, true);
+}
+test "fios current SDK ANE adoption accepts local disposal after CPU append refusal" {
+    try fiosBankAdoption(true, false, true);
+}

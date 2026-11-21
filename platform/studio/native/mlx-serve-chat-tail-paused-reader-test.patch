@@ -1,0 +1,83 @@
+--- a/src/host/api/chat_stream.zig
++++ b/src/host/api/chat_stream.zig
+@@ -1141,3 +1141,80 @@
+     defer std.testing.allocator.free(raw);
+     try std.testing.expect(std.mem.endsWith(u8, raw, "data: [DONE]\n\n"));
+ }
++
++test "fios local SSE tail retains owner while the reader pauses" {
++    const ownership = @import("../../fios/request_ownership.zig");
++    const io = std.testing.io;
++    const tracker = ownership.shared();
++    try tracker.initialize(io, @splat(28));
++    const token = try tracker.enter(io);
++    defer tracker.leave(io, token) catch {};
++    const correlation: ownership.CorrelationID = @splat(15);
++    try tracker.associate(io, token, correlation);
++    try tracker.bind(io, token, "fixture/paused-tail");
++    try tracker.active(io, token);
++
++    var sockets: [2]std.posix.fd_t = undefined;
++    try std.testing.expectEqual(@as(c_int, 0), std.c.socketpair(1, 1, 0, &sockets));
++    defer _ = std.c.close(sockets[0]);
++    defer _ = std.c.close(sockets[1]);
++    const requested_buffer: c_int = 4096;
++    try std.testing.expectEqual(@as(c_int, 0), std.c.setsockopt(sockets[0], std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, &requested_buffer, @sizeOf(c_int)));
++    var actual_buffer: c_int = 0;
++    var option_length: std.c.socklen_t = @sizeOf(c_int);
++    try std.testing.expectEqual(@as(c_int, 0), std.c.getsockopt(sockets[0], std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, &actual_buffer, &option_length));
++
++    const allocator = std.testing.allocator;
++    const usage = try allocator.alloc(u8, 64 * 1024);
++    defer allocator.free(usage);
++    const prefix = "{\"fixture\":\"";
++    @memset(usage, 'a');
++    @memcpy(usage[0..prefix.len], prefix);
++    @memcpy(usage[usage.len - 2 ..], "\"}");
++    try std.testing.expect(actual_buffer > 0 and actual_buffer < usage.len);
++
++    const Writer = struct {
++        finished: std.atomic.Value(bool) = .init(false),
++        result: anyerror!void = {},
++        fn run(writer: *@This(), fd: std.posix.fd_t, owner: ownership.Token, usage_json: []const u8) void {
++            defer _ = std.c.shutdown(fd, 1);
++            defer writer.finished.store(true, .release);
++            var conn: Conn = undefined;
++            conn.init(.{ .socket = .{ .handle = fd, .address = undefined } }, std.testing.io);
++            conn.fios_response_owner = owner;
++            writer.result = sendStreamTail(std.testing.allocator, &conn, 1, "fixture/paused-tail", .{ .reason = "stop", .details = null }, null, usage_json, null);
++        }
++    };
++    var writer: Writer = .{};
++    var body: std.ArrayList(u8) = .empty;
++    defer body.deinit(allocator);
++    {
++        const thread = try std.Thread.spawn(.{}, Writer.run, .{ &writer, sockets[0], token, usage });
++        defer {
++            _ = std.c.shutdown(sockets[0], 2);
++            thread.join();
++        }
++        var readable = [_]std.posix.pollfd{.{ .fd = sockets[1], .events = std.posix.POLL.IN, .revents = 0 }};
++        try std.testing.expectEqual(@as(c_int, 1), std.c.poll(&readable, 1, 1500));
++        try std.testing.expect(!writer.finished.load(.acquire));
++        const held = tracker.correlationSnapshot(io, correlation);
++        try std.testing.expect(held.found and !held.uncertain);
++        try std.testing.expectEqual(token.sequence, held.root_sequence);
++        try std.testing.expectEqual(@as(usize, 1), held.responding);
++
++        var chunk: [4096]u8 = undefined;
++        for (0..32) |_| {
++            readable[0].revents = 0;
++            try std.testing.expectEqual(@as(c_int, 1), std.c.poll(&readable, 1, 1500));
++            const count = std.c.recv(sockets[1], &chunk, chunk.len, 0);
++            try std.testing.expect(count >= 0);
++            if (count == 0) break;
++            try body.appendSlice(allocator, chunk[0..@intCast(count)]);
++        }
++    }
++    try writer.result;
++    try std.testing.expect(std.mem.endsWith(u8, body.items, "data: [DONE]\n\n"));
++    try std.testing.expect(std.mem.indexOf(u8, body.items, usage) != null);
++    const after_write = tracker.correlationSnapshot(io, correlation);
++    try std.testing.expect(after_write.found and after_write.root_sequence == token.sequence);
++}

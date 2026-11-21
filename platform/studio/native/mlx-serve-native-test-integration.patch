@@ -1,0 +1,81 @@
+--- a/src/fios/current_ane_run_uncertainty.zig
++++ b/src/fios/current_ane_run_uncertainty.zig
+@@ -1,10 +1,15 @@
+-//! Process-wide negative evidence from a reported ANE run outcome only.
+-//! Success, local cleanup and a new source epoch cannot reset this latch.
+-//! No device call, callback, allocation or positive terminal/admission claim.
+-const std = @import("std");
+-const shared_util = @import("../sdk/util/shared.zig");
+-const storage = shared_util.Shared(std.atomic.Value(bool), "fios_ane_reported_run_uncertainty", .init(false));
+-pub fn known() bool { return storage.get().load(.acquire); }
+-pub fn observeOutcome(success: bool) void {
+-    if (!success) storage.get().store(true, .release);
++//! Host compatibility edge to the shared SDK-safe sticky latch.
++const source = @import("../sdk/ane/run_uncertainty.zig");
++pub const known = source.known;
++pub const observeOutcome = source.observeOutcome;
++
++test "fios ANE reported run latch preserves shared SDK host uncertainty" {
++    const testing = @import("std").testing;
++    const initial = known();
++    observeOutcome(true);
++    try testing.expectEqual(initial, source.known());
++    source.observeOutcome(false);
++    try testing.expect(known());
++    observeOutcome(true);
++    try testing.expect(source.known());
+ }
+--- a/src/sdk/ane/source_guard.zig
++++ b/src/sdk/ane/source_guard.zig
+@@ -8,7 +8,7 @@
+     // SDK-safe negative readers only: the tracker remains behind its fixed
+     // host ABI. No callback, cleanup or positive completion/admission claim.
+     return msv_ane_source_uncertainty() != 0 or
+-        @import("../../fios/current_ane_run_uncertainty.zig").known() or
++        @import("run_uncertainty.zig").known() or
+         fios_native_request_owners_known_uncertain() != 0;
+ }
+ pub fn requireCertain() error{FiosAneSourceUncertain}!void {
+--- a/build/macos.zig
++++ b/build/macos.zig
+@@ -317,6 +317,15 @@
+         "qwen-preprocess-fixture",
+         "CPU reference fixture for the gated Qwen preprocessing parity test",
+     );
++    // Match the executable's real selected ownership hooks in the test root.
++    if (g.fios_source_sdk) g.test_mod.addCSourceFile(.{
++        .file = b.path("src/fios/current_sdk_owners.cpp"),
++        .flags = &.{ "-std=c++20", "-DNDEBUG" },
++    });
++    if (g.fios_source_ds4) g.test_mod.addCSourceFile(.{
++        .file = b.path("src/fios/current_ds4_owners.cpp"),
++        .flags = &.{ "-std=c++20", "-DNDEBUG" },
++    });
+     const unit_tests = b.addTest(.{
+         .root_module = g.test_mod,
+         .filters = if (test_filter) |f| &.{f} else &.{},
+--- a/src/tests.zig
++++ b/src/tests.zig
+@@ -14,6 +14,9 @@
+ pub const exl3 = @import("sdk/quant/exl3/format.zig");
+ pub const env = @import("env.zig");
+ comptime {
++    if (@import("build_options").fios_source_sdk) {
++        _ = @import("fios/sdk_request_ownership.zig");
++    }
+     // The plugins' host surface: plugin_host.zig's list, every name re-exported here.
+     @import("plugin_host_check.zig").reexports(@This());
+ }
+--- /dev/null
++++ b/src/sdk/ane/run_uncertainty.zig
+@@ -0,0 +1,10 @@
++//! Process-wide negative evidence from a reported ANE run outcome only.
++//! Success, local cleanup and a new source epoch cannot reset this latch.
++//! No device call, callback, allocation or positive terminal/admission claim.
++const std = @import("std");
++const shared_util = @import("../util/shared.zig");
++const storage = shared_util.Shared(std.atomic.Value(bool), "fios_ane_reported_run_uncertainty", .init(false));
++pub fn known() bool { return storage.get().load(.acquire); }
++pub fn observeOutcome(success: bool) void {
++    if (!success) storage.get().store(true, .release);
++}

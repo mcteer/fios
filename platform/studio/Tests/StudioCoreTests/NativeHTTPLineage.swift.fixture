@@ -1,0 +1,20 @@
+import Foundation
+import Darwin
+import CryptoKit
+@main struct NativeHTTPLineage {
+    static func main()throws {
+        let args=CommandLine.arguments
+        guard args.count==6,let pid=Int32(args[2]) else {throw NativeControlError.invalid}
+        let start=try WorkerResources.startIdentifier(pid:pid)
+        let executable=try VerifiedExecutable(path:args[1],sha256:SHA256.hash(data:try Data(contentsOf:URL(fileURLWithPath:args[1]))).map {String(format:"%02x",$0)}.joined())
+        let peer=NativeControlPeer(pid:pid,start:start,executable:executable)
+        let client=NativeControlClient(path:args[3],peer:peer,version:3,sourceLineageClock:true,queuedLineage:true)
+        let sample=try client.lineage(instance:args[4],correlationID:args[5]),value=sample.lineage
+        var result:[String:Any]=["found":value.found,"uncertain":value.uncertain,"root":String(value.rootSequence),
+            "owners":value.owners,"references":value.references,"ingress":value.ingress,"preparing":value.preparing,
+            "active":value.active,"responding":value.responding,"queried_at":sample.sampledAt]
+        if let captured=value.sourceCapturedAt {result["captured_at"]=captured}
+        if let operations=value.operations {result["operations"]=["queued":operations.queued,"active":operations.active]}
+        FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject:result,options:[.sortedKeys]));FileHandle.standardOutput.write(Data([10]))
+    }
+}

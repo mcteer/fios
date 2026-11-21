@@ -1,0 +1,23 @@
+#import "ane_bridge.m"
+#import "ane_mlp.m"
+#include <assert.h>
+int main(int argc,char **argv) {
+ (void)argv;@autoreleasepool {
+  IOSurfaceRef surface=msv_ane_bridge_surface(16);assert(surface);
+  CFIndex original=CFGetRetainCount(surface);
+  msv_ane_model *raw=calloc(1,sizeof(*raw));assert(raw);
+  msv_ane_mlp *wrapper=calloc(1,sizeof(*wrapper));assert(wrapper);
+  wrapper->model=raw;wrapper->input_surface=(IOSurfaceRef)CFRetain(surface);wrapper->output_surface=(IOSurfaceRef)CFRetain(surface);
+  IOSurfaceRef ins[]={surface};assert(fios_ane_model_capture_surfaces(raw,ins,1,surface));
+  if(argc==2)raw->fios_pending_binding=(__bridge_retained void *)[NSObject new];
+  CFIndex before=CFGetRetainCount(surface);assert(before==original+4);
+  msv_ane_mlp_free(wrapper);
+  if(argc==2){
+   if(CFGetRetainCount(surface)!=before){fprintf(stderr,"FIO_ANE_MLP_OUTER_SURFACES_DROPPED_AFTER_RAW_REFUSAL\n");return 23;}
+   assert(msv_ane_source_uncertainty());
+   assert(wrapper->model==raw && !msv_ane_mlp_try_free(wrapper));
+   assert(CFGetRetainCount(surface)==before);
+  }else assert(CFGetRetainCount(surface)==original && !msv_ane_source_uncertainty());
+  CFRelease(surface);return 0;
+ }
+}

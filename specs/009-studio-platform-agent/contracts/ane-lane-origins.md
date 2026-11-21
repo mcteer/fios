@@ -1,0 +1,7 @@
+# Original ownership across the existing ANE lane
+
+The existing ANE engine posts a round's second-lane request handles to a persistent CPU thread and waits for its acknowledgement. The current lane handoff does not copy the caller's Fios ownership group or enter it on that thread. This source increment retains the original group before publication, enters it only from stable lane storage, and restores TLS before acknowledgement. It does not add an engine or change numerical operations.
+
+The opted-in source path must refuse a missing original scope before publishing either lane's work. Failed entry or an independent source fence retains the original references and reports failure; completion, thread join and sender acknowledgement cannot clear uncertainty. The normal unselected/unattributed path keeps its existing optional behavior. A pending lane job must not be overwritten by a later post.
+
+CPU fixtures execute the actual lane methods with the native request call replaced by an explicit metadata callback, using the actual tracker and queue Scope. They must first reproduce missing worker TLS, then check exact original identity, retain-before-publication, restoration, ordinary repeated rounds, unselected behavior and refusal before effects. Enclosing builds and empty-model runtime checks are separate; no fixture issues native terminal, idle, all-client or admission authority. Real ANE/model and installed acceptance remain open.

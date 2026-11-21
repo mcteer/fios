@@ -1,0 +1,47 @@
+
+// Actual Dit cleanup method with CPU-only callbacks and empty rest metadata.
+// The fake child identity is never dereferenced or passed to native C.
+const FiosKreaAneCloseProbe = struct {
+    var calls: usize = 0;
+    var blocked: bool = false;
+    var mode: enum { preexisting, refused, after, healthy } = .healthy;
+    fn negative() bool {
+        return blocked;
+    }
+    fn close(_: *ane.AnePrefill) bool {
+        calls += 1;
+        if (mode == .after) blocked = true;
+        return mode == .after or mode == .healthy;
+    }
+};
+fn fiosKreaAneClose(mode: @TypeOf(FiosKreaAneCloseProbe.mode)) !void {
+    const P = FiosKreaAneCloseProbe;
+    P.mode = mode;
+    P.calls = 0;
+    P.blocked = mode == .preexisting;
+    var d: Dit = undefined;
+    d.allocator = std.heap.page_allocator;
+    d.ane_rest = &.{};
+    const original: *ane.AnePrefill = @ptrFromInt(64);
+    d.ane_eng = original;
+    const accepted = d.aneTryDeinitWith(true, P.negative, P.close);
+    if (accepted != (mode == .healthy)) {
+        std.debug.print("FIO_KREA_ANE_CLOSE_DROPPED_UNCERTAIN_PARENT\n", .{});
+        try std.testing.expect(false);
+    }
+    try std.testing.expectEqual(@as(usize, if (mode == .preexisting) 0 else 1), P.calls);
+    try std.testing.expect(d.ane_eng == (if (mode == .preexisting or mode == .refused) original else null));
+    try std.testing.expect(d.ane_rest.len == 0);
+}
+test "fios current Krea ANE close retains preexisting uncertainty" {
+    try fiosKreaAneClose(.preexisting);
+}
+test "fios current Krea ANE close retains rejected child" {
+    try fiosKreaAneClose(.refused);
+}
+test "fios current Krea ANE close retains parent after later uncertainty" {
+    try fiosKreaAneClose(.after);
+}
+test "fios current Krea ANE close accepts healthy local disposal" {
+    try fiosKreaAneClose(.healthy);
+}

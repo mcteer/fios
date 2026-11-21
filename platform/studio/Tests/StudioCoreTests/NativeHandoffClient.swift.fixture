@@ -1,0 +1,45 @@
+import Foundation
+import CryptoKit
+
+@main enum HandoffClientFixture {
+    static func main()throws {
+        let args=CommandLine.arguments
+        guard args.count==8,let pid=Int32(args[2]) else {throw RuntimeError.invalid}
+        let directory=URL(fileURLWithPath:args[1]),image=args[3],socket=args[4],job=args[5],instance=args[6],step=args[7]
+        let executable=try VerifiedExecutable(path:image,sha256:SHA256.hash(data:Data(contentsOf:URL(fileURLWithPath:image))).map{String(format:"%02x",$0)}.joined())
+        let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
+        let client=NativeControlClient(path:socket,peer:peer)
+        let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
+            managerEpoch:"00000000-0000-4000-8000-000000000002",nativeEpoch:instance,
+            canonicalModel:"fixture/model-a",nativeModel:"fixture/model-a",sequence:1,sampledAt:10000)
+        let id=try scope.nativeRequestCorrelationID(job:job,attempt:0),journal=try Journal(directory:directory)
+        if step=="register" {
+            try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope);try journal.markDispatched(job:job,attempt:0)
+            let registered=try client.registerHandoff(instance:instance,correlationID:id).result
+            guard registered.state == .pending,!registered.uncertain else {throw RuntimeError.invalid}
+            let sample=try client.lineage(instance:instance,correlationID:id)
+            guard sample.lineage.found,sample.lineage.rootSequence==registered.rootSequence else {throw RuntimeError.invalid}
+            _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:sample,now:HostResources.nowMilliseconds())
+            guard try journal.originalNativeRoot(job:job,attempt:0,scope:scope,peer:peer)==registered.rootSequence else {throw RuntimeError.invalid}
+            print("\(id) \(registered.rootSequence)")
+        } else {
+            guard let root=try journal.originalNativeRoot(job:job,attempt:0,scope:scope,peer:peer) else {throw RuntimeError.invalid}
+            let cancelled=try client.cancelHandoff(instance:instance,correlationID:id,rootSequence:root).result
+            if step=="cancel" {guard cancelled.state == .cancelled,!cancelled.uncertain else {throw RuntimeError.invalid}}
+            else if step=="consumed" {
+                guard cancelled.state != .cancelled else {throw RuntimeError.invalid}
+                let deadline=ProcessInfo.processInfo.systemUptime+2
+                var observed=false
+                while ProcessInfo.processInfo.systemUptime<deadline && !observed {
+                    let retired=try client.retirement(instance:instance,correlationID:id,rootSequence:root)
+                    observed=try journal.observeRetirement(job:job,attempt:0,scope:scope,peer:peer,sample:retired,now:HostResources.nowMilliseconds()) != nil
+                    if !observed {Thread.sleep(forTimeInterval:0.025)}
+                }
+                guard observed else {throw RuntimeError.deadline}
+            } else {throw RuntimeError.invalid}
+            let expected=step=="consumed" ? 2:1
+            guard try journal.unresolvedCount()==expected,try journal.uncertainCount()==expected else {throw RuntimeError.invalid}
+            print("PASS \(step): original-root handoff, separate durable inference claim retained")
+        }
+    }
+}

@@ -1,0 +1,61 @@
+const std=@import("std");
+const options=@import("build_options");
+const owners=@import("../../fios/request_ownership.zig");
+const sdk=@import("../../fios/sdk_request_ownership.zig");
+const fios_origins=@import("../../sdk/util/warm_request_origins.zig");
+const fios_unproven_prefetch=@import("../../sdk/util/engram_prefetch_uncertainty.zig").storage;
+var entered=std.atomic.Value(bool).init(false);
+var unblock=std.atomic.Value(bool).init(false);
+var observed=std.atomic.Value(bool).init(false);
+var expected:[2]owners.Token=undefined;
+fn tick()void {const ts:std.c.timespec=.{.sec=0,.nsec=std.time.ns_per_ms};_=std.c.nanosleep(&ts,null);}
+fn wait(flag:*std.atomic.Value(bool))!void {for(0..3000)|_|{if(flag.load(.acquire))return;tick();}return error.FiniteFixtureDeadline;}
+const Table=struct {
+ const Raw=struct{fn deinit(_: @This(),_:std.mem.Allocator)void{}};
+ fn read(_: *const Table,_:std.mem.Allocator,_:[]const u32)!Raw {
+  entered.store(true,.release);try wait(&unblock);
+  const group=owners.current_group().* orelse return error.MissingOriginalGroup;
+  if(group.len!=2)return error.ChangedOriginalGroup;
+  for(group,expected)|actual,original|if(actual.sequence!=original.sequence or actual.slot!=original.slot or !std.mem.eql(u8,&actual.instance,&original.instance))return error.ChangedOriginalRoot;
+  observed.store(true,.release);return .{};
+ }
+};
+fn begin()!*Prefetch {
+ const io=std.testing.io;try owners.shared().initialize(io,@splat(9));try sdk.initialize(io);
+ expected=.{try owners.shared().enter(io),try owners.shared().enter(io)};
+ for(expected)|root| {try owners.shared().bind(io,root,"fixture/engram-native-custody");try owners.shared().active(io,root);}
+ owners.current_group().*=&expected;
+ const table=struct{var value=Table{};};
+ const p=try Prefetch.start(std.heap.c_allocator,&.{&table.value},&.{.{.at=0,.len=1,.ids=&.{7}}},1,1);
+ owners.current_group().*=null;owners.current().*=null;
+ // The captured real host descriptor now owns the only remaining references.
+ for(expected)|root|try owners.shared().leave(io,root);
+ try wait(&entered);try std.testing.expectEqual(@as(usize,2),owners.shared().snapshot(io).owned);
+ try std.testing.expectEqual(@as(u32,1),sdk.diagnostic().active_contexts);
+ return p;
+}
+test "native Engram healthy release follows original caller retirement" {
+ const p=try begin();unblock.store(true,.release);try wait(&observed);
+ try std.testing.expect(p.fiosStopWithin(std.time.ns_per_s));p.finish();
+ try std.testing.expectEqual(@as(usize,0),owners.shared().snapshot(std.testing.io).owned);
+ try std.testing.expectEqual(@as(u32,0),sdk.diagnostic().active_contexts);try std.testing.expect(!sdk.diagnostic().uncertain);
+ try std.testing.expect(fios_unproven_prefetch.get().load(.acquire));
+}
+test "native Engram timeout retains both original roots after late join" {
+ const p=try begin();try std.testing.expect(!p.fiosStopWithin(std.time.ns_per_ms));
+ unblock.store(true,.release);try wait(&observed);try wait(&p.fios_joined);p.finish();
+ try std.testing.expectEqual(@as(usize,2),owners.shared().snapshot(std.testing.io).owned);
+ try std.testing.expect(sdk.diagnostic().uncertain and owners.shared().knownUncertain(std.testing.io));
+ try std.testing.expectEqual(@as(u32,1),sdk.diagnostic().active_contexts);
+ try std.testing.expect(p.fios_origin!=null and p.grids.len==1 and fiosPrefetchCleanupUncertain());
+}
+test "native Engram CPU cleanup cannot clear independent native uncertainty" {
+ const p=try begin();unblock.store(true,.release);try wait(&observed);
+ try std.testing.expect(p.fiosStopWithin(std.time.ns_per_s));
+ sdk.fios_native_request_owners_uncertain();p.finish();
+ try std.testing.expectEqual(@as(usize,2),owners.shared().snapshot(std.testing.io).owned);
+ try std.testing.expect(sdk.diagnostic().uncertain and owners.shared().knownUncertain(std.testing.io));
+ try std.testing.expectEqual(@as(u32,1),sdk.diagnostic().active_contexts);
+ try std.testing.expect(!fiosPrefetchCleanupUncertain());
+}
+@@PREFETCH@@

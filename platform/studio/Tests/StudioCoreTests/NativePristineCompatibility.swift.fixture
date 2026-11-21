@@ -1,0 +1,65 @@
+import Foundation
+import CSQLite
+import CryptoKit
+
+@main
+struct PristineCompatibilityFixture {
+    static func main()throws {
+        let reaped=CommandLine.arguments.count==4 && CommandLine.arguments[3]=="--reaped"
+        guard CommandLine.arguments.count==3 || reaped else {throw RuntimeError.invalid}
+        let state=URL(fileURLWithPath:CommandLine.arguments[1]),bundle=URL(fileURLWithPath:CommandLine.arguments[2])
+        let job=UUID().uuidString.lowercased(),scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
+            managerEpoch:UUID().uuidString.lowercased(),nativeEpoch:String(repeating:"c",count:32),canonicalModel:"fixture/model",nativeModel:"fixture/model",sequence:1,sampledAt:10000)
+        let nonce:String
+        do {
+            let journal=try Journal(directory:state)
+            _=try ArtifactStore(directory:state.appendingPathComponent("artifacts"))
+            try journal.claim(job:job,attempt:0,model:scope.canonicalModel,scope:scope)
+            nonce=try journal.planWorkerStart(job:job,attempt:0).nonce
+            try journal.markDispatched(job:job,attempt:0);try journal.markUncertain(job:job,attempt:0)
+            let peer=NativeControlPeer(pid:42,start:99,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"d",count:64)))
+            let sample=NativeRequestLineageSample(peer:peer,sampledAt:10000,lineage:NativeRequestLineage(instance:scope.nativeEpoch,
+                correlationID:try scope.nativeRequestCorrelationID(job:job,attempt:0),sampleSequence:1,rootSequence:UInt64.max,found:true,uncertain:false,
+                references:1,owners:1,ingress:0,preparing:1,active:0,responding:0))
+            _=try journal.observeLineage(job:job,attempt:0,scope:scope,peer:peer,sample:sample,now:10000)
+        }
+        // Serialization-only fixture: never represents an executed close,
+        // native proof, real factory evidence or application admission.
+        var database:OpaquePointer?
+        guard sqlite3_open_v2(state.appendingPathComponent("state.sqlite").path,&database,SQLITE_OPEN_READWRITE,nil)==SQLITE_OK,let database else {throw JournalError.storage}
+        var statement:OpaquePointer?
+        guard sqlite3_prepare_v2(database,"SELECT payload FROM native_lineages",-1,&statement,nil)==SQLITE_OK,let statement,
+              sqlite3_step(statement)==SQLITE_ROW,let text=sqlite3_column_text(statement,0) else {throw JournalError.storage}
+        var object=try JSONSerialization.jsonObject(with:Data(String(cString:text).utf8)) as! [String:Any]
+        sqlite3_finalize(statement)
+        object["version"]=4
+        var closure:[String:Any]=["version":reaped ? 2:1,"state":"attempted","launchNonce":nonce,"workerMetadataVersion":3]
+        var grantSQL=""
+        if reaped {
+            let grant=WorkerGrant(pid:42,start:99,boot:try HostBoot.identity())
+            let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
+            let bytes=try encoder.encode(grant),payload=String(decoding:bytes,as:UTF8.self).replacingOccurrences(of:"'",with:"''")
+            closure["localProducer"]="reaped_zero_post"
+            closure["grantSHA256"]=SHA256.hash(data:bytes).map{String(format:"%02x",$0)}.joined()
+            grantSQL="INSERT INTO worker_grants VALUES('\(job)',0,'\(payload)',1); "
+        }
+        object["preparationClosure"]=closure
+        let payload=String(decoding:try JSONSerialization.data(withJSONObject:object,options:[.sortedKeys]),as:UTF8.self).replacingOccurrences(of:"'",with:"''")
+        let status=sqlite3_exec(database,"BEGIN IMMEDIATE; UPDATE worker_launches SET reaped=1; \(grantSQL)UPDATE native_lineages SET payload='\(payload)'; COMMIT",nil,nil,nil)
+        guard sqlite3_close(database)==SQLITE_OK,status==SQLITE_OK else {throw JournalError.storage}
+        do {
+            let journal=try Journal(directory:state)
+            guard try journal.preparationClosureReceipt(job:job,attempt:0)?.state=="attempted",try journal.uncertainCount()==1 else {throw JournalError.invalid}
+        }
+        let receipt=try StoppedStateBackup.create(directory:state,destination:bundle)
+        _=try StoppedStateBackup.verifyCompatibility(directory:bundle,expectedSHA256:receipt.sha256)
+        let restored=bundle.deletingLastPathComponent().appendingPathComponent("current-restored")
+        _=try StoppedStateBackup.restore(directory:bundle,expectedSHA256:receipt.sha256,destination:restored)
+        do {
+            let journal=try Journal(directory:restored)
+            guard try journal.preparationClosureReceipt(job:job,attempt:0)?.state=="attempted",try journal.uncertainCount()==1,
+                  try journal.unresolvedCount()==1 else {throw JournalError.invalid}
+        }
+        print(String(decoding:try JSONSerialization.data(withJSONObject:["backup_sha256":receipt.sha256,"closure_version":reaped ? 2:1,"state":"attempted","uncertain":1,"native_proof":false],options:[.sortedKeys]),as:UTF8.self))
+    }
+}

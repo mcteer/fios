@@ -1,0 +1,176 @@
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -782,6 +782,11 @@
+     // before retaining any root. No backend callback runs under this mutex.
+     pub fn beginQueued(self: *Tracker, io: std.Io, origins: *const Retained) !QueueTicket {
+         self.observeBackendUncertainty(io);
++        return self.beginQueuedKnown(io, origins);
++    }
++    // Existing enclosing locks: caller checks fixed negative/cached source
++    // evidence. No dynamic backend callback, native permit or completion proof.
++    pub fn beginQueuedKnown(self: *Tracker, io: std.Io, origins: *const Retained) !QueueTicket {
+         self.mutex.lockUncancelable(io);
+         defer self.mutex.unlock(io);
+         if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+@@ -858,6 +863,11 @@
+     // this method cannot issue terminal/not-sent/native-quiescence evidence.
+     pub fn retireQueued(self: *Tracker, io: std.Io, ticket: QueueTicket) !void {
+         self.observeBackendUncertainty(io);
++        return self.retireQueuedKnown(io, ticket);
++    }
++    // Existing enclosing locks: caller checks fixed negative/cached source
++    // evidence. No dynamic backend callback, native permit or completion proof.
++    pub fn retireQueuedKnown(self: *Tracker, io: std.Io, ticket: QueueTicket) !void {
+         self.mutex.lockUncancelable(io);
+         defer self.mutex.unlock(io);
+         if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+--- a/src/engines/own_thread/book.zig
++++ b/src/engines/own_thread/book.zig
+@@ -22,6 +22,8 @@
+ pub const Req = struct {
+     // Trusted original attribution survives caller/connection retirement.
+     fios_owner: ?fios_ownership.Retained = null,
++    fios_queue_ticket: ?fios_ownership.QueueTicket = null,
++    fios_queue_started: bool = false,
+     fios_finish_attempted: std.atomic.Value(bool) = .init(false),
+     fios_quarantined: bool = false,
+     fios_quarantine_next: ?*Req = null,
+@@ -149,8 +151,8 @@
+             out.* = v;
+             return null;
+         }
+-        const req = b.copy(id, r, sink) catch {
+-            out.* = abi.Verdict.refuse(.failed, "out of memory");
++        const req = b.copy(id, r, sink) catch |err| {
++            out.* = if (err == error.OutOfMemory) abi.Verdict.refuse(.failed, "out of memory") else abi.Verdict.refuse(.failed, "native request ownership unavailable");
+             return null;
+         };
+         b.mu.lockUncancelable(io);
+@@ -173,6 +175,12 @@
+     fn copy(b: *Book, id: u64, r: *const abi.Request, sink: abi.Sink) !*Req {
+         const fio_owner = try fios_ownership.retainCurrent(io);
+         errdefer if (fio_owner) |held| { _ = held.releaseIfCertain(io); };
++        // Host submission can hold its queue lock. add() already observed
++        // independent negative evidence; this edge uses cached metadata only.
++        const queue_ticket = if (fio_owner) |*held| try held.tracker.beginQueuedKnown(io, held) else null;
++        errdefer if (queue_ticket) |ticket| if (fio_owner) |held| {
++            held.tracker.retireQueuedKnown(io, ticket) catch { held.tracker.fence(io); };
++        };
+         const req = try b.gpa.create(Req);
+         errdefer b.gpa.destroy(req);
+         const prompt = try b.gpa.dupe(u32, abi.items(u32, r.prompt));
+@@ -184,6 +192,7 @@
+         sampling.logit_bias = abi.span(abi.Bias, bias);
+         req.* = .{
+             .fios_owner = fio_owner,
++            .fios_queue_ticket = queue_ticket,
+             .id = id,
+             .sink = sink,
+             .prompt = prompt,
+@@ -201,7 +210,19 @@
+         // Called under Book.mu: fixed negative flags/cached source state only,
+         // never a dynamic source callback under this mutex.
+         if (r.fios_quarantined) return;
+-        if (locked_cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) {
++        var refused = locked_cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine);
++        if (!refused) if (r.fios_queue_ticket) |ticket| {
++            if (r.fios_owner) |held| {
++                held.tracker.retireQueuedKnown(io, ticket) catch {
++                    held.tracker.fence(io);
++                    refused = true;
++                };
++            } else {
++                fios_ownership.shared().fence(io);
++                refused = true;
++            }
++        };
++        if (refused) {
+             r.fios_quarantined = true;
+             r.fios_quarantine_next = b.fios_quarantine;
+             b.fios_quarantine = r;
+@@ -412,8 +433,15 @@
+     root_live = false;
+     owners.current().* = null;
+     const queued = owners.shared().correlationSnapshot(testing.io, correlation);
++    try testing.expect(request.fios_queue_ticket != null);
++    try testing.expectEqual(@as(usize, 1), owners.shared().queuedSnapshot(testing.io).queued);
+     try testing.expectEqual(request, b.next(false).?);
++    const actor = @import("../../fios/current_slot_origins.zig");
++    var scope = (try actor.retain(testing.io, @as([]const *Req, &.{request}))).?;
++    try scope.enter(testing.io);
++    try testing.expectEqual(@as(usize, 1), owners.shared().queuedSnapshot(testing.io).active);
+     b.done(request, .stop, "");
++    try testing.expect(scope.finish(testing.io));
+     try testing.expectEqual(@as(usize, 1), seen.n_events);
+     try testing.expectEqual(Reason.stop, seen.reason);
+     if (!queued.found) std.debug.print("FIO_CURRENT_BOOK_LOST_REQUEST_CUSTODY\n", .{});
+--- a/src/engines/llama/engine.zig
++++ b/src/engines/llama/engine.zig
+@@ -755,11 +755,13 @@
+         root: owners.Token,
+         done: std.atomic.Value(bool) = .init(false),
+         attributed: std.atomic.Value(bool) = .init(false),
++        queue_active: std.atomic.Value(bool) = .init(false),
+         tokens_attributed: std.atomic.Value(bool) = .init(false),
+         reason: Reason = .failed,
+         fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
+             const self: *@This() = @ptrCast(@alignCast(raw));
+             if (ev.kind == .prefilled) {
++                self.queue_active.store(owners.shared().queuedSnapshot(testing.io).active == 1, .release);
+                 if (owners.current_group().*) |group| {
+                     self.attributed.store(group.len == 1 and std.meta.eql(group[0], self.root), .release);
+                 }
+@@ -812,6 +814,7 @@
+     try testing.expectEqual(Reason.length, actor_check.reason);
+     if (!actor_check.attributed.load(.acquire)) std.debug.print("FIO_CURRENT_LLAMA_WORKER_LOST_ORIGINS\n", .{});
+     try testing.expect(actor_check.attributed.load(.acquire));
++    try testing.expect(actor_check.queue_active.load(.acquire));
+     try testing.expect(actor_check.tokens_attributed.load(.acquire));
+     try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
+     try testing.expect(owners.current().* == null and owners.current_group().* == null);
+--- a/src/engines/ds4/engine.zig
++++ b/src/engines/ds4/engine.zig
+@@ -795,10 +795,12 @@
+         root: owners.Token,
+         done: std.atomic.Value(bool) = .init(false),
+         attributed: std.atomic.Value(bool) = .init(false),
++        queue_active: std.atomic.Value(bool) = .init(false),
+         reason: Reason = .failed,
+         fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
+             const self: *@This() = @ptrCast(@alignCast(raw));
+             if (ev.kind == .prefilled) {
++                self.queue_active.store(owners.shared().queuedSnapshot(testing.io).active == 1, .release);
+                 if (owners.current_group().*) |group| {
+                     self.attributed.store(group.len == 1 and std.meta.eql(group[0], self.root), .release);
+                 }
+@@ -846,6 +848,7 @@
+     try testing.expectEqual(Reason.length, actor_check.reason);
+     if (!actor_check.attributed.load(.acquire)) std.debug.print("FIO_CURRENT_DS4_WORKER_LOST_ORIGINS\n", .{});
+     try testing.expect(actor_check.attributed.load(.acquire));
++    try testing.expect(actor_check.queue_active.load(.acquire));
+     try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
+     try testing.expect(owners.current().* == null and owners.current_group().* == null);
+ }
+--- a/src/engines/ane/engine.zig
++++ b/src/engines/ane/engine.zig
+@@ -587,10 +587,12 @@
+         root: owners.Token,
+         done: std.atomic.Value(bool) = .init(false),
+         attributed: std.atomic.Value(bool) = .init(false),
++        queue_active: std.atomic.Value(bool) = .init(false),
+         reason: Reason = .failed,
+         fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
+             const self: *@This() = @ptrCast(@alignCast(raw));
+             if (ev.kind == .prefilled) {
++                self.queue_active.store(owners.shared().queuedSnapshot(testing.io).active == 1, .release);
+                 if (owners.current_group().*) |group| {
+                     self.attributed.store(group.len == 1 and std.meta.eql(group[0], self.root), .release);
+                 }
+@@ -638,6 +640,7 @@
+     try testing.expectEqual(Reason.length, actor_check.reason);
+     if (!actor_check.attributed.load(.acquire)) std.debug.print("FIO_CURRENT_ANE_WORKER_LOST_ORIGINS\n", .{});
+     try testing.expect(actor_check.attributed.load(.acquire));
++    try testing.expect(actor_check.queue_active.load(.acquire));
+     try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
+     try testing.expect(owners.current().* == null and owners.current_group().* == null);
+ }

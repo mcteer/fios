@@ -1,0 +1,87 @@
+// Actual extracted SDK constructor with synthetic Metal/configuration ports.
+// CPU control-flow evidence only: no Metal device, worker authority or model.
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
+#include <mutex>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <vector>
+namespace fixture {
+inline bool sealed=false;
+inline int interval=0, notes=0, creations=0;
+inline std::atomic<int> requests=0;
+}
+namespace MTL {
+enum GPUFamily { GPUFamilyMetal3 };
+struct Device {
+ bool supportsFamily(GPUFamily) const { return true; }
+ size_t recommendedMaxWorkingSetSize() const { return size_t(1)<<30; }
+};
+struct ResidencySet { void requestResidency() { ++fixture::requests; } };
+}
+namespace mlx::core {
+void fios_note_untracked_residency_refresh() {
+ ++fixture::notes;
+ if(fixture::sealed) throw std::runtime_error("excluded");
+}
+namespace config {
+int get(const char* key,int fallback) {
+ return std::string(key)=="MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS"?fixture::interval:fallback;
+}
+}
+namespace metal {
+struct Pool { ~Pool() {} };
+[[maybe_unused]] Pool new_scoped_memory_pool() { return {}; }
+struct ResidencySets {
+ struct Set { size_t size; MTL::ResidencySet* set; };
+ MTL::Device* device_=nullptr;
+ bool enabled_=false, stop_refresh_=false;
+ size_t max_bytes_per_set_=0;
+ std::mutex mtx_;
+ std::condition_variable refresh_cv_;
+ std::vector<Set> sets_;
+ std::thread refresh_thread_;
+ ResidencySets(MTL::Device*);
+ bool add_set_locked(std::string*) {
+  ++fixture::creations;
+  static MTL::ResidencySet set;
+  set.requestResidency();sets_.push_back({1,&set});return true;
+ }
+ ~ResidencySets() {
+  if(refresh_thread_.joinable()) {
+   {std::lock_guard<std::mutex> lock(mtx_);stop_refresh_=true;}
+   refresh_cv_.notify_one();refresh_thread_.join();
+  }
+ }
+};
+// FIOS_ACTUAL_CONSTRUCTOR
+}
+}
+int main(int argc,char** argv) {
+ if(argc!=2)return 2;
+ std::string mode=argv[1];
+ fixture::sealed=mode=="sealed";
+ fixture::interval=mode=="disabled"?0:1;
+ MTL::Device device;
+ bool refused=false;
+ try {
+  mlx::core::metal::ResidencySets sets(&device);
+  if(mode=="ordinary") {
+   const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(1);
+   while(fixture::requests.load()<2&&std::chrono::steady_clock::now()<deadline)std::this_thread::yield();
+  }
+ } catch(const std::runtime_error&) { refused=true; }
+ if(mode=="sealed") {
+  if(!refused||fixture::notes!=1||fixture::creations!=0||fixture::requests!=0)return 3;
+ } else if(mode=="ordinary") {
+  if(refused||fixture::notes!=1||fixture::creations!=1||fixture::requests<2)return 4;
+ } else if(mode=="disabled") {
+  if(refused||fixture::notes!=0||fixture::creations!=1||fixture::requests!=1)return 5;
+ } else return 6;
+ std::puts("PASS: actual constructor ordering with synthetic residency ports; no native authority");
+}

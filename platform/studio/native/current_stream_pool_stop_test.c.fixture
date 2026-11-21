@@ -1,0 +1,87 @@
+/* Actual C pool module; join/create failures are substitutes, never hardware faults. */
+#include <pthread.h>
+#include <stdio.h>
+#include <errno.h>
+#include <stdint.h>
+#include <stdlib.h>
+static int join_calls=0,create_calls=0;
+static int fixture_join(pthread_t thread,void **result){
+    ++join_calls;
+    if(FIO_SCENARIO==0 || FIO_SCENARIO==1 || FIO_SCENARIO==2 || FIO_SCENARIO==6 || FIO_SCENARIO==7 || FIO_SCENARIO==8)return EDEADLK;
+    return pthread_join(thread,result);
+}
+static int fixture_create(pthread_t *thread,const pthread_attr_t *attr,void *(*entry)(void *),void *arg){
+    ++create_calls;
+    if((FIO_SCENARIO==5 || FIO_SCENARIO==6) && create_calls==2)return EAGAIN;
+    return pthread_create(thread,attr,entry,arg);
+}
+#define pthread_join fixture_join
+#define pthread_create fixture_create
+#include "pool.c"
+#undef pthread_create
+#undef pthread_join
+/* Any Metal event invocation is an unexpected fixture escape. */
+void q3ld_mtl_signal(void *event,uint64_t value){(void)event;(void)value;abort();}
+static int failed(const char *message){fputs(message,stderr);fputc('\n',stderr);return 1;}
+static void raw_pool(void){
+    running=1;nworkers=0;nspec_started=0;wd_running=0;
+    ranges=calloc(2,sizeof(range_t));queue=calloc(2,sizeof(job_t));pre_of=calloc(2,sizeof(int32_t));sub_len=calloc(2,sizeof(int32_t));gate_of=calloc(2,sizeof(int64_t));
+    if(!ranges || !queue || !pre_of || !sub_len || !gate_of)abort();
+}
+int main(void){
+    if(FIO_SCENARIO==0 || FIO_SCENARIO==1 || FIO_SCENARIO==2 || FIO_SCENARIO==7 || FIO_SCENARIO==8){
+        raw_pool();
+        if(FIO_SCENARIO==0 || FIO_SCENARIO==7)nworkers=1;
+        if(FIO_SCENARIO==1)nspec_started=1;
+        if(FIO_SCENARIO==2)wd_running=1;
+        void *saved=ranges;
+        if(FIO_SCENARIO==8){
+            int64_t event=0,counters[SC_N]={0};sc=counters;ev_kind=EVK_HOST;ev_obj=&event;wd_running=1;
+            int rc=q3ld_ev_config(EVK_OFF,0,0,0);
+            if(rc!=-3 || wd_running!=1 || ev_kind!=EVK_HOST || ev_obj!=&event || ranges!=saved)
+                return failed("FIO_STREAM_POOL_FAILED_JOIN_DISARMED_EVENT");
+        }else{
+            int rc=q3ld_stop();
+            if(rc!=-3 || !running || ranges!=saved || (FIO_SCENARIO==0 && nworkers!=1) ||
+               (FIO_SCENARIO==1 && nspec_started!=1) || (FIO_SCENARIO==2 && wd_running!=1))
+                return failed("FIO_STREAM_POOL_FAILED_JOIN_RELEASED_STORAGE");
+            if(FIO_SCENARIO==7){
+                int before=join_calls;
+                if(q3ld_stop()!=-3 || join_calls!=before || ranges!=saved || !running)
+                    return failed("FIO_STREAM_POOL_PRIOR_REFUSAL_RETRIED");
+            }
+        }
+#if FIO_CHECKED
+        if(!fios_q3ld_cleanup_uncertain())return failed("FIO_STREAM_POOL_REFUSAL_NOT_STICKY");
+#endif
+    }else{
+        void *stage=NULL,*spec_stage=NULL;
+        if(posix_memalign(&stage,4096,8192) || posix_memalign(&spec_stage,4096,4096))abort();
+        int64_t result[32*RES_W]={0},log[32]={0},gauge_words[6]={0},counters[SC_N]={0};
+        uint64_t stages[2]={(uint64_t)(uintptr_t)stage,(uint64_t)(uintptr_t)stage+4096};
+        uint64_t specs[1]={(uint64_t)(uintptr_t)spec_stage};
+        int spec_threads_requested=FIO_SCENARIO==4;
+        if(q3ld_spec_config(spec_threads_requested,specs,spec_threads_requested,4096,4096,4096,counters)!=0)abort();
+        int requested=(FIO_SCENARIO==5 || FIO_SCENARIO==6)?2:1;
+        int rc=q3ld_start(requested,stages,4096,4096,result,32,log,32,gauge_words);
+        if(rc!=((FIO_SCENARIO==5 || FIO_SCENARIO==6)?-2:0))return failed("FIO_STREAM_POOL_START_CONTROL_CHANGED");
+        void *saved=ranges;
+        rc=q3ld_stop();
+        if(FIO_SCENARIO==6){
+            if(rc!=-3 || !running || ranges!=saved || nworkers!=1)return failed("FIO_STREAM_POOL_PARTIAL_START_RELEASED_STORAGE");
+#if FIO_CHECKED
+            if(!fios_q3ld_cleanup_uncertain())return failed("FIO_STREAM_POOL_REFUSAL_NOT_STICKY");
+#endif
+            /* Quarantine the caller buffers too; process exit is not native terminal evidence. */
+        }else{
+            if(rc!=0 || running || ranges || queue || gate_of || nworkers || nspec_started || wd_running)
+                return failed("FIO_STREAM_POOL_HEALTHY_STOP_CHANGED");
+#if FIO_CHECKED
+            if(fios_q3ld_cleanup_uncertain())return failed("FIO_STREAM_POOL_HEALTHY_STOP_FENCED");
+#endif
+            free(stage);free(spec_stage);
+        }
+    }
+    fputs("PASS: actual C stream pool preserves checked refusal or healthy joins\n",stderr);
+    return 0;
+}

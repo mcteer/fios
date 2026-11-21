@@ -1,0 +1,242 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const sdk_host = @import("fios/sdk_request_ownership.zig");
+const source_guard = @import("sdk/ane/source_guard.zig");
+const fios_ane_cleanup = @import("build_options").fios_source_ane;
+comptime {
+    _ = &sdk_host.fios_native_request_owners_known_uncertain;
+}
+export fn msv_ane_source_uncertainty() u32 {
+    return 0;
+}
+// ACTUAL_HOST_ABI_DECLARATIONS
+const MsvAneMlp = opaque {};
+const ProgramRef = struct { bank: ?*MsvAneMlp, proc: u32 };
+const Parent = struct { io: std.Io };
+var expected: ?owners.Token = null;
+var fence_on_eval = false;
+var calls = std.atomic.Value(u32).init(0);
+var restored = std.atomic.Value(bool).init(false);
+fn msv_ane_mlp_eval(_: ?*MsvAneMlp, _: u32, _: [*]u8, _: usize) c_int {
+    _ = calls.fetchAdd(1, .monotonic);
+    if (fence_on_eval) owners.shared().fence(std.testing.io);
+    if (expected) |token| {
+        const group = owners.current_group().* orelse return 0;
+        if (group.len != 1 or group[0].slot != token.slot or group[0].sequence != token.sequence or !std.mem.eql(u8, &group[0].instance, &token.instance)) return 0;
+    } else if (owners.current().* != null or owners.current_group().* != null) return 0;
+    return 1;
+}
+const log = struct {
+    fn warn(comptime _: []const u8, _: anytype) void {}
+};
+const Unit = struct {
+    parent: *Parent,
+    instance: c_int = 0,
+    mu: std.Io.Mutex = .init,
+    cond: std.Io.Condition = .init,
+    state: enum { idle, requested, done } = .idle,
+    pending_bank: ?*MsvAneMlp = null,
+    fios_origin: ?*anyopaque = null,
+    pending_proc: u32 = 0,
+    eval_ok: bool = true,
+    stop_flag: bool = false,
+    eval_err: [512]u8 = @splat(0),
+    evals_ok: std.atomic.Value(u64) = .init(0),
+    evals_failed: std.atomic.Value(u64) = .init(0),
+    // ACTUAL_METHODS
+};
+fn initialize(ready: bool) !void {
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(std.testing.io, @splat(151));
+    if (ready) try sdk_host.initialize(std.testing.io);
+}
+fn root() !owners.Token {
+    const token = try owners.shared().enter(std.testing.io);
+    try owners.shared().bind(std.testing.io, token, "fixture/ane-unit-original");
+    owners.current().* = token;
+    return token;
+}
+fn releaseSender(token: owners.Token) !void {
+    owners.current().* = null;
+    try owners.shared().leave(std.testing.io, token);
+}
+fn run(unit: *Unit) void {
+    Unit.evalLoop(unit);
+    restored.store(owners.current().* == null and owners.current_group().* == null, .release);
+}
+fn stop(unit: *Unit, worker: std.Thread) void {
+    const io = unit.parent.io;
+    unit.mu.lockUncancelable(io);
+    unit.stop_flag = true;
+    unit.cond.broadcast(io);
+    unit.mu.unlock(io);
+    worker.join();
+}
+fn missing(comptime marker: []const u8) !void {
+    std.debug.print("{s}\n", .{marker});
+    return error.TestUnexpectedResult;
+}
+test "ane unit original retained before worker publication" {
+    try initialize(true);
+    const token = try root();
+    expected = token;
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    unit.kick(.{ .bank = null, .proc = 3 });
+    try releaseSender(token);
+    if (owners.shared().snapshot(std.testing.io).owned != 1) return missing("ANE_UNIT_DROPPED_ORIGIN_BEFORE_WORKER");
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    const ok = unit.wait();
+    stop(&unit, worker);
+    if (!ok or calls.load(.acquire) != 1) return missing("ANE_UNIT_EVAL_LOST_ORIGINAL_SCOPE");
+    try std.testing.expect(restored.load(.acquire));
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(std.testing.io).owned);
+}
+test "ane unit original worker scope restores across successive roots" {
+    try initialize(true);
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    var ok = true;
+    for (0..2) |_| {
+        const token = try root();
+        expected = token;
+        unit.kick(.{ .bank = null, .proc = 3 });
+        try releaseSender(token);
+        if (!unit.wait()) ok = false;
+    }
+    stop(&unit, worker);
+    if (!ok or calls.load(.acquire) != 2 or !restored.load(.acquire)) return missing("ANE_UNIT_EVAL_LOST_ORIGINAL_SCOPE");
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(std.testing.io).owned);
+}
+test "ane unit original selected missing scope refuses before eval" {
+    try initialize(true);
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    unit.kick(.{ .bank = null, .proc = 3 });
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    const ok = unit.wait();
+    stop(&unit, worker);
+    if (ok or calls.load(.acquire) != 0 or !source_guard.known()) return missing("ANE_UNIT_EXECUTED_WITHOUT_REQUIRED_ORIGIN");
+}
+test "ane unit original independent uncertainty survives wait and join" {
+    try initialize(true);
+    const token = try root();
+    expected = token;
+    fence_on_eval = true;
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    unit.kick(.{ .bank = null, .proc = 3 });
+    try releaseSender(token);
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    const ok = unit.wait();
+    stop(&unit, worker);
+    if (ok or !source_guard.known() or owners.shared().snapshot(std.testing.io).owned != 1) return missing("ANE_UNIT_RELEASED_ORIGINAL_UNCERTAINTY");
+    try std.testing.expect(restored.load(.acquire));
+}
+test "ane unit original queued stop retains scope without native eval" {
+    try initialize(true);
+    const token = try root();
+    expected = token;
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    unit.kick(.{ .bank = null, .proc = 3 });
+    try releaseSender(token);
+    unit.stop_flag = true;
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    worker.join();
+    if (!source_guard.known() or owners.shared().snapshot(std.testing.io).owned != 1 or calls.load(.acquire) != 0) return missing("ANE_UNIT_STOP_DISCARDED_QUEUED_ORIGIN");
+}
+test "ane unit original uninitialized capture closes fallback" {
+    try initialize(false);
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    unit.kick(.{ .bank = null, .proc = 3 });
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    const ok = unit.wait();
+    stop(&unit, worker);
+    if (ok or calls.load(.acquire) != 0 or !source_guard.known()) return missing("ANE_UNIT_PREINIT_REFUSAL_ALLOWED_FALLBACK");
+}
+test "ane unit original unselected anonymous behavior preserved" {
+    try initialize(false);
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    unit.kick(.{ .bank = null, .proc = 3 });
+    const ok = unit.wait();
+    stop(&unit, worker);
+    try std.testing.expect(ok and calls.load(.acquire) == 1 and restored.load(.acquire));
+    try std.testing.expect(!source_guard.known());
+}
+
+test "ane unit original candidate pending kick preserves first payload" {
+    try initialize(true);
+    const token = try root();
+    expected = token;
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    unit.kick(.{ .bank = null, .proc = 3 });
+    unit.kick(.{ .bank = null, .proc = 9 });
+    try releaseSender(token);
+    try std.testing.expectEqual(@as(u32, 3), unit.pending_proc);
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    const ok = unit.wait();
+    stop(&unit, worker);
+    try std.testing.expect(!ok and calls.load(.acquire) == 0 and source_guard.known());
+    try std.testing.expectEqual(@as(usize, 1), owners.shared().snapshot(std.testing.io).owned);
+}
+const MEDIA_PROBE_ROWS: usize = 1;
+const AnePrefill = struct {
+    unit: *Unit,
+    rows: usize = 1,
+    fn kickMlp(self: *AnePrefill, _: usize) void {
+        self.unit.kick(.{ .bank = null, .proc = 3 });
+    }
+    fn waitAll(self: *AnePrefill) bool {
+        return self.unit.wait();
+    }
+};
+fn calibrationFixture(io: std.Io, eng: *AnePrefill) !bool {
+    // ACTUAL_CALIBRATION_ORIGIN_PREFIX
+    // ACTUAL_CALIBRATION_LOOP
+    // ACTUAL_CALIBRATION_PUBLICATION
+    th.join();
+    return loop.ok;
+}
+test "ane unit original calibration helper retains source" {
+    try initialize(true);
+    const token = try root();
+    expected = token;
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    var eng: AnePrefill = .{ .unit = &unit };
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    const ok = try calibrationFixture(std.testing.io, &eng);
+    stop(&unit, worker);
+    try releaseSender(token);
+    if (!ok or calls.load(.acquire) != 1 or !restored.load(.acquire)) return missing("ANE_CALIBRATION_HELPER_LOST_ORIGINAL_SCOPE");
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(std.testing.io).owned);
+}
+test "ane unit original calibration missing scope refuses before publication" {
+    try initialize(true);
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    var eng: AnePrefill = .{ .unit = &unit };
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    const result = calibrationFixture(std.testing.io, &eng);
+    stop(&unit, worker);
+    if (result) |_| return missing("ANE_CALIBRATION_ACCEPTED_MISSING_ORIGIN") else |err| try std.testing.expectEqual(error.InvalidRequestOrigins, err);
+    try std.testing.expectEqual(@as(u32, 0), calls.load(.acquire));
+    try std.testing.expect(source_guard.known());
+}
+test "ane unit original calibration unselected anonymous behavior preserved" {
+    try initialize(false);
+    var parent: Parent = .{ .io = std.testing.io };
+    var unit: Unit = .{ .parent = &parent };
+    var eng: AnePrefill = .{ .unit = &unit };
+    const worker = try std.Thread.spawn(.{}, run, .{&unit});
+    const ok = try calibrationFixture(std.testing.io, &eng);
+    stop(&unit, worker);
+    try std.testing.expect(ok and calls.load(.acquire) == 1 and restored.load(.acquire));
+    try std.testing.expect(!source_guard.known());
+}

@@ -1,0 +1,86 @@
+// Appended to actual CPU pool source. Genuine pthreads; no model/SDK handles.
+#include <stdatomic.h>
+#define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);return 77;}}while(0)
+static atomic_uint entered,released;
+static void held(void *ctx,uint64_t a,uint64_t b){
+ (void)ctx;(void)a;(void)b;atomic_fetch_add(&entered,1);
+ while(!atomic_load(&released))usleep(100);
+}
+static uint64_t producer_rows=1;
+static void* producer(void *ctx){ds4_parallel_for(producer_rows,held,ctx);return NULL;}
+static void write_rows(void *ctx,uint64_t a,uint64_t b){unsigned *values=ctx;for(uint64_t i=a;i<b;++i)++values[i];}
+static void nested_rows(void *ctx,uint64_t a,uint64_t b){ds4_parallel_for(b-a,write_rows,(unsigned*)ctx+a);}
+static void *foreign_shutdown(void *ctx){
+ int *result=ctx;*result=ds4_threads_shutdown_checked();return NULL;
+}
+typedef struct {uint64_t token;int result;int busy;} foreign_identity_result;
+static void *foreign_initialized_shutdown(void *ctx){
+ foreign_identity_result *result=ctx;
+ result->token=ds4_threads_owner_token();result->busy=ds4_threads_work_busy();
+ result->result=ds4_threads_shutdown_checked();return NULL;
+}
+int main(int argc,char **argv){
+ setenv("DS4_THREADS","2",1);ds4_threads_init();
+ REQUIRE(g_pool.initialized&&g_pool.n_threads==2,"CPU_REAL_POOL_NOT_CREATED");
+ if(argc==2&&(strcmp(argv[1],"--owner-churn")==0||strcmp(argv[1],"--owner-exhaustion")==0)){
+  const int exhausted=strcmp(argv[1],"--owner-exhaustion")==0;
+  if(exhausted)g_fios_cpu_pool_next_owner=UINT64_MAX-1;
+  uint64_t previous=g_fios_cpu_pool_local_owner;
+  for(unsigned i=0;i<(exhausted?2u:16u);++i){
+   pthread_t foreign;foreign_identity_result result={0};
+   REQUIRE(pthread_create(&foreign,NULL,foreign_initialized_shutdown,&result)==0,"CPU_TOKEN_THREAD_CREATE_FAILED");
+   REQUIRE(pthread_join(foreign,NULL)==0,"CPU_TOKEN_THREAD_JOIN_FAILED");
+   REQUIRE(result.result==0&&g_pool.initialized&&!g_pool.shutdown&&!fios_actual_joins&&!g_fios_cpu_pool_uncertain,
+           "FIO_DS4_CPU_INITIALIZED_FOREIGN_OWNER_RETIRED_POOL");
+   REQUIRE(result.busy,"FIO_DS4_CPU_FOREIGN_OWNER_REPORTED_AVAILABLE");
+   if(exhausted)REQUIRE(result.token==(i?0:UINT64_MAX-1),"FIO_DS4_CPU_OWNER_TOKEN_WRAPPED");
+   else REQUIRE(result.token>previous,"FIO_DS4_CPU_THREAD_LIFETIME_TOKEN_REUSED");
+   previous=result.token;
+  }
+  REQUIRE(!ds4_threads_work_busy()&&ds4_threads_shutdown_checked()&&!g_pool.initialized,
+          "CPU_CREATOR_CUSTODY_LOST_AFTER_FOREIGN_TOKENS");
+  puts(exhausted?"PASS: last usable CPU creator token then refusal; no wrap or adoption.":
+       "PASS: sixteen real thread lifetimes get distinct source tokens and cannot retire creator pool.");return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--foreign-owner")==0){
+  pthread_t foreign;int result=-1;
+  REQUIRE(pthread_create(&foreign,NULL,foreign_shutdown,&result)==0,"CPU_FOREIGN_CREATE_FAILED");
+  REQUIRE(pthread_join(foreign,NULL)==0,"CPU_FOREIGN_JOIN_FAILED");
+  REQUIRE(result==0&&g_pool.initialized&&!g_pool.shutdown&&!fios_actual_joins&&!g_fios_cpu_pool_uncertain,
+          "FIO_DS4_CPU_FOREIGN_OWNER_RETIRED_POOL");
+  REQUIRE(ds4_threads_shutdown_checked()&&!g_pool.initialized&&fios_actual_joins==1,
+          "CPU_CREATOR_CANNOT_RETIRE_AFTER_FOREIGN_REFUSAL");
+  puts("PASS: foreign thread refuses before signalling/joins/uncertainty; actual creator still retires.");return 0;
+ }
+ if(argc==2&&strcmp(argv[1],"--join-error")==0){
+  const pthread_t thread=g_pool.threads[1];fios_join_failure=1;
+  int result=ds4_threads_shutdown_checked();
+  REQUIRE(!result&&g_pool.initialized&&g_pool.n_threads==2&&pthread_equal(g_pool.threads[1],thread),"FIO_DS4_CPU_JOIN_REFUSAL_LOST_POOL");
+  REQUIRE(fios_actual_joins==1,"CPU_FAULT_DID_NOT_FOLLOW_ACTUAL_JOIN");
+  REQUIRE(ds4_threads_work_busy(),"FIO_DS4_CPU_UNCERTAINTY_REPORTED_NOT_BUSY");
+  fios_join_failure=0;
+  REQUIRE(!ds4_threads_shutdown_checked()&&fios_actual_joins==1,"FIO_DS4_CPU_JOIN_UNCERTAINTY_REFUNDED");
+  puts("PASS: actual idle CPU worker joins before injected failed acknowledgement; exact pool custody retained.");return 0;
+ }
+ if(argc==2&&(strcmp(argv[1],"--busy-inline")==0||strcmp(argv[1],"--busy-parallel")==0)){
+  const int parallel=strcmp(argv[1],"--busy-parallel")==0;producer_rows=parallel?1024:1;
+  pthread_t writer;int payload=9;
+  REQUIRE(pthread_create(&writer,NULL,producer,&payload)==0,"CPU_INLINE_WRITER_CREATE_FAILED");
+  for(unsigned n=0;n<2000&&atomic_load(&entered)<(parallel?2u:1u);++n)usleep(1000);
+  REQUIRE(atomic_load(&entered)==(parallel?2u:1u),"CPU_WRITERS_NOT_ENTERED");
+  const int busy=ds4_threads_work_busy();
+  const int result=ds4_threads_shutdown_checked();
+  const int preserved=!result&&g_pool.initialized&&!g_pool.shutdown&&!fios_actual_joins;
+  atomic_store(&released,1);REQUIRE(pthread_join(writer,NULL)==0,"CPU_INLINE_WRITER_JOIN_FAILED");
+  REQUIRE(preserved,"FIO_DS4_CPU_SHUTDOWN_RELEASED_ACTIVE_INLINE_WRITER");
+  REQUIRE(busy,"FIO_DS4_CPU_ACTIVE_WORK_REPORTED_NOT_BUSY");
+  REQUIRE(ds4_threads_shutdown_checked()&&!g_pool.initialized,"CPU_IDLE_AFTER_INLINE_REFUSED");
+  puts(parallel?"PASS: actual parallel CPU writers hold pool lifetime; busy shutdown refuses before signalling or joins.":"PASS: actual inline CPU writer holds pool lifetime; busy shutdown refuses before signalling or joins.");return 0;
+ }
+ REQUIRE(argc==1,"CPU_BAD_ARGS");
+ unsigned values[1024]={0};ds4_parallel_for(1024,nested_rows,values);
+ for(unsigned i=0;i<1024;++i)REQUIRE(values[i]==1,"CPU_ORDINARY_ROWS_CHANGED");
+ REQUIRE(ds4_threads_shutdown_checked()&&!g_pool.initialized&&fios_actual_joins==1,"CPU_ORDINARY_JOIN_REFUSED");
+ REQUIRE(ds4_threads_shutdown_checked()&&fios_actual_joins==1,"CPU_EMPTY_TEARDOWN_CHANGED");
+ puts("PASS: actual idle CPU worker and empty pool retire normally.");
+}

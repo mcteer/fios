@@ -1,0 +1,148 @@
+const std = @import("std");
+const Failure = enum { none, mtp, bias, owned };
+var failure: Failure = .none;
+var starts: usize = 0;
+var starts_during_error_cleanup: usize = 0;
+var selected_gpu: ?u8 = null;
+const Table = struct {
+    rows: u64 = 0, dim: u64 = 0, bits: u8 = 4,
+    embedded: ?u8 = null,
+    thread: ?std.Thread = null,
+    stop: std.atomic.Value(bool) = .init(false),
+    fn calibrateArm(_: *@This()) void {}
+    fn run(self: *@This()) void {
+        while (!self.stop.load(.acquire)) {
+            const ts: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+        }
+    }
+    fn startWarm(self: *@This()) void {
+        self.thread = std.Thread.spawn(.{}, run, .{self}) catch return;
+        starts += 1;
+    }
+    fn close(self: *@This()) void {
+        self.stop.store(true, .release);
+        if (self.thread) |thread| thread.join();
+        self.thread = null;
+    }
+};
+const State = struct {
+    table: Table = .{}, gpu: ?u8 = null,
+    fn deinit(self: *@This()) void { self.table.close(); }
+};
+const Span = struct { fn first(_: @This()) bool { return true; } };
+const Config = struct {
+    local: bool = true,
+    mock_gpu: bool = false,
+    embedded: bool = false,
+    dist_shard: ?struct { rank: u32 } = null,
+    dist_span: ?Span = null,
+    hadamard_block: u32 = 0,
+    quant_group_size: u32 = 64,
+    quant_bits: u32 = 4,
+    quant_mode: enum { affine } = .affine,
+    rms_norm_eps: f32 = 0.001,
+    ple_layer_idx: u32 = 0,
+    indexer_budget: u32 = 0,
+    indexer_compress_ratio: u32 = 0,
+    fn pleLocalLayer(self: *const @This()) ?usize { return if (self.local) 0 else null; }
+};
+const Head = struct { fn deinit(_: *@This(), _: std.mem.Allocator) void {} };
+const Owned = struct {
+    fn toOwnedSlice(_: *@This(), _: std.mem.Allocator) ![]u8 {
+        if (failure == .owned) return error.InjectedOwned;
+        return &.{};
+    }
+};
+const Layout = struct { fn of(_: *const Config) @This() { return .{}; } };
+fn ternaryKernelCandidate(_: u32, _: Layout) bool { return true; }
+fn firstNonTernaryBias(_: u8, _: Array, _: u8) !?[]const u8 {
+    if (failure == .bias) return error.InjectedBias;
+    return null;
+}
+fn loadQwen4Mtp(_: std.mem.Allocator, _: Config, _: u8, _: *[8]u8, _: u8) !?Head {
+    if (failure == .mtp) return error.InjectedMtp;
+    return .{};
+}
+const Array = struct { ctx: ?*anyopaque = null };
+const mlx = struct {
+    const mlx_array = Array;
+    fn mlx_get_active_memory(value: *usize) u8 { value.* = 0; return 0; }
+    fn getShape(_: u8) []const c_int { return &.{ 8, 8 }; }
+    fn mlx_array_new_float(_: f32) u8 { return 0; }
+};
+const ple_gpu = struct {
+    fn pleGpu() struct { enabled: bool } { return .{ .enabled = false }; }
+    fn load(_: *Table, _: bool, _: usize) ?u8 { return selected_gpu; }
+};
+const log = struct { fn info(comptime _: []const u8, _: anytype) void {} };
+const mtp_nax_profile = struct {
+    fn mtpNaxCalibratedModelFrom(_: *const Config, _: c_int) bool { return false; }
+    fn mtpNaxUniformAffineTrunkFrom(_: *const Config, _: []const u8) bool { return false; }
+    fn mtpNaxOqeAffineTrunkFrom(_: *const Config, _: []const u8) bool { return false; }
+};
+const weights_util = struct { fn bf16Scalar(_: f32, _: u8) u8 { return 0; } };
+const distributed_mod = struct { fn peer() ?u8 { return null; } };
+const Trunk = struct {
+    config: Config, s: u8, allocator: std.mem.Allocator,
+    emb_w: u8, emb_s: u8, emb_b: Array,
+    lm_head_w: u8, lm_head_s: u8, lm_head_b: Array,
+    moe_layers: []const u8, ternary_2bit: bool, moe_owned_bf16: []u8,
+    qwen4_mixer: u8, qwen4: *State, qwen4_mtp: ?Head,
+    ones_hidden: u8, one: u8, rms_eps_arr: u8,
+    rope_freqs_yarn: ?u8, yarn_mscale: ?u8, yarn_inv_freq: ?u8,
+    dist_peer: ?u8, dist_tp: ?u8,
+    mtp_uniform_affine_trunk: bool, mtp_oqe_affine_trunk: bool,
+};
+fn loadTail(a: std.mem.Allocator, config: *const Config) !Trunk {
+    const st = try a.create(State);
+    errdefer a.destroy(st);
+    st.* = .{ .table = .{ .embedded = if (config.embedded) 1 else null } };
+    selected_gpu = if (config.mock_gpu) 1 else null;
+    errdefer {
+        if (st.table.thread != null) starts_during_error_cleanup += 1;
+        st.deinit();
+    }
+    const weights: u8 = 0;
+    var name_buf: [8]u8 = undefined;
+    const s: u8 = 0;
+    const lm_head_b: Array = .{};
+    const emb_b: Array = .{};
+    const lm_head_w: u8 = 0;
+    const lm_head_s: u8 = 0;
+    const emb_w: u8 = 0;
+    const emb_s: u8 = 0;
+    const ml: struct { moe_layers: []const u8 } = .{ .moe_layers = &.{} };
+    var owned: Owned = .{};
+    const mixer: u8 = 0;
+    const ones_hidden: u8 = 0;
+    const rope_freqs_yarn: ?u8 = null;
+    const yarn_mscale: ?u8 = null;
+    const yarn_inv_freq: ?u8 = null;
+@@LOAD_TAIL@@
+}
+test "Qwen failed construction never publishes reader" {
+    const a = std.testing.allocator;
+    starts = 0;
+    starts_during_error_cleanup = 0;
+    for ([_]Failure{ .mtp, .bias, .owned }) |point| {
+        failure = point;
+        const result = loadTail(a, &.{});
+        if (result) |value| { value.qwen4.deinit(); a.destroy(value.qwen4); return error.ExpectedFailure; }
+        else |_| {}
+        try std.testing.expectEqual(@as(usize, 0), starts);
+        try std.testing.expectEqual(@as(usize, 0), starts_during_error_cleanup);
+    }
+}
+test "Qwen successful construction retains original reader predicates" {
+    const a = std.testing.allocator;
+    failure = .none;
+    starts = 0;
+    for ([_]Config{ .{ .local = false }, .{ .dist_shard = .{ .rank = 1 } }, .{}, .{ .mock_gpu = true }, .{ .embedded = true }, .{ .mock_gpu = true, .embedded = true } }) |config| {
+        const before = starts;
+        const value = try loadTail(a, &config);
+        defer a.destroy(value.qwen4);
+        defer value.qwen4.deinit();
+        try std.testing.expectEqual(before + @as(usize, if (config.local and config.dist_shard == null and !(config.mock_gpu and config.embedded)) 1 else 0), starts);
+    }
+}

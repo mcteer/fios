@@ -1,0 +1,76 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const sdk = @import("fios/sdk_request_ownership.zig");
+extern fn fios_gpu_scalar_begin() c_int;
+extern fn fios_gpu_scalar_finish() c_int;
+extern fn fios_gpu_scalar_library_matches([*]const u8, usize) c_int;
+var expected: [2]owners.Token = undefined;
+var ready: std.atomic.Value(bool) = .init(false);
+var origins: std.atomic.Value(u32) = .init(0);
+var retired: std.atomic.Value(u32) = .init(0);
+
+export fn fios_scalar_metal_event_observe(raw: ?*anyopaque, id: u64, phase: u32) c_int {
+    if (!ready.load(.acquire) or id == 0 or (phase != 1 and phase != 2)) return 1;
+    const scope = sdk.fios_native_request_owners_enter(raw);
+    if (scope == 0) return 1;
+    var matches = false;
+    {
+        defer {
+            if (sdk.fios_native_request_owners_leave(scope) != 0) @panic("scalar observer TLS restoration failed");
+        }
+        if (owners.current_group().*) |group| {
+            matches = group.len == 2 and
+                ((std.meta.eql(group[0], expected[0]) and std.meta.eql(group[1], expected[1])) or
+                (std.meta.eql(group[0], expected[1]) and std.meta.eql(group[1], expected[0])));
+        }
+    }
+    if (!matches or sdk.fios_native_metal_request_event_observe(raw, id, phase) != 0) return 1;
+    if (phase == 1) {
+        _ = origins.fetchAdd(1, .acq_rel);
+    } else {
+        _ = retired.fetchAdd(1, .acq_rel);
+    }
+    return 0;
+}
+
+test "actual SDK GPU scalar graph retains original native request group" {
+    const library = @import("build_options").sdk_library;
+    try std.testing.expectEqual(@as(c_int, 1), fios_gpu_scalar_library_matches(library.ptr, library.len));
+    const io = std.testing.io;
+    try owners.shared().initialize(io, @splat(9));
+    try sdk.initialize(io);
+    const first = try owners.shared().enter(io);
+    const second = try owners.shared().enter(io);
+    for ([_]owners.Token{ first, second }) |token| {
+        try owners.shared().bind(io, token, "fixture/gpu-scalar");
+        try owners.shared().active(io, token);
+    }
+    owners.current().* = first;
+    const group = [_]owners.Token{ first, second };
+    owners.current_group().* = &group;
+    expected = group;
+    ready.store(true, .release);
+    defer {
+        owners.current().* = null;
+        owners.current_group().* = null;
+    }
+    try std.testing.expectEqual(@as(c_int, 1), fios_gpu_scalar_begin());
+    try std.testing.expect(sdk.diagnostic().active_contexts > 0);
+    owners.current().* = null;
+    owners.current_group().* = null;
+    try owners.shared().leave(io, first);
+    try owners.shared().leave(io, second);
+    // Only the captured SDK descriptor now retains the original two roots.
+    try std.testing.expectEqual(@as(usize, 2), owners.shared().snapshot(io).owned);
+    try std.testing.expectEqual(@as(c_int, 1), fios_gpu_scalar_finish());
+    // Positive event receipts are required in addition to local empty counts.
+    const metal = sdk.metalEventDiagnostic();
+    try std.testing.expect(metal.retired > 0 and metal.active == 0 and !metal.uncertain);
+    try std.testing.expectEqual(origins.load(.acquire), retired.load(.acquire));
+    try std.testing.expectEqual(@as(u64, retired.load(.acquire)), metal.retired);
+    try std.testing.expectEqual(@as(u32, 0), sdk.diagnostic().active_contexts);
+    try std.testing.expect(!sdk.diagnostic().uncertain);
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).owned);
+    try std.testing.expect(!owners.shared().snapshot(io).uncertain);
+    std.debug.print("PASS SDK GPU scalar graph and native event ledger; metal_events={d}; parent_released_before_compute=true; no all-client or native authority\n", .{metal.retired});
+}

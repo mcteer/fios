@@ -1,0 +1,16 @@
+const std=@import("std");
+// ACTUAL_ENGRAM_PREFETCH_LATCH_DECLARATION
+const marker=@import("../../sdk/util/engram_prefetch_uncertainty.zig");
+const fixed=@import("../../fios/current_backend_uncertainty.zig");
+var entered=std.atomic.Value(bool).init(false);
+var observed=std.atomic.Value(bool).init(false);
+fn tick()void {const ts:std.c.timespec=.{.sec=0,.nsec=std.time.ns_per_ms};_=std.c.nanosleep(&ts,null);}
+fn waitEntered()!void {for(0..2000)|_|{if(entered.load(.acquire))return;tick();}return error.TestTimeout;}
+const Table=struct {const Raw=struct {fn deinit(_: @This(),_:std.mem.Allocator)void{}};};
+const Prefetch=struct {
+ gpa:std.mem.Allocator,tables:[]const *const Table,grids:[]Grid,span:usize,nc:usize,
+ stop:std.atomic.Value(bool)=.init(false),thread:?std.Thread=null,across:bool=false,
+ const Spec=struct {at:usize,len:usize,ids:[]const u32};
+ const Grid=struct {at:usize,len:usize,ids:[]u32,items:[]Item};
+ const Item=struct {raw:?Table.Raw=null,state:std.atomic.Value(u8)=.init(0)};
+ fn run(self:*Prefetch)void {observed.store(marker.known() and fixed.known(false,false),.release);entered.store(true,.release);while(!self.stop.load(.acquire))tick();}

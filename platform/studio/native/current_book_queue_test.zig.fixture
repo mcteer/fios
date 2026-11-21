@@ -1,0 +1,133 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const actor = @import("fios/current_slot_origins.zig");
+const book_mod = @import("engines/own_thread/book.zig");
+const abi = @import("abi/engine.zig");
+test "fios current embedded book captures queue before publication and actual worker pickup" {
+    const io = std.testing.io;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(91));
+    const root = try owners.shared().enter(io);
+    try owners.shared().bind(io, root, "fixture/book-queue");
+    owners.current().* = root;
+    var book: book_mod.Book = .{ .gpa = std.testing.allocator, .max_waiting = 2 };
+    defer book.deinit();
+    const Sink = struct {
+        fn event(_: *anyopaque, _: u64, _: *const abi.Event) callconv(.c) abi.Action { return .go; }
+    };
+    var value: u8 = 0;
+    var verdict: abi.Verdict = .{};
+    const request = book.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 }, .{ .ctx = &value, .event = Sink.event }, &verdict).?;
+    owners.current().* = null;
+    try owners.shared().leave(io, root);
+    if (owners.shared().queuedSnapshot(io).queued != 1) {
+        std.debug.print("FIO_EMBEDDED_BOOK_QUEUE_NOT_CAPTURED\n", .{});
+        try std.testing.expect(false);
+    }
+    try std.testing.expectEqual(request, book.next(false).?);
+    // Selection is not backend work. The original actor entry owns pickup.
+    try std.testing.expectEqual(@as(usize, 1), owners.shared().queuedSnapshot(io).queued);
+    var work = (try actor.retain(io, @as([]const *book_mod.Req, &.{request}))).?;
+    try work.enter(io);
+    try std.testing.expectEqual(@as(usize, 1), owners.shared().queuedSnapshot(io).active);
+    book.done(request, .stop, "");
+    try std.testing.expectEqual(@as(usize, 1), owners.shared().queuedSnapshot(io).owned);
+    try std.testing.expect(work.finish(io));
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().queuedSnapshot(io).owned);
+    try std.testing.expect(!owners.shared().queuedSnapshot(io).uncertain);
+}
+test "fios current embedded book full queue retires only unpublished operation" {
+    const io = std.testing.io;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(92));
+    const root = try owners.shared().enter(io);
+    try owners.shared().bind(io, root, "fixture/book-full");
+    owners.current().* = root;
+    defer owners.current().* = null;
+    var book: book_mod.Book = .{ .gpa = std.testing.allocator, .max_waiting = 1 };
+    defer book.deinit();
+    const Sink = struct {
+        fn event(_: *anyopaque, _: u64, _: *const abi.Event) callconv(.c) abi.Action { return .go; }
+    };
+    var value: u8 = 0;
+    var verdict: abi.Verdict = .{};
+    const request = book.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 }, .{ .ctx = &value, .event = Sink.event }, &verdict).?;
+    try std.testing.expect(book.add(.{}, 2, &.{ .prompt = abi.span(u32, &.{2}), .max_tokens = 1 }, .{ .ctx = &value, .event = Sink.event }, &verdict) == null);
+    try std.testing.expectEqual(abi.Verdict.Code.busy, verdict.code);
+    try std.testing.expectEqual(@as(usize, 1), book.reqs.items.len);
+    try std.testing.expectEqual(@as(usize, 1), owners.shared().queuedSnapshot(io).queued);
+    book.done(request, .cancelled, "");
+    try owners.shared().leave(io, root);
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().queuedSnapshot(io).owned);
+    try std.testing.expect(!owners.shared().knownUncertain(io));
+}
+test "fios current embedded book cached ticket retirement invokes no backend probe under lock" {
+    const io = std.testing.io;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(93));
+    const Probe = struct {
+        var calls: usize = 0;
+        fn read() bool { calls += 1; return false; }
+    };
+    try owners.shared().enrollDiagnosticUncertaintyProbe(io, Probe.read);
+    const root = try owners.shared().enter(io);
+    try owners.shared().bind(io, root, "fixture/book-probe");
+    owners.current().* = root;
+    defer owners.current().* = null;
+    var book: book_mod.Book = .{ .gpa = std.testing.allocator, .max_waiting = 1 };
+    defer book.deinit();
+    const Sink = struct {
+        fn event(_: *anyopaque, _: u64, _: *const abi.Event) callconv(.c) abi.Action { return .go; }
+    };
+    var value: u8 = 0;
+    var verdict: abi.Verdict = .{};
+    const request = book.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 }, .{ .ctx = &value, .event = Sink.event }, &verdict).?;
+    const before = Probe.calls;
+    book.done(request, .cancelled, "");
+    try std.testing.expectEqual(before, Probe.calls);
+    try owners.shared().leave(io, root);
+}
+test "fios current embedded book finished callback uncertainty retains original ticket and payload" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(94));
+    const root = try owners.shared().enter(io);
+    try owners.shared().bind(io, root, "fixture/book-uncertain");
+    owners.current().* = root;
+    const book = try page.create(book_mod.Book);
+    book.* = .{ .gpa = page, .max_waiting = 1 };
+    const Sink = struct {
+        fn event(_: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
+            if (ev.kind == .finished) owners.shared().fence(std.testing.io);
+            return .go;
+        }
+    };
+    var value: u8 = 0;
+    var verdict: abi.Verdict = .{};
+    const request = book.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{17}), .max_tokens = 1 }, .{ .ctx = &value, .event = Sink.event }, &verdict).?;
+    const ticket = request.fios_queue_ticket.?;
+    owners.current().* = null;
+    try owners.shared().leave(io, root);
+    book.done(request, .stop, "");
+    try std.testing.expect(request.fios_quarantined);
+    try std.testing.expect(book.fios_quarantine == request);
+    try std.testing.expect(std.meta.eql(ticket, request.fios_queue_ticket.?));
+    try std.testing.expectEqual(@as(u32, 17), request.prompt[0]);
+    try std.testing.expectEqual(@as(usize, 1), owners.shared().queuedSnapshot(io).owned);
+    try std.testing.expect(owners.shared().queuedSnapshot(io).uncertain);
+    try std.testing.expect(!book.tryDeinit());
+}
+test "fios current embedded book untracked callers gain no queue ticket" {
+    var book: book_mod.Book = .{ .gpa = std.testing.allocator, .max_waiting = 1 };
+    defer book.deinit();
+    const Sink = struct {
+        fn event(_: *anyopaque, _: u64, _: *const abi.Event) callconv(.c) abi.Action { return .go; }
+    };
+    var value: u8 = 0;
+    var verdict: abi.Verdict = .{};
+    const request = book.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 }, .{ .ctx = &value, .event = Sink.event }, &verdict).?;
+    try std.testing.expect(request.fios_owner == null);
+    try std.testing.expect(request.fios_queue_ticket == null);
+    book.done(request, .stop, "");
+}

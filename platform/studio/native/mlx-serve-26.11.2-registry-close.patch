@@ -1,0 +1,139 @@
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index 8e4c7d9..72110ed 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -375,11 +375,21 @@ pub const LoadedModel = struct {
+         return e.kind == .ds4 or e.kind == .llama;
+     }
+ 
+-    pub fn closeEngine(self: *LoadedModel) void {
++    /// Checked local wrapper retirement, not native terminality. The existing
++    /// caller must exclude new readers; an original borrow or callback refusal
++    /// retains this model's engine pointer and session accounting.
++    pub fn tryCloseEngine(self: *LoadedModel) bool {
++        if (self.engine) |e| {
++            if (self.refcount.load(.acquire) != 0) return false;
++            if (!e.tryClose()) return false;
++            self.engine = null;
++        }
+         self.session_claims = 0;
+-        const e = self.engine orelse return;
+-        e.close();
+-        self.engine = null;
++        return true;
++    }
++
++    pub fn closeEngine(self: *LoadedModel) void {
++        _ = self.tryCloseEngine();
+     }
+ 
+     /// Free all owned state. Safe to call regardless of `state` — null
+@@ -390,7 +400,7 @@ pub const LoadedModel = struct {
+     /// stream); the caller arranges this via `unloadResident` invoked
+     /// from the inference thread before registry teardown.
+     pub fn deinit(self: *LoadedModel) void {
+-        self.closeEngine();
++        if (!self.tryCloseEngine()) return;
+         if (self.media_plugin) |e| {
+             e.deinit();
+             self.media_plugin = null;
+@@ -651,6 +661,14 @@ pub const ModelRegistry = struct {
+         }
+         self.mutex.unlock(self.io);
+         if (borrowed) return;
++        // Complete existing served callbacks before freeing ANY entry keys.
++        // Refusal can then retain a valid map even after earlier normal closes.
++        // Constructor rollback contains only unloaded stubs and bypasses this
++        // public shutdown phase; other media/MLX destructors remain separate.
++        var closers = self.entries.valueIterator();
++        while (closers.next()) |entry| {
++            if (!entry.*.tryCloseEngine()) return;
++        }
+         self.deinitInternal();
+         self.allocator.destroy(self);
+     }
+@@ -2668,3 +2686,84 @@ test "fios current registry cleanup preserves borrowers and known uncertainty" {
+         }
+     }
+ }
++
++test "fios current registry close retains callback refusal through the parent" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../fios/request_ownership.zig");
++    const abi = @import("../../abi/engine.zig");
++    const served_mod = @import("../engines/served.zig");
++    const fake = @import("../../testing/fake_engine.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(127));
++    const Trace = struct {
++        model: usize = 0,
++        registry: usize = 0,
++        sibling: usize = 0,
++        model_freed: bool = false,
++        registry_freed: bool = false,
++        sibling_freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.model) self.model_freed = true;
++            if (@intFromPtr(bytes.ptr) == self.registry) self.registry_freed = true;
++            if (@intFromPtr(bytes.ptr) == self.sibling) self.sibling_freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        io: std.Io,
++        unknown: bool,
++        calls: usize = 0,
++        fn close(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            if (self.unknown) owners.shared().fence(self.io);
++        }
++    };
++    const engine_table = try page.create(abi.Engine);
++    engine_table.* = fake.own_thread;
++    engine_table.close = Probe.close;
++    for ([_]bool{ false, true }) |unknown| {
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const allocator = trace.allocator();
++        const registry = try ModelRegistry.init(allocator, io, null, 2, 0, null);
++        const model = try registry.registerStub("fixture/registry-close", "/fixture/never-loaded", null);
++        const sibling = try registry.registerStub("fixture/registry-sibling", "/fixture/also-never-loaded", null);
++        trace.sibling = @intFromPtr(sibling);
++        trace.registry = @intFromPtr(registry);
++        trace.model = @intFromPtr(model);
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .unknown = unknown };
++        const progress = try page.create(load_progress.Progress);
++        progress.* = .{};
++        const gauges = try page.create(served_mod.Gauges);
++        gauges.* = .{};
++        const engine = try allocator.create(Served);
++        engine.* = .{ .gpa = allocator, .kind = .llama, .table = engine_table, .handle = probe, .info = undefined, .host = undefined, .progress = progress, .gauges = gauges, .metrics = null };
++        model.engine = engine;
++        registry.deinit();
++        try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        if (unknown) {
++            if (trace.model_freed or trace.registry_freed) std.debug.print("FIO_CURRENT_REGISTRY_DROPPED_CALLBACK_REFUSAL\n", .{});
++            try std.testing.expect(!trace.model_freed and !trace.registry_freed and !trace.sibling_freed);
++            try std.testing.expectEqualStrings("fixture/registry-close", model.id);
++            try std.testing.expect(model.engine == engine);
++            try std.testing.expectEqual(@as(usize, 2), registry.entries.count());
++            registry.deinit();
++            try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        } else {
++            try std.testing.expect(trace.model_freed and trace.registry_freed and trace.sibling_freed);
++            page.destroy(probe);
++            page.destroy(progress);
++            page.destroy(gauges);
++            page.destroy(trace);
++        }
++    }
++}

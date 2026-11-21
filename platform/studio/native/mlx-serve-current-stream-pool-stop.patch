@@ -1,0 +1,991 @@
+diff --git a/src/fios/current_backend_uncertainty.zig b/src/fios/current_backend_uncertainty.zig
+index 71bab44..85ab1c6 100644
+--- a/src/fios/current_backend_uncertainty.zig
++++ b/src/fios/current_backend_uncertainty.zig
+@@ -6,5 +6,5 @@ pub fn known(comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
+     };
+     const sdk = if (sdk_enabled) Source.fios_current_sdk_known_uncertain() != 0 else false;
+     const llama = if (llama_enabled) Source.mlx_llama_source_uncertainty() != 0 else false;
+-    return sdk or llama;
++    return @import("current_streamed_pool_uncertainty.zig").known() or sdk or llama;
+ }
+diff --git a/src/mlx_stream.zig b/src/mlx_stream.zig
+index 4daeaf2..a28351e 100644
+--- a/src/mlx_stream.zig
++++ b/src/mlx_stream.zig
+@@ -44,3 +44,8 @@ pub const glm5n_source = @import("sdk/weights/streamed/glm5n_source.zig");
+ /// test module's `plugins/<model>/stream/dupes_test.zig` to compare against the resident arch.
+ pub const dupes = if (@import("builtin").is_test) struct {
+ } else struct {};
++
++// Fixed negative-only local read-pool refusal; no native terminal authority.
++pub fn fiosStreamCleanupUncertain() bool {
++    return @import("sdk/weights/streamed/sdk_ext/expert/io.zig").cleanupUncertain();
++}
+diff --git a/src/plugins/deepseek_v41/plugin.zig b/src/plugins/deepseek_v41/plugin.zig
+index 7e095a0..c414c3e 100644
+--- a/src/plugins/deepseek_v41/plugin.zig
++++ b/src/plugins/deepseek_v41/plugin.zig
+@@ -245,21 +245,22 @@ fn mtpSetting(settings_json: []const u8) ?bool {
+ }
+ 
+ fn loadModel(ctx: *const abi.LoadCtx, s: mlx.mlx_stream) !*Model {
++    if (streamed.cleanupUncertain()) return error.PoolCleanupUncertain;
+     const io = std.Io.Threaded.global_single_threaded.io();
+     const c = config.of(ctx.parsed);
+     const m = try gpa.create(Model);
+-    errdefer gpa.destroy(m);
++    errdefer if (!streamed.cleanupUncertain()) gpa.destroy(m);
+     m.cfg = c.*;
+     // The driver's map never holds the vision tower (the engine's encoder reads it and hands its rows to `forward`).
+     const taken = if (ctx.weights) |w| Resident.take(w) else null;
+     m.weights = taken orelse try dsv41.loadPack(io, gpa, ctx.model_dir.slice(), c.dsv41_vision);
+-    errdefer m.weights.deinit();
++    errdefer if (!streamed.cleanupUncertain()) m.weights.deinit();
+     // The worker's layers when the driver's load planned a Thunderbolt pair.
+     const pair: ?dsv41.Pair = if (ctx.pair_remote.count > 0) .{ .lo = ctx.pair_remote.first, .hi = ctx.pair_remote.first + ctx.pair_remote.count, .worker = false } else null;
+     m.s = s;
+     m.caps = ctx.parsed.caps;
+     m.mdl = try dsv41.init(gpa, &m.cfg, &m.weights, s, .{ .dspark = dsv41.dsparkWanted(&m.cfg, pair, mtpSetting(ctx.settings_json.slice())), .pair = pair, .tp = if (ctx.tp_size > 0) .{ .rank = ctx.tp_rank, .size = ctx.tp_size } else null, .head_8bit = dsv41.head8Wanted(), .streamed_experts = c.dsv41_streamed, .pack_dir = ctx.model_dir.slice() });
+-    errdefer m.mdl.deinit();
++    errdefer if (!streamed.cleanupUncertain()) m.mdl.deinit();
+     m.bank = null;
+     m.owner = 0;
+     m.parked = .empty;
+@@ -268,7 +269,7 @@ fn loadModel(ctx: *const abi.LoadCtx, s: mlx.mlx_stream) !*Model {
+         const dir = ctx.model_dir.slice();
+         if (c.dsv41_exl3_bank) try openBank(m, io, dir, ctxSetting(ctx.settings_json.slice()), ctx.wired_margin_bytes) else try openPackBank(m, dir, ctxSetting(ctx.settings_json.slice()), ctx.settings_json.slice());
+     }
+-    errdefer closeBank(m);
++    errdefer if (!streamed.cleanupUncertain()) closeBank(m);
+     m.tower = if (c.dsv41_vision and taken == null) try vision.Dsv41Vision.init(gpa, m.cfg, &m.weights) else null;
+     return m;
+ }
+@@ -277,6 +278,7 @@ fn loadModel(ctx: *const abi.LoadCtx, s: mlx.mlx_stream) !*Model {
+ /// else of the largest `bill.stream_context_rungs` rung that keeps `bill.stream_min_rows` rows, else of
+ /// `bill.stream_context`.
+ fn openBank(m: *Model, io: std.Io, dir: []const u8, ctx_size: ?u64, wired_margin: u64) !void {
++    if (streamed.cleanupUncertain()) return error.PoolCleanupUncertain;
+     if (comptime !build_options.mlx_stream) return error.StreamedWeightsUnsupported;
+     const mdl = m.mdl;
+     const gates = try gpa.alloc(streamed.Exl3.Gate, mdl.n_layers);
+@@ -300,6 +302,7 @@ fn openBank(m: *Model, io: std.Io, dir: []const u8, ctx_size: ?u64, wired_margin
+ 
+ /// A standard MLX pack's routed experts streamed as downloaded, at the slot rows the `stream_experts` setting names.
+ fn openPackBank(m: *Model, dir: []const u8, ctx_size: ?u64, settings_json: []const u8) !void {
++    if (streamed.cleanupUncertain()) return error.PoolCleanupUncertain;
+     if (comptime !build_options.mlx_stream) return error.StreamedWeightsUnsupported;
+     const rows = (streamed.Setting.parse(settings_json) orelse return error.StreamedWeightsUnsupported).slotRows(m.cfg.num_experts);
+     _ = mlx.mlx_synchronize(m.s);
+@@ -311,7 +314,17 @@ fn openPackBank(m: *Model, dir: []const u8, ctx_size: ?u64, settings_json: []con
+     std.log.info("deepseek_v41: streamed MLX pack experts, {d} slot rows per layer", .{rows});
+ }
+ 
++fn prepareBankRelease(m: *Model) bool {
++    if (comptime !build_options.mlx_stream) return true;
++    if (m.bank) |*bank| return switch (bank.*) {
++        .exl3 => |x| x.prepareRelease(),
++        .pack => |*x| x.prepareRelease(),
++    };
++    return !streamed.cleanupUncertain();
++}
++
+ fn closeBank(m: *Model) void {
++    if (!prepareBankRelease(m)) return;
+     if (comptime !build_options.mlx_stream) return;
+     var b = m.bank orelse return;
+     m.mdl.streamed = null;
+@@ -333,6 +346,7 @@ fn ctxSetting(settings_json: []const u8) ?u64 {
+ 
+ fn unload(mp: *anyopaque) callconv(.c) void {
+     const m: *Model = @ptrCast(@alignCast(mp));
++    if (!prepareBankRelease(m)) return;
+     closeBank(m);
+     if (m.tower) |*t| t.deinit();
+     var it = m.parked.valueIterator();
+diff --git a/src/plugins/glm5_next/host.zig b/src/plugins/glm5_next/host.zig
+index a099834..176bca9 100644
+--- a/src/plugins/glm5_next/host.zig
++++ b/src/plugins/glm5_next/host.zig
+@@ -29,6 +29,7 @@ pub fn load(comptime name: []const u8, ctx: *const abi.LoadCtx, out: *abi.Verdic
+ 
+ pub fn unload(mp: *anyopaque) callconv(.c) void {
+     const m = of(mp);
++    if (!m.prepareRelease()) return;
+     m.deinit();
+     gpa.destroy(m);
+ }
+diff --git a/src/plugins/glm5_next/plugin.zig b/src/plugins/glm5_next/plugin.zig
+index 8ca67ef..3fc9968 100644
+--- a/src/plugins/glm5_next/plugin.zig
++++ b/src/plugins/glm5_next/plugin.zig
+@@ -77,6 +77,7 @@ fn load(ctx: *const abi.LoadCtx, out: *Verdict) callconv(.c) ?*anyopaque {
+ /// The pack's EXL3 bank bound to every routed layer, at the slot rows the box holds beside the loaded residents and
+ /// one prompt (`LoadCtx.stream_room`).
+ fn openBank(m: *host.Model, dir: []const u8, room: u64) !void {
++    if (streamed.cleanupUncertain()) return error.PoolCleanupUncertain;
+     if (comptime !build_options.mlx_stream) return error.StreamedWeightsUnsupported;
+     const io = std.Io.Threaded.global_single_threaded.io();
+     const gpa = std.heap.c_allocator;
+diff --git a/src/plugins/glm5_next/trunk.zig b/src/plugins/glm5_next/trunk.zig
+index cd506ce..0fde3d1 100644
+--- a/src/plugins/glm5_next/trunk.zig
++++ b/src/plugins/glm5_next/trunk.zig
+@@ -166,7 +166,14 @@ pub const Model = struct {
+     /// A streamed pack's expert bank, bound to every routed layer after the load (`plugin.zig` `openBank`).
+     bank: ?*Bank = null,
+ 
++    pub fn prepareRelease(m: *Model) bool {
++        if (comptime !build_options.mlx_stream) return true;
++        if (m.bank) |b| return b.prepareRelease();
++        return !@import("../../sdk/weights/streamed.zig").cleanupUncertain();
++    }
++
+     pub fn deinit(m: *Model) void {
++        if (!m.prepareRelease()) return;
+         if (comptime build_options.mlx_stream) if (m.bank) |b| b.deinit();
+         m.bank = null;
+         for (m.layers) |*l| if (l.mlp == .moe) compiled.free(&l.mlp.moe.route_fn);
+@@ -876,6 +883,7 @@ fn probePrefix(src: *const quant_abi.Source, declared: []const u8, leaf: []const
+ 
+ /// The trunk from `ctx.weights`, and GLM's head when the pack ships one (a head that fails to load is dropped).
+ pub fn load(ctx: *const abi.LoadCtx) !*Model {
++    if (@import("../../sdk/weights/streamed.zig").cleanupUncertain()) return error.PoolCleanupUncertain;
+     const src = ctx.weights orelse return error.UnsupportedWeightSource;
+     const c = config.of(ctx.parsed);
+     const s: mlx.mlx_stream = if (ctx.stream.ctx) |p| .{ .ctx = p } else mlx.gpuStream();
+@@ -883,9 +891,9 @@ pub fn load(ctx: *const abi.LoadCtx) !*Model {
+     var eb: [64]u8 = undefined;
+     const prefix = probePrefix(src, c.weight_prefix, try std.fmt.bufPrint(&eb, "{s}.weight", .{emb_base}));
+     const m = try gpa.create(Model);
+-    errdefer gpa.destroy(m);
++    errdefer if (!@import("../../sdk/weights/streamed.zig").cleanupUncertain()) gpa.destroy(m);
+     m.* = .{ .c = c, .s = s, .caps = ctx.parsed.caps, .embed = undefined, .head = undefined, .final_norm = undefined };
+-    errdefer m.deinit();
++    errdefer if (!@import("../../sdk/weights/streamed.zig").cleanupUncertain()) m.deinit();
+     var l: Loader = .{ .src = src, .c = c, .s = s, .prefix = prefix, .owned = &m.owned, .exl3 = null };
+     if (c.expert_quant_json.len > 0) {
+         var arena = std.heap.ArenaAllocator.init(gpa);
+diff --git a/src/plugins/mimo_v2/plugin.zig b/src/plugins/mimo_v2/plugin.zig
+index 1b74d2c..bb5fcd6 100644
+--- a/src/plugins/mimo_v2/plugin.zig
++++ b/src/plugins/mimo_v2/plugin.zig
+@@ -111,7 +111,13 @@ pub const Loaded = struct {
+     /// A streaming pack's routed experts (`experts.bin`).
+     experts: ?streamed.Streamed = null,
+ 
++    fn prepareRelease(m: *Loaded) bool {
++        if (m.experts) |*x| return x.prepareRelease();
++        return !streamed.cleanupUncertain();
++    }
++
+     fn release(m: *Loaded) void {
++        if (!m.prepareRelease()) return;
+         if (m.head) |h| {
+             h.deinit();
+             gpa.destroy(h);
+@@ -132,6 +138,7 @@ fn load(ctx: *const abi.LoadCtx, out: *Verdict) callconv(.c) ?*anyopaque {
+ }
+ 
+ fn loadModel(ctx: *const abi.LoadCtx) !*Loaded {
++    if (streamed.cleanupUncertain()) return error.PoolCleanupUncertain;
+     const c = config.of(ctx.parsed);
+     var r = try reader.Reader.open(ctx, c.block_json, "model");
+     defer r.close();
+@@ -139,7 +146,7 @@ fn loadModel(ctx: *const abi.LoadCtx) !*Loaded {
+     var xr: ?reader.Reader = if (c.expert_block_json.len > 0) try reader.Reader.open(ctx, c.expert_block_json, "model") else null;
+     defer if (xr) |*x| x.close();
+     const m = try gpa.create(Loaded);
+-    errdefer gpa.destroy(m);
++    errdefer if (!streamed.cleanupUncertain()) gpa.destroy(m);
+     m.* = .{ .base = .{ .weights = undefined, .shared = bases.Shared.init(c.rms_norm_eps, c.rms_norm_eps), .a = gpa, .s = r.s } };
+     errdefer m.release();
+     if (c.streamed) {
+@@ -293,6 +300,7 @@ fn slotRows(c: *const config.Config, settings_json: []const u8) u32 {
+ 
+ fn unload(mp: *anyopaque) callconv(.c) void {
+     const m: *Loaded = @ptrCast(@alignCast(mp));
++    if (!m.prepareRelease()) return;
+     m.release();
+     gpa.destroy(m);
+ }
+diff --git a/src/plugins/qwen3_5/plugin.zig b/src/plugins/qwen3_5/plugin.zig
+index 1f34f3d..68b5dfb 100644
+--- a/src/plugins/qwen3_5/plugin.zig
++++ b/src/plugins/qwen3_5/plugin.zig
+@@ -130,7 +130,13 @@ pub const Loaded = struct {
+     /// The routed experts streamed from the pack as downloaded (the `stream_experts` setting).
+     experts: ?streamed.Streamed = null,
+ 
++    fn prepareRelease(m: *Loaded) bool {
++        if (m.experts) |*x| return x.prepareRelease();
++        return !streamed.cleanupUncertain();
++    }
++
+     fn release(m: *Loaded) void {
++        if (!m.prepareRelease()) return;
+         lane_qmm.release(@intFromPtr(m));
+         if (m.head) |*h| h.deinit();
+         if (m.experts) |*x| x.close();
+@@ -169,6 +175,7 @@ pub fn load(ctx: *const abi.LoadCtx, out: *Verdict) callconv(.c) ?*anyopaque {
+ }
+ 
+ fn loadModel(ctx: *const abi.LoadCtx) !*Loaded {
++    if (streamed.cleanupUncertain()) return error.PoolCleanupUncertain;
+     const c = config.of(ctx.parsed);
+     const src = ctx.weights orelse return error.NoWeightSource;
+     const s: mlx.mlx_stream = .{ .ctx = ctx.stream.ctx };
+@@ -182,7 +189,7 @@ fn loadModel(ctx: *const abi.LoadCtx) !*Loaded {
+     const act: mlx.mlx_dtype = if (rotated) .float16 else .bfloat16;
+ 
+     const m = try gpa.create(Loaded);
+-    errdefer gpa.destroy(m);
++    errdefer if (!streamed.cleanupUncertain()) gpa.destroy(m);
+     m.* = .{ .caps = ctx.parsed.caps, .geo = .{
+         .hk = @intCast(c.linear_num_key_heads),
+         .hv = @intCast(c.linear_num_value_heads),
+@@ -679,6 +686,7 @@ fn headFingerprint(mp: *anyopaque) callconv(.c) u32 {
+ 
+ pub fn unload(mp: *anyopaque) callconv(.c) void {
+     const m: *Loaded = @ptrCast(@alignCast(mp));
++    if (!m.prepareRelease()) return;
+     m.release();
+     gpa.destroy(m);
+ }
+diff --git a/src/sdk/weights/streamed.zig b/src/sdk/weights/streamed.zig
+index 73df4c2..ace7f0f 100644
+--- a/src/sdk/weights/streamed.zig
++++ b/src/sdk/weights/streamed.zig
+@@ -103,6 +103,11 @@ pub fn glm5nRouted(src: *Glm5n.Source) Routed {
+     return .{ .ctx = src, .math = .{ .source = C.rows }, .settle_fn = C.settle, .phase_fn = C.phase, .read_ahead_fn = C.readAhead };
+ }
+ 
++pub fn cleanupUncertain() bool {
++    if (comptime !build_options.mlx_stream) return false;
++    return plugin.fiosStreamCleanupUncertain();
++}
++
+ pub const Streamed = struct {
+     pub const refusal = abi.Verdict.refuse(.unsupported, "streamed weights: no expert bank, or a build without mlx-stream");
+ 
+@@ -117,6 +122,7 @@ pub const Streamed = struct {
+     src: union(enum) { mxfp4: *Mxfp4, pack: *Pack },
+ 
+     pub fn open(a: std.mem.Allocator, io: std.Io, dir: []const u8, s: mlx.mlx_stream, opt: Options) !Streamed {
++        if (cleanupUncertain()) return error.PoolCleanupUncertain;
+         if (comptime !build_options.mlx_stream) return error.StreamedWeightsUnsupported;
+         var d = std.Io.Dir.openDirAbsolute(io, dir, .{}) catch return error.StreamedWeightsUnsupported;
+         defer d.close(io);
+@@ -129,6 +135,7 @@ pub const Streamed = struct {
+     /// The routed experts of the MLX pack in `dir` (`switch_mlp` stacked or one tensor per expert, affine), `rows`
+     /// slot rows per layer (null: every expert), slot arrays on `s`.
+     pub fn openPack(a: std.mem.Allocator, dir: []const u8, s: mlx.mlx_stream, rows: ?u32) !Streamed {
++        if (cleanupUncertain()) return error.PoolCleanupUncertain;
+         if (comptime !build_options.mlx_stream) return error.StreamedWeightsUnsupported;
+         return .{ .src = .{ .pack = try Pack.open(a, dir, s, rows) } };
+     }
+@@ -153,7 +160,13 @@ pub const Streamed = struct {
+         return (per_layer * g.num_moe_layers + plugin.bank_source.transient_rows) * g.record_bytes;
+     }
+ 
++    pub fn prepareRelease(self: *Streamed) bool {
++        if (comptime !build_options.mlx_stream) return true;
++        return switch (self.src) { inline else => |x| x.prepareRelease() };
++    }
++
+     pub fn close(self: *Streamed) void {
++        if (!self.prepareRelease()) return;
+         if (comptime build_options.mlx_stream) switch (self.src) {
+             inline else => |x| x.deinit(),
+         };
+diff --git a/src/sdk/weights/streamed/bank_source.zig b/src/sdk/weights/streamed/bank_source.zig
+index 2658749..865a9c6 100644
+--- a/src/sdk/weights/streamed/bank_source.zig
++++ b/src/sdk/weights/streamed/bank_source.zig
+@@ -6,6 +6,7 @@
+ 
+ const std = @import("std");
+ const sdk = @import("sdk");
++const sdk_ext = @import("sdk_ext.zig");
+ const mlx = sdk.mlx;
+ const ops = @import("ops.zig");
+ const bank_mod = @import("mimo/bank.zig");
+@@ -47,34 +48,42 @@ pub const Mxfp4 = struct {
+ 
+     /// The bank in `dir` (`expert-manifest.json` + `experts.bin`) streamed on `s`, in the decode phase from the start.
+     pub fn open(a: std.mem.Allocator, io: std.Io, dir: []const u8, s: mlx.mlx_stream, opt: Options) !*Mxfp4 {
++        if (sdk_ext.expert.io.cleanupUncertain()) return error.PoolCleanupUncertain;
+         var bank = try bank_mod.Bank.open(a, io, dir);
+-        errdefer bank.deinit();
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) bank.deinit();
+         const geo = bank.geometry;
+         const rows = try a.alloc(u32, geo.num_moe_layers);
+-        errdefer a.free(rows);
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) a.free(rows);
+         if (opt.rows) |r| {
+             if (r.len != rows.len) return error.StreamedRows;
+             for (r) |n| if (n == 0 or n > geo.num_experts) return error.StreamedRows;
+             @memcpy(rows, r);
+         } else @memset(rows, geo.num_experts);
+         const self = try a.create(Mxfp4);
+-        errdefer a.destroy(self);
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) a.destroy(self);
+         self.* = .{ .a = a, .bank = bank, .sdk_bank = undefined, .stream = undefined, .source = undefined, .g = undefined, .rows = rows };
+         self.sdk_bank = try bank_mod.SDKBank.init(a, &self.bank);
+-        errdefer self.sdk_bank.deinit();
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.sdk_bank.deinit();
+         var opts = stream_mod.options(rows, .{ .mlx = s });
+         opts.lookahead = stream_mod.lookahead;
+         self.stream = try stream_mod.Stream.init(a, &self.sdk_bank, opts);
+-        errdefer self.stream.deinit();
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.stream.deinit();
+         self.source = stream_mod.StreamSource.init(self.stream);
+         self.g = try ops.MlxOps.init(a, s);
+-        errdefer self.g.deinit();
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.g.deinit();
+         try self.source.grow(rows);
+         return self;
+     }
+ 
+-    pub fn deinit(self: *Mxfp4) void {
++    pub fn prepareRelease(self: *Mxfp4) bool {
++        if (sdk_ext.expert.io.cleanupUncertain()) return false;
++        if (self.stream.pool.stopped) return true;
+         _ = mlx.mlx_synchronize(self.g.s);
++        return self.stream.prepareRelease();
++    }
++
++    pub fn deinit(self: *Mxfp4) void {
++        if (!self.prepareRelease()) return;
+         self.g.deinit();
+         self.stream.deinit();
+         self.sdk_bank.deinit();
+diff --git a/src/sdk/weights/streamed/csrc/q3_lookahead4.h b/src/sdk/weights/streamed/csrc/q3_lookahead4.h
+index b763aef..ae2a5a2 100644
+--- a/src/sdk/weights/streamed/csrc/q3_lookahead4.h
++++ b/src/sdk/weights/streamed/csrc/q3_lookahead4.h
+@@ -75,7 +75,7 @@ int64_t q3ld_seq(void);                     /* ACQUIRE load of the completion se
+ int64_t q3ld_wait(int64_t seen, int64_t timeout_ns);
+ void q3ld_gauge(int64_t *out);              /* 6 words */
+ int q3ld_quiesce(int64_t timeout_ns);       /* 0 quiescent, 1 timeout */
+-int q3ld_stop(void);                        /* drain, join, release every live gate; 0, -1 not running */
++int q3ld_stop(void);                        /* drain/join/release gates; 0 ok, -1 not running, -3 retains uncertain pool storage */
+ /* Running pool with the speculative class configured: arm (lens = ngu GU then ndown DOWN lengths, none negative) or
+  * disarm (0, 0). All or nothing: -1 leaves the class as it was. */
+ int q3ld_pre_config(int32_t ngu, int32_t ndown, const int64_t *lens);
+diff --git a/src/sdk/weights/streamed/csrc/q3_lookahead4_exl3.c b/src/sdk/weights/streamed/csrc/q3_lookahead4_exl3.c
+index f7be87b..29c9d75 100644
+--- a/src/sdk/weights/streamed/csrc/q3_lookahead4_exl3.c
++++ b/src/sdk/weights/streamed/csrc/q3_lookahead4_exl3.c
+@@ -125,6 +125,16 @@ DSV41_LOOKAHEAD2 pool (2026-09-25, q3-lookahead2-20260925.md): lookahead/q3_look
+ #include <time.h>
+ #include <unistd.h>
+ 
++/* Sticky negative cleanup evidence only; never completion/admission authority. */
++static int fios_stop_uncertain = 0;
++int fios_q3ld_cleanup_uncertain(void) {
++    return __atomic_load_n(&fios_stop_uncertain, __ATOMIC_ACQUIRE);
++}
++
++void fios_q3ld_cleanup_refused(void) {
++    __atomic_store_n(&fios_stop_uncertain, 1, __ATOMIC_RELEASE);
++}
++
+ #define RES_W 8
+ #define MAX_WORKERS 8
+ #define MAX_COMP 6
+@@ -1249,9 +1259,10 @@ int q3ld_spec_streams(int32_t idle_busy) {
+     return 0;
+ }
+ 
+-/* Start the pool.  staging_ptrs: nw page-aligned buffers of sbytes.  Returns 0 or -errno / -1 / -2. */
++/* Start the pool.  staging_ptrs: nw page-aligned buffers of sbytes.  Returns 0 or -errno / -1 / -2; -3 retains an earlier cleanup refusal. */
+ int q3ld_start(int32_t nw, const uint64_t *staging_ptrs, int64_t sbytes, int64_t psize,
+                int64_t *res_arr, int64_t n_tickets, int64_t *log_arr, int64_t n_log, int64_t *gauge_arr) {
++    if (fios_q3ld_cleanup_uncertain()) return -3;
+     if (tb_denom == 0 && q3ld_init() != 0) return -1;
+     pthread_mutex_lock(&mu);
+     if (running || !spec_configured || nw < 1 || nw > MAX_WORKERS || psize <= 0 || sbytes % psize
+@@ -1700,24 +1711,37 @@ int q3ld_quiesce(int64_t timeout_ns) {
+     return rc;
+ }
+ 
+-/* Stop and join every thread (CDLL), after draining the demand queue.  0 ok, -1 not running. */
++/* Stop and join every thread (CDLL), after draining the demand queue.  0 ok, -1 not running, -3 uncertain with borrowed storage retained. */
+ int q3ld_stop(void) {
+     pthread_mutex_lock(&mu);
++    if (fios_q3ld_cleanup_uncertain()) { pthread_mutex_unlock(&mu); return -3; }
+     if (!running) { pthread_mutex_unlock(&mu); return -1; }
+     __atomic_store_n(&stopping, 1, __ATOMIC_RELAXED);
+     pthread_cond_broadcast(&work_cv);
+     pthread_cond_broadcast(&spec_cv);
+     pthread_cond_broadcast(&pre_cv);             /* PRE: a worker held at an unbound range's bind point drops it */
+     pthread_mutex_unlock(&mu);
+-    for (int i = 0; i < nworkers; i++) pthread_join(threads[i], 0);
+-    for (int i = 0; i < nspec_started; i++) pthread_join(spec_threads[i], 0);
++    for (int i = 0; i < nworkers; i++) if (pthread_join(threads[i], 0) != 0) {
++        fios_q3ld_cleanup_refused();
++        return -3;
++    }
++    for (int i = 0; i < nspec_started; i++) if (pthread_join(spec_threads[i], 0) != 0) {
++        fios_q3ld_cleanup_refused();
++        return -3;
++    }
+     /* EVENT: no ticket publishes any more.  Stop the watchdog, then release every live gate (no GPU wait outlives
+      * the pool) and hand the final prefix to the event before the class is disarmed. */
+     pthread_mutex_lock(&mu);
+     wd_stop = 1;
+     pthread_cond_broadcast(&wd_cv);
+     pthread_mutex_unlock(&mu);
+-    if (wd_running) { pthread_join(wd_thread, 0); wd_running = 0; }
++    if (wd_running) {
++        if (pthread_join(wd_thread, 0) != 0) {
++            __atomic_store_n(&fios_stop_uncertain, 1, __ATOMIC_RELEASE);
++            return -3;
++        }
++        wd_running = 0;
++    }
+     pthread_mutex_lock(&mu);
+     for (int64_t i = g_head; i < g_tail; i++) {
+         gate_t *g = &gates[i % MAX_GATES];
+@@ -1923,8 +1947,9 @@ static void *wd_main(void *arg) {
+ /* Arm the event-gate class on a RUNNING pool with counters (q3ld_spec_config) and no live gate: kind EVK_MTL (obj =
+  * an MTLSharedEvent*, whose signaled value is `start`) or EVK_HOST (obj = an int64 word holding `start`); timeout_ns
+  * = the watchdog deadline of every gate (1 ms .. 600 s).  Starts the watchdog thread.  kind EVK_OFF disarms (no live
+- * gate).  0, -1 refused, -2 thread. */
++ * gate).  0, -1 refused, -2 thread, -3 retained cleanup uncertainty. */
+ int q3ld_ev_config(int32_t kind, uint64_t obj, int64_t timeout_ns, uint64_t start) {
++    if (fios_q3ld_cleanup_uncertain()) return -3;
+     pthread_mutex_lock(&mu);
+     if (!running || stopping || !sc || !gate_of || g_head != g_tail) { pthread_mutex_unlock(&mu); return -1; }
+     if (kind == EVK_OFF) {
+@@ -1932,7 +1957,13 @@ int q3ld_ev_config(int32_t kind, uint64_t obj, int64_t timeout_ns, uint64_t star
+         wd_stop = 1;
+         pthread_cond_broadcast(&wd_cv);
+         pthread_mutex_unlock(&mu);
+-        if (wd_running) { pthread_join(wd_thread, 0); wd_running = 0; }
++        if (wd_running) {
++            if (pthread_join(wd_thread, 0) != 0) {
++                fios_q3ld_cleanup_refused();
++                return -3;
++            }
++            wd_running = 0;
++        }
+         pthread_mutex_lock(&sig_mu);
+         __atomic_store_n(&ev_kind, EVK_OFF, __ATOMIC_RELEASE);
+         ev_obj = 0;
+diff --git a/src/sdk/weights/streamed/exl3_source.zig b/src/sdk/weights/streamed/exl3_source.zig
+index 658b13c..4d49c45 100644
+--- a/src/sdk/weights/streamed/exl3_source.zig
++++ b/src/sdk/weights/streamed/exl3_source.zig
+@@ -120,33 +120,34 @@ pub const Source = struct {
+     /// The bank in `dir` at the rows `budget` holds, streamed on `s` (the trunk's stream). `gates`: every routed layer's
+     /// router (its arrays borrowed for the source's life).
+     pub fn open(a: std.mem.Allocator, io: std.Io, dir: []const u8, s: mlx.mlx_stream, geo: Geometry, gates: []const Gate, budget: Budget) !*Source {
++        if (sdk_ext.expert.io.cleanupUncertain()) return error.PoolCleanupUncertain;
+         var diag: xk.Diag = .{};
+-        errdefer if (diag.len > 0) std.log.err("streamed exl3: {s}", .{diag.message()});
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) if (diag.len > 0) std.log.err("streamed exl3: {s}", .{diag.message()});
+         // One expert reader per process: a second streamed load is refused by name.
+         if (comptime expert_stream.uses_reader) try sdk_ext.expert.takeReader();
+-        errdefer if (comptime expert_stream.uses_reader) sdk_ext.expert.giveReader();
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) if (comptime expert_stream.uses_reader) sdk_ext.expert.giveReader();
+         const self = try a.create(Source);
+-        errdefer a.destroy(self);
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) a.destroy(self);
+         self.a = a;
+         self.phase = .prompt;
+         self.released = false;
+         self.bank = try expert_bank.Bank.open(a, io, dir, implementedOf(geo), null);
+-        errdefer self.bank.deinit();
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.bank.deinit();
+         self.bill = try billBank(&self.bank, budget);
+         self.gates = try a.dupe(Gate, gates);
+-        errdefer a.free(self.gates);
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) a.free(self.gates);
+         self.prompt_rows = try a.alloc(u32, geo.n_layers);
+-        errdefer a.free(self.prompt_rows);
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) a.free(self.prompt_rows);
+         @memset(self.prompt_rows, self.bill.rows.prompt);
+         self.decode_rows = try a.alloc(u32, geo.n_layers);
+-        errdefer a.free(self.decode_rows);
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) a.free(self.decode_rows);
+         @memset(self.decode_rows, self.bill.rows.decode);
+         self.g = try G.init(a, s);
+-        errdefer self.g.deinit();
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.g.deinit();
+         self.set = try kernel_set.Set.init(a, .{ .device = .{ .stream = s } }, &diag);
+-        errdefer self.set.deinit();
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.set.deinit();
+         self.set.install(G, &self.g);
+-        errdefer kernel_set.Set.uninstall(G, &self.g);
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) kernel_set.Set.uninstall(G, &self.g);
+         self.q = try xq.accept(G, a, &self.g, .{ .kernels = self.set.ref() }, .{
+             .hidden = geo.hidden_size,
+             .inter = geo.moe_intermediate_size,
+@@ -155,7 +156,7 @@ pub const Source = struct {
+             .act = .{ .swiglu_clamped = geo.swiglu_limit },
+             .input = .bfloat16,
+         }, &diag);
+-        errdefer self.q.deinit(&self.g);
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.q.deinit(&self.g);
+         try self.q.routeExpertBf16();
+         try self.q.compileTexts(self.set, &xq.form_texts, &diag);
+         try self.q.routeForms(&self.g, forms);
+@@ -171,14 +172,21 @@ pub const Source = struct {
+             .transient_rows = @as(u32, wide_depth) * sdk_ext.expert.policy.max_route_ids,
+             .transient_release = expert_stream.phase_change_releases_wide_windows and expert_stream.transient_release_default,
+         });
+-        errdefer self.stream.deinit();
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.stream.deinit();
+         self.source = xp.StreamSource.init(self.stream);
+         self.hook = try Hook.initWith(a, &self.g, &self.source, Math.init(self.q, geo), geo, .{ .gates = self.gates, .event = event, .wide = wide, .banked = true, .hoist_first = true, .devroute = true });
+         return self;
+     }
+ 
+-    pub fn deinit(self: *Source) void {
++    pub fn prepareRelease(self: *Source) bool {
++        if (sdk_ext.expert.io.cleanupUncertain()) return false;
++        if (self.stream.pool.stopped) return true;
+         _ = mlx.mlx_synchronize(self.g.s);
++        return self.stream.prepareRelease();
++    }
++
++    pub fn deinit(self: *Source) void {
++        if (!self.prepareRelease()) return;
+         self.hook.deinit();
+         self.stream.deinit();
+         self.q.deinit(&self.g);
+diff --git a/src/sdk/weights/streamed/glm5n/experts.zig b/src/sdk/weights/streamed/glm5n/experts.zig
+index 9af396f..330f3ee 100644
+--- a/src/sdk/weights/streamed/glm5n/experts.zig
++++ b/src/sdk/weights/streamed/glm5n/experts.zig
+@@ -247,6 +247,7 @@ pub fn SourceOf(comptime fam: Family) type {
+         /// routed layer's. `prompt`: the prompt levers' routes (prompt_levers.zig; the scheduler's route cut on either
+         /// family, the DIG-X wave size and the rows' counting sort on exl3).
+         pub fn init(a: std.mem.Allocator, io: std.Io, model_dir: []const u8, rows: []const u32, decode_rows: []const u32, gates: []const Gate, stream: mlx.mlx_stream, decode_moe: settings.DecodeMoe, predict: settings.DecodePredict, keep_warm: gpu_warm.Route, tally: expert_tally.Settings, exl3_forms: settings.Exl3Forms, prompt: prompt_levers.Settings, miss_reads: settings.MissReads, prompt_residents: settings.PromptResidents) !*Self {
++            if (sdk_ext.expert.io.cleanupUncertain()) return error.PoolCleanupUncertain;
+             const Bm = Fam.Bridge;
+             const bm = Fam.bank;
+             var open_diag: sdk.Diag = .{};
+@@ -254,7 +255,7 @@ pub fn SourceOf(comptime fam: Family) type {
+                 if (open_diag.len > 0) log.err("{s}\n", .{open_diag.message()});
+                 return e;
+             };
+-            errdefer bank.deinit();
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) bank.deinit();
+             const geo = bank.geometry;
+             try geo.requireFlash();
+             if (rows.len != geo.num_moe_layers or decode_rows.len != rows.len) return error.Glm5NextExpertRows;
+@@ -270,23 +271,23 @@ pub fn SourceOf(comptime fam: Family) type {
+             if (gates.len != geo.first_moe_layer + geo.num_moe_layers) return error.Glm5NextGateTable;
+ 
+             const self = try a.create(Self);
+-            errdefer a.destroy(self);
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) a.destroy(self);
+             self.* = .{ .allocator = a, .bank = bank, .sdk_bank = undefined, .sdk_stream = undefined, .stream_source = undefined, .g = undefined, .rows = undefined, .decode_rows = undefined, .ex = undefined };
+             self.prompt_residents = prompt_residents;
+             self.rows = try a.dupe(u32, rows);
+-            errdefer a.free(self.rows);
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) a.free(self.rows);
+             self.decode_rows = try a.dupe(u32, decode_rows);
+-            errdefer a.free(self.decode_rows);
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) a.free(self.decode_rows);
+             self.g = try ops.MlxOps.init(a, stream);
+-            errdefer self.g.deinit();
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.g.deinit();
+             self.sdk_bank = try bm.SDKBank.init(a, &self.bank);
+-            errdefer self.sdk_bank.deinit();
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.sdk_bank.deinit();
+             // The reader's staging holds the bank's widest span (Flash's gate/up span plus its page alignment and a page):
+             // refused here, once, if a bank's spans outgrow it.
+             if (Bm.S.stagingBytes(&self.sdk_bank) > settings.reader_staging_bytes) return error.Glm5NextReaderStaging;
+             const event = try expert_event.createMetal();
+             self.sdk_stream = try Bm.Stream.init(a, &self.sdk_bank, try streamOptionsOf(Bm, self.rows, .{ .mlx = stream }, event, tally, miss_reads));
+-            errdefer self.sdk_stream.deinit();
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.sdk_stream.deinit();
+             self.stream_source = Bm.StreamSource.init(self.sdk_stream);
+             try self.stream_source.installReadSchedule(read_schedule, mimo_stream.default_read_schedule_threshold);
+             // MiMo's X12 (`gpu_keep_warm`, the route the module resolved: `settings.Config.warmRoute`): `.waits` makes the warm
+@@ -294,7 +295,7 @@ pub fn SourceOf(comptime fam: Family) type {
+             // arm into the stream source (mimo_v2/source.zig's install); `.off` installs nothing; refused by name on a CPU
+             // stream or without the stream's Metal event.
+             self.warm = try gpu_warm.install(a, keep_warm, stream, event.object);
+-            errdefer if (self.warm) |w| w.destroy();
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) if (self.warm) |w| w.destroy();
+             if (self.warm) |w| self.stream_source.warm_arm = gpu_warm.Arm.of(gpu_warm.Warm, w);
+             // The slot arrays are the format's, every routed layer's (base and transient banks), checked once.
+             for (0..geo.num_moe_layers) |i| {
+@@ -313,14 +314,14 @@ pub fn SourceOf(comptime fam: Family) type {
+                     log.err("glm5_next: the exl3 expert texts refused: {s} ({s})\n", .{ diag.message(), @errorName(e) });
+                     return e;
+                 };
+-                errdefer m.deinit(&self.g);
++                errdefer if (!sdk_ext.expert.io.cleanupUncertain()) m.deinit(&self.g);
+                 m.predictor = switch (predict) {
+                     .f32 => try mimo_math.Predictor.install(.f32, geo),
+                     .bf16 => .{ .scores = scoresBf16 },
+                 };
+                 break :blk m;
+             };
+-            errdefer math.deinit(&self.g);
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) math.deinit(&self.g);
+             self.combine_route = combineRoute();
+             switch (self.combine_route) {
+                 .inplace => {
+@@ -332,7 +333,7 @@ pub fn SourceOf(comptime fam: Family) type {
+                     self.parts_combine = partsCombineFused;
+                 },
+             }
+-            errdefer self.combine_kernel.deinit();
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.combine_kernel.deinit();
+             const config: struct { hidden_size: u32, moe_intermediate_size: u32, n_layers: u32, n_routed_experts: u32, n_experts_per_tok: u32 } = .{
+                 .hidden_size = geo.hidden_size,
+                 .moe_intermediate_size = geo.intermediate_size,
+@@ -344,10 +345,10 @@ pub fn SourceOf(comptime fam: Family) type {
+                 self.own_gates = try a.alloc(Fam.Experts.Gate, gates.len);
+                 for (gates, self.own_gates) |gt, *o| o.* = .{ .w = gt.w, .bias = gt.bias };
+             }
+-            errdefer if (comptime fam == .exl3) a.free(self.own_gates);
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) if (comptime fam == .exl3) a.free(self.own_gates);
+             const fam_gates = if (comptime fam == .exl3) self.own_gates else gates;
+             self.ex = try Fam.Experts.initWith(a, &self.g, &self.stream_source, math, &config, .{ .gates = fam_gates, .event = event, .wide = .{ .seed = true, .hot_first = true, .depth = mimo_stream.wide_depth, .read_ahead = true, .route_cut = prompt.route_cut == .on }, .banked = decode_moe != .stock, .devroute = decode_moe == .hitpass });
+-            errdefer self.ex.deinit();
++            errdefer if (!sdk_ext.expert.io.cleanupUncertain()) self.ex.deinit();
+             if (self.combine_route == .inplace) self.ex.setJoinlessBound(prefill_combine.inplace_sources);
+             if (comptime fam == .exl3) {
+                 log.info("glm5_next experts: exl3 k3 mul1 routes (decode_moe={s}: DeepSeek-V4.1's banked PREP=rin chain at hidden {d} / inter {d}, in_rin + gate/up mul1h GEMVs + gu_epi + din_rin + down mul1h GEMV + dpost(bf16), one launch each per wave over the three banks{s}; prompt: DIG-X waves of <= {d} rows / {d} experts, take2 + gate|up GEMM (m128) + onepass + down GEMM (m128) + rot_widen1(bf16); bank {d} x {d} records of {d} B, codebook mul1 0x{X}, no global-scale word: scale-line isolation not applicable; the NVFP4 draft bank unchanged)\n", .{ @tagName(decode_moe), exl3_kernels.hidden, exl3_kernels.inter, if (decode_moe == .hitpass) ", each call's hit wave from the layer's resident slot LUT" else if (decode_moe == .stock) ", unbanked: one group per bank" else "", prompt.wave_rows, @import("../../../quant/exl3/stream/quant.zig").wave_max, geo.num_moe_layers, geo.num_experts, geo.record_bytes, exl3_kernels.codebook_multiplier });
+@@ -364,8 +365,15 @@ pub fn SourceOf(comptime fam: Family) type {
+             return self;
+         }
+ 
+-        pub fn deinit(self: *Self) void {
++        pub fn prepareRelease(self: *Self) bool {
++            if (sdk_ext.expert.io.cleanupUncertain()) return false;
++            if (self.sdk_stream.pool.stopped) return true;
+             _ = mlx.mlx_synchronize(self.g.s);
++            return self.sdk_stream.prepareRelease();
++        }
++
++        pub fn deinit(self: *Self) void {
++            if (!self.prepareRelease()) return;
+             // X12: the warm thread joined (its chunks in flight retired) before anything else goes (MiMo's order).
+             if (self.warm) |w| w.destroy();
+             self.ex.releaseParts(&self.g);
+diff --git a/src/sdk/weights/streamed/glm5n_source.zig b/src/sdk/weights/streamed/glm5n_source.zig
+index a437a31..ac9b1fb 100644
+--- a/src/sdk/weights/streamed/glm5n_source.zig
++++ b/src/sdk/weights/streamed/glm5n_source.zig
+@@ -48,6 +48,7 @@ pub const Source = struct {
+     /// decode rows). `gates`: every model layer's router as stored (bf16 `[experts, hidden]`) and its correction bias,
+     /// the dense layers' empty (borrowed for the source's life).
+     pub fn open(a: std.mem.Allocator, io: std.Io, dir: []const u8, s: mlx.mlx_stream, gates: []const Gate, n_moe: u32, n_experts: u32, slot_rows: sdk.Rows) !*Source {
++        if (sdk_ext.expert.io.cleanupUncertain()) return error.PoolCleanupUncertain;
+         const prompt_rows = try a.alloc(u32, n_moe);
+         defer a.free(prompt_rows);
+         const decode_rows = try a.alloc(u32, n_moe);
+@@ -57,7 +58,7 @@ pub const Source = struct {
+         // rate tally, the EXL3 forms, the prompt levers, direct demand reads, the prompt residents kept.
+         const warm: gpu_warm.Route = if (gpu_warm.gpuStream(s)) .waits else .off;
+         const inner = try experts.Exl3Source.init(a, io, dir, prompt_rows, decode_rows, gates, s, .hitpass, .bf16, warm, .{ .ratio = settings.default_tally_ratio }, .{}, prompt_levers.Settings{}, .direct, .keep);
+-        errdefer inner.deinit();
++        errdefer if (!sdk_ext.expert.io.cleanupUncertain()) inner.deinit();
+         try inner.ex.bindMergeGateWaits();
+         _ = try inner.prebuildExperts();
+         var d = try expert_usage.decide(a, io, &expert_usage.Settings{}, dir, "glm5_next", n_moe, n_experts);
+@@ -68,7 +69,10 @@ pub const Source = struct {
+         return self;
+     }
+ 
++    pub fn prepareRelease(self: *Source) bool { return self.inner.prepareRelease(); }
++
+     pub fn deinit(self: *Source) void {
++        if (!self.prepareRelease()) return;
+         self.inner.deinit();
+         self.a.destroy(self);
+     }
+diff --git a/src/sdk/weights/streamed/mlx_pack.zig b/src/sdk/weights/streamed/mlx_pack.zig
+index 15bba06..ec1ee1b 100644
+--- a/src/sdk/weights/streamed/mlx_pack.zig
++++ b/src/sdk/weights/streamed/mlx_pack.zig
+@@ -299,16 +299,17 @@ pub const Source = struct {
+     /// The pack in `dir` with `rows` slot rows per layer (null: every expert), slot arrays on `s`. Takes the
+     /// process's one expert reader (refused by name while another holds it).
+     pub fn open(a: std.mem.Allocator, dir: []const u8, s: mlx.mlx_stream, rows: ?u32) !*Source {
++        if (expert.io.cleanupUncertain()) return error.PoolCleanupUncertain;
+         try expert.takeReader();
+-        errdefer expert.giveReader();
++        errdefer if (!expert.io.cleanupUncertain()) expert.giveReader();
+         var bank = try Bank.open(a, dir);
+-        errdefer bank.deinit();
++        errdefer if (!expert.io.cleanupUncertain()) bank.deinit();
+         const per = rows orelse bank.n_experts;
+         if (per == 0 or per > bank.n_experts) return error.StreamedRows;
+         const self = try a.create(Source);
+-        errdefer a.destroy(self);
++        errdefer if (!expert.io.cleanupUncertain()) a.destroy(self);
+         self.* = .{ .a = a, .bank = bank, .stream = undefined, .rows = try a.alloc(u32, bank.layers.len) };
+-        errdefer a.free(self.rows);
++        errdefer if (!expert.io.cleanupUncertain()) a.free(self.rows);
+         @memset(self.rows, per);
+         self.stream = try S.Stream.init(a, &self.bank, .{
+             .rows = self.rows,
+@@ -318,12 +319,18 @@ pub const Source = struct {
+             .staging_from_bank = true,
+             .slot_memory = .{ .mlx = s },
+         });
+-        errdefer self.stream.deinit();
++        errdefer if (!expert.io.cleanupUncertain()) self.stream.deinit();
+         try self.stream.grow(self.rows);
+         return self;
+     }
+ 
++    pub fn prepareRelease(self: *Source) bool {
++        if (self.stream.pool.stopped) return !expert.io.cleanupUncertain();
++        return self.stream.prepareRelease();
++    }
++
+     pub fn deinit(self: *Source) void {
++        if (!self.prepareRelease()) return;
+         self.stream.deinit();
+         self.bank.deinit();
+         self.a.free(self.rows);
+diff --git a/src/sdk/weights/streamed/sdk_ext/expert/io.zig b/src/sdk/weights/streamed/sdk_ext/expert/io.zig
+index cbe32bb..eb08b6e 100644
+--- a/src/sdk/weights/streamed/sdk_ext/expert/io.zig
++++ b/src/sdk/weights/streamed/sdk_ext/expert/io.zig
+@@ -38,6 +38,8 @@ const c = if (builtin.os.tag == .macos) struct {
+     pub extern fn q3ld_gauge(out: *[6]i64) void;
+     pub extern fn q3ld_quiesce(timeout_ns: i64) c_int;
+     pub extern fn q3ld_stop() c_int;
++    pub extern fn fios_q3ld_cleanup_uncertain() c_int;
++    pub extern fn fios_q3ld_cleanup_refused() void;
+     pub extern fn q3ld_pre_config(ngu: i32, ndown: i32, lens: ?[*]const i64) c_int;
+     pub extern fn q3ld_pre_read_lens(fd: i32, file_size: i64, tag: i64, n: i32, bases: [*]const i64, lens: [*]const i64) i32;
+     pub extern fn q3ld_pre_state(out: *[pre_state_w * max_pre]i64) i32;
+@@ -289,7 +291,11 @@ fn openUncachedWith(path: [*:0]const u8, errno: ?*c_int, follow: bool) OpenError
+     return .{ .fd = fd, .size = @intCast(st.size) };
+ }
+ 
++// Independent sticky pool refusal only, never whole-native terminality.
++pub fn cleanupUncertain() bool { return c.fios_q3ld_cleanup_uncertain() != 0; }
++
+ pub const Pool = struct {
++    stopped: bool = false,
+     allocator: std.mem.Allocator,
+     staging: []align(std.heap.page_size_min) u8,
+     spec_staging: ?[]align(std.heap.page_size_min) u8 = null,
+@@ -313,6 +319,8 @@ pub const Pool = struct {
+     /// configured first). Staging, status words, counters and the log live
+     /// here and stay put until `stop`.
+     pub fn start(allocator: std.mem.Allocator, opt: Options) !*Pool {
++        if (cleanupUncertain()) return error.PoolCleanupUncertain;
++        var release_allocations = true;
+         const page = std.heap.pageSize();
+         if (opt.workers == 0 or opt.workers > max_workers or opt.staging_bytes == 0 or opt.staging_bytes % page != 0 or opt.tickets < 2 * max_items)
+             return error.InvalidOptions;
+@@ -321,15 +329,15 @@ pub const Pool = struct {
+         if (c.q3ld_abi() != abi_version or c.q3ld_counters_n() != counters_n or c.q3ld_max_spec() != max_spec or c.q3ld_max_pre() != max_pre or
+             c.q3ld_max_gates() != max_gates or c.q3ld_max_gate_tickets() != max_gate_tickets) return error.PoolAbi;
+         const self = try allocator.create(Pool);
+-        errdefer allocator.destroy(self);
++        errdefer if (release_allocations) allocator.destroy(self);
+         const staging = try std.posix.mmap(null, @intCast(opt.workers * opt.staging_bytes), .{ .READ = true, .WRITE = true }, .{ .TYPE = .PRIVATE, .ANONYMOUS = true }, -1, 0);
+-        errdefer std.posix.munmap(staging);
++        errdefer if (release_allocations) std.posix.munmap(staging);
+         const res = try allocator.alloc(i64, @as(usize, opt.tickets) * res_w);
+-        errdefer allocator.free(res);
++        errdefer if (release_allocations) allocator.free(res);
+         const log_arr = try allocator.alloc(i64, opt.tickets);
+-        errdefer allocator.free(log_arr);
++        errdefer if (release_allocations) allocator.free(log_arr);
+         const published = try allocator.alloc(bool, opt.tickets);
+-        errdefer allocator.free(published);
++        errdefer if (release_allocations) allocator.free(published);
+         @memset(res, 0);
+         @memset(log_arr, 0);
+         @memset(published, false);
+@@ -346,7 +354,7 @@ pub const Pool = struct {
+             threads = @intCast(s.threads);
+             self.record_bytes = s.record_bytes;
+         }
+-        errdefer if (self.spec_staging) |s| std.posix.munmap(s);
++        errdefer if (release_allocations) if (self.spec_staging) |s| std.posix.munmap(s);
+         // Arguments are valid here, so a refusal means a pool is running.
+         const nslots: i32 = if (opt.spec) |s| @intCast(s.slots) else 0;
+         const rec_len: i64 = @intCast(self.record_bytes);
+@@ -357,7 +365,10 @@ pub const Pool = struct {
+         var ptrs: [max_workers]u64 = undefined;
+         for (0..opt.workers) |w| ptrs[w] = @intFromPtr(staging.ptr) + w * opt.staging_bytes;
+         const rc = c.q3ld_start(@intCast(opt.workers), &ptrs, @intCast(opt.staging_bytes), @intCast(page), res.ptr, opt.tickets, log_arr.ptr, opt.tickets, &self.gauge);
+-        if (rc == -2) _ = c.q3ld_stop(); // fewer threads than asked: join the ones that started
++        if (rc == -2 and c.q3ld_stop() != 0) {
++            c.fios_q3ld_cleanup_refused();
++            release_allocations = false; // Native globals still borrow this exact descriptor/storage.
++        }
+         if (rc != 0) return if (rc == -1) error.PoolUnavailable else error.PoolStart;
+         return self;
+     }
+@@ -372,9 +383,19 @@ pub const Pool = struct {
+ 
+     /// Drains the queue, joins the workers (releasing every live gate), then
+     /// frees what they wrote into.
++    pub fn prepareStop(self: *Pool) bool {
++        if (cleanupUncertain()) return false;
++        if (self.stopped) return true;
++        if (c.q3ld_quiesce(10 * std.time.ns_per_s) != 0 or c.q3ld_stop() != 0) {
++            c.fios_q3ld_cleanup_refused();
++            return false;
++        }
++        self.stopped = true;
++        return true;
++    }
++
+     pub fn stop(self: *Pool) void {
+-        _ = c.q3ld_quiesce(10 * std.time.ns_per_s);
+-        _ = c.q3ld_stop();
++        if (!self.prepareStop()) return;
+         const a = self.allocator;
+         std.posix.munmap(self.staging);
+         if (self.spec_staging) |s| std.posix.munmap(s);
+diff --git a/src/sdk/weights/streamed/sdk_ext/expert/io_stub.zig b/src/sdk/weights/streamed/sdk_ext/expert/io_stub.zig
+index 2468544..fe3dddc 100644
+--- a/src/sdk/weights/streamed/sdk_ext/expert/io_stub.zig
++++ b/src/sdk/weights/streamed/sdk_ext/expert/io_stub.zig
+@@ -44,6 +44,8 @@ pub const q3ld = struct {
+     pub fn q3ld_quiesce(_: i64) c_int {
+         return 0;
+     }
++    pub fn fios_q3ld_cleanup_uncertain() c_int { return 0; }
++    pub fn fios_q3ld_cleanup_refused() void {}
+     pub fn q3ld_stop() c_int {
+         return 0;
+     }
+diff --git a/src/sdk/weights/streamed/sdk_ext/expert/stream.zig b/src/sdk/weights/streamed/sdk_ext/expert/stream.zig
+index 6857764..dea846e 100644
+--- a/src/sdk/weights/streamed/sdk_ext/expert/stream.zig
++++ b/src/sdk/weights/streamed/sdk_ext/expert/stream.zig
+@@ -842,6 +842,7 @@ pub fn StreamOf(comptime B: type, comptime probed: bool) type {
+             const Location = struct { rows: *const Rows, row: u32, meta: *SlotMeta };
+ 
+             pub fn init(a: std.mem.Allocator, bank: *const B.Bank, opt: Options) !*Stream {
++                if (expert_io.cleanupUncertain()) return error.PoolCleanupUncertain;
+                 const n_layers = bank.layers.len;
+                 if (opt.rows.len != n_layers) return error.InvalidRows;
+                 for (opt.rows) |r| if (r > bank.n_experts) return error.InvalidRows;
+@@ -898,21 +899,21 @@ pub fn StreamOf(comptime B: type, comptime probed: bool) type {
+                 }
+                 var selector: ?expert_lookahead.SelectorOf(B.routed_top_k) = null;
+                 if (opt.lookahead) |la| selector = try expert_lookahead.SelectorOf(B.routed_top_k).init(a, bank.n_experts, la.k, la.tau, la.budget);
+-                errdefer if (selector) |*sel| sel.deinit(a);
++                errdefer if (!expert_io.cleanupUncertain()) if (selector) |*sel| sel.deinit(a);
+                 // The pool writes the event word until it stops.
+                 var word: ?*i64 = null;
+                 if (opt.event) |ev| if (ev.backend == .host) {
+                     word = try a.create(i64);
+                     word.?.* = 0;
+                 };
+-                errdefer if (word) |w| a.destroy(w);
++                errdefer if (!expert_io.cleanupUncertain()) if (word) |w| a.destroy(w);
+ 
+                 const self = try a.create(Stream);
+-                errdefer a.destroy(self);
++                errdefer if (!expert_io.cleanupUncertain()) a.destroy(self);
+                 const layers = try a.alloc(LayerSlots, n_layers);
+-                errdefer a.free(layers);
++                errdefer if (!expert_io.cleanupUncertain()) a.free(layers);
+                 var n_init: usize = 0;
+-                errdefer for (layers[0..n_init]) |*ls| {
++                errdefer if (!expert_io.cleanupUncertain()) for (layers[0..n_init]) |*ls| {
+                     ls.policy.deinit(a);
+                     ls.base.deinit();
+                     a.free(ls.meta);
+@@ -920,13 +921,13 @@ pub fn StreamOf(comptime B: type, comptime probed: bool) type {
+                 if (opt.tally) |t| if (t.layer_experts) |le| if (le.len != n_layers) return error.InvalidOptions;
+                 for (layers, opt.rows, bank.layers, 0..) |*ls, rows, *geom, li| {
+                     var policy = try LayerPolicy.init(a, bank.n_experts, rows);
+-                    errdefer policy.deinit(a);
++                    errdefer if (!expert_io.cleanupUncertain()) policy.deinit(a);
+                     if (opt.tally) |t| {
+                         const experts = if (t.layer_experts) |le| le[li] else bank.n_experts;
+                         policy.setTally(expert.tally.pinLimit(t.ratio, experts), expert.tally.alphaOf(t.window));
+                     }
+                     var base = try Rows.init(geom, rows, opt.slot_memory);
+-                    errdefer base.deinit();
++                    errdefer if (!expert_io.cleanupUncertain()) base.deinit();
+                     const meta = try a.alloc(SlotMeta, bank.n_experts);
+                     @memset(meta, .{});
+                     var lens: [n_components]u64 = undefined;
+@@ -935,28 +936,28 @@ pub fn StreamOf(comptime B: type, comptime probed: bool) type {
+                     n_init += 1;
+                 }
+                 var transient = try Rows.init(&bank.layers[widest], opt.transient_rows, opt.slot_memory);
+-                errdefer transient.deinit();
++                errdefer if (!expert_io.cleanupUncertain()) transient.deinit();
+                 const transient_meta = try a.alloc(SlotMeta, opt.transient_rows);
+-                errdefer a.free(transient_meta);
++                errdefer if (!expert_io.cleanupUncertain()) a.free(transient_meta);
+                 @memset(transient_meta, .{});
+                 var alt_rows: ?Rows = if (alt_layer) |al| try Rows.init(&bank.layers[al], opt.transient_rows, opt.slot_memory) else null;
+-                errdefer if (alt_rows) |*x| x.deinit();
++                errdefer if (!expert_io.cleanupUncertain()) if (alt_rows) |*x| x.deinit();
+                 const alt_meta: []SlotMeta = if (alt_layer != null) try a.alloc(SlotMeta, opt.transient_rows) else &.{};
+-                errdefer a.free(alt_meta);
++                errdefer if (!expert_io.cleanupUncertain()) a.free(alt_meta);
+                 @memset(alt_meta, .{});
+                 const geom_of = try a.alloc(u1, n_layers);
+-                errdefer a.free(geom_of);
++                errdefer if (!expert_io.cleanupUncertain()) a.free(geom_of);
+                 for (bank.layers, geom_of) |*l, *gm| gm.* = @intFromBool(alt_layer != null and !sameGeometry(l, &bank.layers[widest]));
+                 const ahead_loads = try a.alloc(LayerPolicy.ReadAhead, bank.n_experts);
+-                errdefer a.free(ahead_loads);
++                errdefer if (!expert_io.cleanupUncertain()) a.free(ahead_loads);
+                 const ahead_reads = try a.alloc(bool, bank.n_experts);
+-                errdefer a.free(ahead_reads);
++                errdefer if (!expert_io.cleanupUncertain()) a.free(ahead_reads);
+                 // A job holds at most max_items / minis records (each mini one item); one more job than that division:
+                 // P7 overlap posts the read-ahead in two runs (head, then tail).
+                 const ahead_parts = try a.alloc(Part, (std.math.divCeil(u32, bank.n_experts, expert_io.max_items / minis) catch unreachable) + 1);
+-                errdefer a.free(ahead_parts);
++                errdefer if (!expert_io.cleanupUncertain()) a.free(ahead_parts);
+                 const ahead_landed = try a.alloc(bool, ahead_parts.len);
+-                errdefer a.free(ahead_landed);
++                errdefer if (!expert_io.cleanupUncertain()) a.free(ahead_landed);
+                 @memset(ahead_landed, false);
+                 // P7 overlap: a job is a bit of a part's blockers (u64), groups index the route ring.
+                 if (opt.prompt_reads == .overlap and ahead_parts.len > 64) return error.InvalidOptions;
+@@ -967,12 +968,12 @@ pub fn StreamOf(comptime B: type, comptime probed: bool) type {
+                     for (bank.layers) |*l| if (!sameGeometry(l, &bank.layers[widest])) return error.InvalidOptions;
+                 }
+                 const p7_rows: []P7Row = if (opt.prompt_reads == .overlap) try a.alloc(P7Row, bank.n_experts + opt.transient_rows) else &.{};
+-                errdefer if (p7_rows.len > 0) a.free(p7_rows);
++                errdefer if (!expert_io.cleanupUncertain()) if (p7_rows.len > 0) a.free(p7_rows);
+                 const ahead_job: []u8 = if (opt.prompt_reads == .overlap) try a.alloc(u8, bank.n_experts) else &.{};
+-                errdefer if (ahead_job.len > 0) a.free(ahead_job);
++                errdefer if (!expert_io.cleanupUncertain()) if (ahead_job.len > 0) a.free(ahead_job);
+                 @memset(ahead_job, no_job);
+                 const pool = try expert_io.Pool.start(a, pool_opt);
+-                errdefer pool.stop();
++                errdefer if (!expert_io.cleanupUncertain()) pool.stop();
+                 if (opt.lookahead) |la| if (la.preread) try B.Records.armPreRead(pool, &layers[widest].lens);
+                 if (opt.event) |ev| {
+                     const object: u64 = switch (ev.backend) {
+@@ -1022,9 +1023,17 @@ pub fn StreamOf(comptime B: type, comptime probed: bool) type {
+             }
+ 
+             /// Stops the pool (draining its reads) before freeing the rows it writes.
++            // Local read-writer retirement only, never whole-native terminality.
++            pub fn prepareRelease(self: *Stream) bool {
++                if (expert_io.cleanupUncertain()) return false;
++                if (self.pool.stopped) return true;
++                self.stopCopier();
++                return self.pool.prepareStop();
++            }
++
+             pub fn deinit(self: *Stream) void {
++                if (!self.prepareRelease()) return;
+                 const a = self.allocator;
+-                self.stopCopier();
+                 self.pool.stop();
+                 for (self.layers) |*ls| {
+                     ls.policy.deinit(a);

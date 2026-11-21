@@ -1,0 +1,188 @@
+diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m
+index 391770e..69022a9 100644
+--- a/lib/ane/ane_bridge.m
++++ b/lib/ane/ane_bridge.m
+@@ -69,22 +69,29 @@ struct msv_ane_model {
+ #ifdef FIOS_ANE_SOURCE
+ /* Reserve the original borrowed IOSurface references before any constructor
+  * effect. Counts here describe extra CF owners, never native work/idle. */
+-static bool fios_ane_model_capture_surfaces(msv_ane_model *h, IOSurfaceRef *inputs,
+-        uint32_t count, IOSurfaceRef output) {
+-    if (!output || (count && !inputs)) return false;
+-    size_t size=(size_t)count+1;
+-    if (size<count || size>SIZE_MAX/sizeof(IOSurfaceRef)) return false;
++static bool fios_ane_capture_surface_owners(IOSurfaceRef **storage, size_t *stored_count,
++        IOSurfaceRef *inputs, uint32_t input_count, IOSurfaceRef *outputs, uint32_t output_count) {
++    if ((input_count && !inputs) || (output_count && !outputs)) return false;
++    size_t size=(size_t)input_count+(size_t)output_count;
++    if (size<input_count || size>SIZE_MAX/sizeof(IOSurfaceRef)) return false;
++    if (!size) { *storage=NULL;*stored_count=0;return true; }
+     IOSurfaceRef *owned=calloc(size,sizeof(*owned));
+     if (!owned) return false;
+     for (size_t i=0;i<size;i++) {
+-        IOSurfaceRef surface=i<count ? inputs[i] : output;
++        IOSurfaceRef surface=i<input_count ? inputs[i] : outputs[i-input_count];
+         if (!surface) {
+             for (size_t j=0;j<i;j++) CFRelease(owned[j]);
+             free(owned);return false;
+         }
+         owned[i]=(IOSurfaceRef)CFRetain(surface);
+     }
+-    h->fios_surfaces=owned;h->fios_surface_count=size;return true;
++    *storage=owned;*stored_count=size;return true;
++}
++static bool fios_ane_model_capture_surfaces(msv_ane_model *h, IOSurfaceRef *inputs,
++        uint32_t count, IOSurfaceRef output) {
++    if (!output) return false;
++    return fios_ane_capture_surface_owners(&h->fios_surfaces,&h->fios_surface_count,
++        inputs,count,&output,1);
+ }
+ static void fios_ane_model_capture_inputs(msv_ane_model *h, NSData *program, NSData *weights,
+         NSMutableArray *inputs, NSMutableArray *outputs, NSMutableArray *metadata,
+@@ -1145,13 +1152,32 @@ struct msv_ane_request {
+     msv_ane_program *fios_parent;
+     struct msv_ane_request *fios_previous, *fios_next;
+     bool fios_active, fios_close_attempted;
+-    void *fios_inputs, *fios_outputs;
++    void *fios_inputs, *fios_outputs, *fios_indices, *fios_pending_binding;
++    IOSurfaceRef *fios_surfaces;
++    size_t fios_surface_count;
+ #endif
+     void *model;
+     void *request;
+     void *options;
+ };
+ 
++#ifdef FIOS_ANE_SOURCE
++static void fios_ane_request_capture_inputs(msv_ane_request *r, id model, id options,
++        NSMutableArray *inputs, NSMutableArray *outputs, NSArray *in_indices, NSArray *out_indices) {
++    r->model=(__bridge_retained void *)model;
++    r->options=(__bridge_retained void *)options;
++    r->fios_inputs=(__bridge_retained void *)inputs;
++    r->fios_outputs=(__bridge_retained void *)outputs;
++    r->fios_indices=(__bridge_retained void *)@[in_indices,out_indices];
++}
++static void fios_ane_request_adopt_binding(msv_ane_request *r, NSMutableArray *owners, id value) {
++    r->fios_pending_binding=(__bridge_retained void *)value;
++    [owners addObject:value];
++    id adopted=(__bridge_transfer id)r->fios_pending_binding;
++    r->fios_pending_binding=NULL;(void)adopted;
++}
++#endif
++
+ #ifdef FIOS_ANE_SOURCE
+ /* Capture declared CPU owners before descriptor creation. Adoption holds the
+  * returned model before an array growth can occur; refusal never reconstructs
+@@ -1176,7 +1202,7 @@ static void fios_ane_program_adopt_model(msv_ane_program *p, NSMutableArray *mod
+ static bool fios_ane_parent_acquire(msv_ane_program *p, msv_ane_request *r) {
+     if (!p || !r) return false;
+     pthread_mutex_lock(&fios_ane_mutex);
+-    if (msv_ane_source_uncertainty() || p->fios_close_attempted || p->fios_children == UINT32_MAX) {
++    if (msv_ane_source_uncertainty() || p->fios_close_attempted || p->fios_pending_model || p->fios_children == UINT32_MAX) {
+         fios_ane_fence(FIOS_ANE_PARENT);
+         pthread_mutex_unlock(&fios_ane_mutex);return false;
+     }
+@@ -1517,6 +1543,12 @@ msv_ane_request *msv_ane_request_create(msv_ane_program *p, uint32_t instance, u
+         }
+         NSArray *in_idx = program_indices(p, proc, 0);
+         NSArray *out_idx = program_indices(p, proc, 1);
++#ifdef FIOS_ANE_SOURCE
++        if (!in_idx || !out_idx || msv_ane_source_uncertainty()) {
++            fios_ane_fence(FIOS_ANE_REQUEST);
++            bridge_fail(error,error_size,"ANE request procedure metadata unavailable");return NULL;
++        }
++#endif
+         if (in_idx.count != input_count || out_idx.count != output_count) {
+             bridge_fail(error, error_size, "ANE procedure %u takes %lu inputs and %lu outputs, got %u and %u",
+                         proc, (unsigned long)in_idx.count, (unsigned long)out_idx.count, input_count, output_count);
+@@ -1525,17 +1557,37 @@ msv_ane_request *msv_ane_request_create(msv_ane_program *p, uint32_t instance, u
+ #endif
+             return NULL;
+         }
++#ifdef FIOS_ANE_SOURCE
++        if (!fios_ane_capture_surface_owners(&r->fios_surfaces,&r->fios_surface_count,
++                inputs,input_count,outputs,output_count)) {
++            bridge_fail(error,error_size,"ANE request input ownership unavailable");
++            if (fios_ane_parent_release(r)) free(r);
++            return NULL;
++        }
++#endif
+         Class surfaceClass = NSClassFromString(@"_ANEIOSurfaceObject");
+         NSMutableArray *ins = [NSMutableArray array], *outs = [NSMutableArray array];
++#ifdef FIOS_ANE_SOURCE
++        fios_ane_request_capture_inputs(r,models[instance],((__bridge NSArray *)p->options)[instance],ins,outs,in_idx,out_idx);
++        for (uint32_t i=0;i<input_count;i++) {
++            if (msv_ane_source_uncertainty()) return NULL;
++            id value=((id(*)(Class,SEL,IOSurfaceRef))objc_msgSend)(surfaceClass,@selector(objectWithIOSurface:),inputs[i]);
++            if (!value) { fios_ane_fence(FIOS_ANE_REQUEST);return NULL; }
++            fios_ane_request_adopt_binding(r,ins,value);
++        }
++        for (uint32_t i=0;i<output_count;i++) {
++            if (msv_ane_source_uncertainty()) return NULL;
++            id value=((id(*)(Class,SEL,IOSurfaceRef))objc_msgSend)(surfaceClass,@selector(objectWithIOSurface:),outputs[i]);
++            if (!value) { fios_ane_fence(FIOS_ANE_REQUEST);return NULL; }
++            fios_ane_request_adopt_binding(r,outs,value);
++        }
++#else
+         for (uint32_t i = 0; i < input_count; i++)
+             [ins addObject:((id(*)(Class, SEL, IOSurfaceRef))objc_msgSend)(surfaceClass, @selector(objectWithIOSurface:), inputs[i])];
+         for (uint32_t i = 0; i < output_count; i++)
+             [outs addObject:((id(*)(Class, SEL, IOSurfaceRef))objc_msgSend)(surfaceClass, @selector(objectWithIOSurface:), outputs[i])];
++#endif
+ #ifdef FIOS_ANE_SOURCE
+-        r->model=(__bridge_retained void *)models[instance];
+-        r->options=(__bridge_retained void *)((__bridge NSArray *)p->options)[instance];
+-        r->fios_inputs=(__bridge_retained void *)ins;
+-        r->fios_outputs=(__bridge_retained void *)outs;
+         if (msv_ane_source_uncertainty()) return NULL;
+ #endif
+         id request = ((id(*)(Class, SEL, id, id, id, id, id, id, id))objc_msgSend)(
+@@ -1556,6 +1608,9 @@ msv_ane_request *msv_ane_request_create(msv_ane_program *p, uint32_t instance, u
+         r->options = (__bridge_retained void *)((__bridge NSArray *)p->options)[instance];
+ #endif
+         r->request = (__bridge_retained void *)request;
++#ifdef FIOS_ANE_SOURCE
++        if (msv_ane_source_uncertainty()) return NULL;
++#endif
+         return r;
+     }
+ }
+@@ -1564,7 +1619,7 @@ int msv_ane_request_eval(msv_ane_request *r, char *error, size_t error_size) {
+ #ifdef FIOS_ANE_SOURCE
+     if (!r) return 0;
+     pthread_mutex_lock(&fios_ane_mutex);
+-    if (msv_ane_source_uncertainty() || r->fios_close_attempted || r->fios_active) {
++    if (msv_ane_source_uncertainty() || r->fios_close_attempted || r->fios_active || r->fios_pending_binding) {
+         fios_ane_fence(FIOS_ANE_REQUEST);
+         pthread_mutex_unlock(&fios_ane_mutex);return 0;
+     }
+@@ -1613,18 +1668,26 @@ bool msv_ane_request_try_free(msv_ane_request *r) {
+ #else
+     if (!r) return true;
+     pthread_mutex_lock(&fios_ane_mutex);
+-    if (msv_ane_source_uncertainty() || r->fios_close_attempted || r->fios_active) {
++    if (msv_ane_source_uncertainty() || r->fios_close_attempted || r->fios_active || r->fios_pending_binding) {
+         fios_ane_fence(FIOS_ANE_REQUEST);
+         pthread_mutex_unlock(&fios_ane_mutex);return false;
+     }
+     r->fios_close_attempted=true;
+     pthread_mutex_unlock(&fios_ane_mutex);
+     @autoreleasepool {
++        if (msv_ane_source_uncertainty()) return false;
+         if (r->request) { id value=(__bridge_transfer id)r->request;r->request=NULL;(void)value; }
+-        if (r->model) { id value=(__bridge_transfer id)r->model;r->model=NULL;(void)value; }
+-        if (r->options) { id value=(__bridge_transfer id)r->options;r->options=NULL;(void)value; }
++        if (msv_ane_source_uncertainty()) return false;
+         if (r->fios_inputs) { id value=(__bridge_transfer id)r->fios_inputs;r->fios_inputs=NULL;(void)value; }
++        if (msv_ane_source_uncertainty()) return false;
+         if (r->fios_outputs) { id value=(__bridge_transfer id)r->fios_outputs;r->fios_outputs=NULL;(void)value; }
++        if (msv_ane_source_uncertainty()) return false;
++        if (r->fios_indices) { id value=(__bridge_transfer id)r->fios_indices;r->fios_indices=NULL;(void)value; }
++        if (r->model) { id value=(__bridge_transfer id)r->model;r->model=NULL;(void)value; }
++        if (r->options) { id value=(__bridge_transfer id)r->options;r->options=NULL;(void)value; }
++        if (msv_ane_source_uncertainty()) return false;
++        for (size_t i=0;i<r->fios_surface_count;i++) CFRelease(r->fios_surfaces[i]);
++        free(r->fios_surfaces);r->fios_surfaces=NULL;r->fios_surface_count=0;
+     }
+     if (!fios_ane_parent_release(r)) return false;
+     free(r);return true;

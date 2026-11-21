@@ -1,0 +1,31 @@
+--- a/mlx/backend/metal/resident.cpp
++++ b/mlx/backend/metal/resident.cpp
+@@ -20,6 +20,13 @@
+     return; // enabled_ stays false, so everything below is a no-op
+   }
+   if (__builtin_available(macOS 15, iOS 18, *)) {
++    // Refuse an excluded refresh participant before creating/requesting a
++    // residency set. This is not device completion or ownership of the worker.
++    const int refresh_interval =
++        config::get("MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS", 0);
++    if (refresh_interval > 0) {
++      fios_note_untracked_residency_refresh();
++    }
+     device_ = d;
+     enabled_ = true;
+     // Per-set residency-set size, as a percentage of the device's recommended
+@@ -49,13 +56,7 @@
+       }
+       throw std::runtime_error(msg.str());
+     }
+-    if (int interval =
+-            config::get("MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS", 0);
+-        interval > 0) {
+-      // This independent worker has no reviewed request/model custody.
+-      // Record the unsupported participant before thread creation; neither
+-      // disabled refresh nor later join supplies all-client/device proof.
+-      fios_note_untracked_residency_refresh();
++    if (int interval = refresh_interval; interval > 0) {
+       refresh_thread_ = std::thread([this, interval] {
+         std::unique_lock<std::mutex> lock(mtx_);
+         while (!refresh_cv_.wait_for(

@@ -1,0 +1,97 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const facts = @import("fios/current_registry_activity.zig");
+const Entry = struct { id: []const u8, state: enum { unloaded,loading,ready,error_state,evicting }, fios_load_uncertain: std.atomic.Value(bool) = .init(false) };
+const Registry = struct {
+    mutex: std.Io.Mutex = .init,
+    entries: std.StringHashMap(*Entry),
+    generation: std.atomic.Value(u64) = .init(7),
+};
+test "fios current registry observation couples exact original queued roots and declared states" {
+    const io = std.testing.io;var tracker: owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io,@splat(131));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .ready };var b: Entry = .{ .id = "fixture/b", .state = .loading };
+    try registry.entries.put(a.id,&a);try registry.entries.put(b.id,&b);
+    const Probe = struct {var calls: usize = 0;fn read() bool { calls += 1;return false; }};
+    try tracker.enrollDiagnosticUncertaintyProbe(io,Probe.read);
+    const root = try tracker.enter(io);try tracker.bind(io,root,a.id);const held = try tracker.retainTokens(io,&.{root});
+    const ticket = try tracker.beginQueued(io,&held);try tracker.leave(io,root);
+    const before = Probe.calls;const value = try facts.captureKnown(io,&tracker,&registry);
+    try std.testing.expectEqual(before,Probe.calls);
+    try std.testing.expectEqual(@as(usize,1),value.owned);try std.testing.expectEqual(@as(usize,1),value.queued);
+    try std.testing.expectEqual(@as(usize,2),value.model_count);try std.testing.expectEqual(@as(u64,7),value.registry_generation);
+    try std.testing.expect(value.transitioning and !value.uncertain);
+    var found_a = false;var found_b = false;
+    for (value.models[0..value.model_count]) |row| {
+        if (std.mem.eql(u8,row.id[0..row.len],a.id)) {found_a = true;try std.testing.expect(row.ready_declared and row.queued == 1);}
+        if (std.mem.eql(u8,row.id[0..row.len],b.id)) {found_b = true;try std.testing.expect(row.transitioning and !row.ready_declared and row.queued == 0);}
+    }
+    try std.testing.expect(found_a and found_b);
+    try tracker.retireQueued(io,ticket);try std.testing.expect(held.releaseIfCertain(io));
+}
+test "fios current registry observation busy locks return unavailable without callback" {
+    const io = std.testing.io;var tracker: owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io,@splat(132));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };defer registry.entries.deinit();
+    const Probe = struct {var calls: usize = 0;fn read() bool {calls += 1;return false;}};try tracker.enrollDiagnosticUncertaintyProbe(io,Probe.read);
+    registry.mutex.lockUncancelable(io);
+    try std.testing.expectError(error.RegistryBusy,facts.captureKnown(io,&tracker,&registry));registry.mutex.unlock(io);
+    tracker.mutex.lockUncancelable(io);
+    try std.testing.expectError(error.TrackerBusy,facts.captureKnown(io,&tracker,&registry));tracker.mutex.unlock(io);
+    try std.testing.expectEqual(@as(usize,0),Probe.calls);
+}
+test "fios current registry observation limits and missing identities never become empty data" {
+    const io = std.testing.io;var tracker: owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io,@splat(133));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };defer registry.entries.deinit();
+    registry.generation.store(owners.maximum_sample_sequence + 1,.release);
+    try std.testing.expectError(error.RegistryGenerationLimit,facts.captureKnown(io,&tracker,&registry));registry.generation.store(7,.release);
+    const root = try tracker.enter(io);try tracker.bind(io,root,"fixture/missing");
+    try std.testing.expectError(error.MissingRegistryIdentity,facts.captureKnown(io,&tracker,&registry));try tracker.leave(io,root);
+    var entries: [65]Entry = undefined;var ids: [65][32]u8 = undefined;
+    for (&entries,0..) |*entry,index| {const id = try std.fmt.bufPrint(&ids[index],"fixture/limit-{d}",.{index});entry.* = .{ .id = id, .state = .ready };try registry.entries.put(id,entry);}
+    try std.testing.expectError(error.RegistryModelLimit,facts.captureKnown(io,&tracker,&registry));
+}
+test "fios current registry observation uncertain error and multiple ready facts retain uncertainty" {
+    const io = std.testing.io;var tracker: owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io,@splat(134));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };defer registry.entries.deinit();
+    var a: Entry = .{ .id = "fixture/a", .state = .ready };var b: Entry = .{ .id = "fixture/b", .state = .ready };var c: Entry = .{ .id = "fixture/failed", .state = .error_state, .fios_load_uncertain = .init(true) };
+    for ([_]*Entry{&a,&b,&c}) |entry| try registry.entries.put(entry.id,entry);
+    const value = try facts.captureKnown(io,&tracker,&registry);
+    try std.testing.expectEqual(@as(usize,3),value.model_count);try std.testing.expect(value.uncertain and value.owned == 0);
+    var ready: usize = 0;for (value.models[0..value.model_count]) |row| {if (row.ready_declared) ready += 1;}
+    try std.testing.expectEqual(@as(usize,2),ready);
+}
+
+test "fios current registry observation version three couples native facts and preserves old formats" {
+    const wire = @import("fios/control_protocol.zig");const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io,@splat(131));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };defer registry.entries.deinit();
+    var model: Entry = .{ .id = "fixture/a", .state = .ready };try registry.entries.put(model.id,&model);
+    const root = try tracker.enter(io);try tracker.bind(io,root,model.id);const held = try tracker.retainTokens(io,&.{root});
+    const ticket = try tracker.beginQueued(io,&held);try tracker.leave(io,root);
+    const Provider = struct {fn read(raw:*anyopaque,context:std.Io,ledger:*owners.Tracker) anyerror!facts.Observation {const reg:*Registry = @ptrCast(@alignCast(raw));return facts.captureKnown(context,ledger,reg);}};
+    const source: wire.RegistryActivitySource = .{ .context = &registry, .read = Provider.read };
+    var request: [32]u8 = @splat(0);@memcpy(request[0..4],"FIA9");request[4] = 3;@memcpy(request[8..24],&@as([16]u8,@splat(131)));
+    const frame = wire.dispatchRegistryActivity(&tracker,io,&request,source);
+    try std.testing.expectEqual(@as(usize,67168),frame.len);try std.testing.expect(frame[4] == 3 and frame[5] == 0);
+    try std.testing.expectEqual(@as(u64,7),std.mem.readInt(u64,frame[40..48],.big));
+    try std.testing.expectEqual(@as(u32,1),std.mem.readInt(u32,frame[60..64],.big));
+    try std.testing.expectEqual(@as(u32,1),std.mem.readInt(u32,frame[72..76],.big));
+    try std.testing.expectEqual(@as(u8,1),frame[98]);try std.testing.expect(std.mem.eql(u8,frame[120..129],model.id));
+    try std.Io.Dir.cwd().writeFile(io,.{.sub_path="registry-native-frame.bin",.data=&frame});
+    request[4] = 2;const previous = wire.dispatchQueuedActivity(&tracker,io,&request);try std.testing.expectEqual(@as(usize,66888),previous.len);try std.testing.expect(previous[5] == 0);
+    request[4] = 1;const legacy = wire.dispatchPrimaryActivity(&tracker,io,&request);try std.testing.expectEqual(@as(usize,66624),legacy.len);try std.testing.expect(legacy[5] == 0);
+    try tracker.retireQueued(io,ticket);try std.testing.expect(held.releaseIfCertain(io));
+}
+test "fios current registry observation invalid and busy providers never manufacture data" {
+    const wire = @import("fios/control_protocol.zig");const io = std.testing.io;
+    var tracker: owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io,@splat(131));
+    var registry: Registry = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };defer registry.entries.deinit();
+    const Provider = struct {var calls:usize = 0;fn read(raw:*anyopaque,context:std.Io,ledger:*owners.Tracker) anyerror!facts.Observation {calls += 1;const reg:*Registry = @ptrCast(@alignCast(raw));return facts.captureKnown(context,ledger,reg);}};
+    const source: wire.RegistryActivitySource = .{ .context = &registry, .read = Provider.read };
+    var request: [32]u8 = @splat(0);@memcpy(request[0..4],"FIA9");request[4] = 3;@memcpy(request[8..24],&@as([16]u8,@splat(131)));
+    for ([_]usize{0,4,5,6,7,24,31}) |index| {var bad = request;bad[index] = 255;const frame = wire.dispatchRegistryActivity(&tracker,io,&bad,source);try std.testing.expectEqual(@intFromEnum(wire.Status.invalid),frame[5]);}
+    var wrong = request;wrong[8] = 0;const invalid = wire.dispatchRegistryActivity(&tracker,io,&wrong,source);try std.testing.expectEqual(@intFromEnum(wire.Status.wrong_instance),invalid[5]);try std.testing.expectEqual(@as(usize,0),Provider.calls);
+    const absent = wire.dispatchRegistryActivity(&tracker,io,&request,null);try std.testing.expectEqual(@intFromEnum(wire.Status.maintenance),absent[5]);
+    registry.mutex.lockUncancelable(io);const busy = wire.dispatchRegistryActivity(&tracker,io,&request,source);registry.mutex.unlock(io);
+    try std.testing.expectEqual(@intFromEnum(wire.Status.maintenance),busy[5]);
+}

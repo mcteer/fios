@@ -1,0 +1,43 @@
+// Actual extracted shim cleanup with synthetic opaque resources/status ports.
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <stdexcept>
+struct Native {int status=1;bool throws=false;};
+struct Batch {};
+struct mlx_llama_engine {bool uncertain=false;int children=1;};
+struct mlx_llama_ctx {bool fios_parent_owned=true;mlx_llama_engine* e;Native* tgt;Native* dft;Batch* batch;Batch* dbatch;};
+static std::atomic<bool> fios_llama_uncertain{false};
+static int syncs=0,frees=0,batches=0;
+static void fios_llama_mark_uncertain(mlx_llama_engine* e) {e->uncertain=true;fios_llama_uncertain=true;}
+static bool fios_llama_release_parent(mlx_llama_ctx* c) {--c->e->children;c->fios_parent_owned=false;return true;}
+void llama_synchronize(Native*) {++syncs;}
+int32_t llama_fios_synchronize_checked_v1(Native* n) {++syncs;if(n->throws)throw std::runtime_error("modeled status");return n->status;}
+static void llama_free(Native*) {++frees;}
+static void llama_batch_ext_free(Batch*) {++batches;}
+// FIOS_ACTUAL_SHIM_CLEANUP
+int main(int argc,char** argv) {
+ if(argc!=2)return 2;const char* mode=argv[1];
+ mlx_llama_engine parent;Native target,draft;Batch batch,dbatch;
+ auto* c=new mlx_llama_ctx{true,&parent,&target,&draft,&batch,&dbatch};
+ bool healthy=std::strcmp(mode,"healthy")==0;
+ if(std::strcmp(mode,"target-failure")==0)target.status=0;
+ else if(std::strcmp(mode,"draft-failure")==0)draft.status=0;
+ else if(std::strcmp(mode,"unsupported")==0)target.status=-1;
+ else if(std::strcmp(mode,"invalid-status")==0)draft.status=2;
+ else if(std::strcmp(mode,"exception")==0)target.throws=true;
+ else if(std::strcmp(mode,"empty")==0){c->tgt=nullptr;c->dft=nullptr;c->batch=nullptr;c->dbatch=nullptr;healthy=true;}
+ const int result=mlx_llama_ctx_try_free(c);
+#ifdef FIOS_EXPECT_CHECKED
+ if(!healthy) {
+  if(result!=0||frees||batches||parent.children!=1||!c->fios_parent_owned||!parent.uncertain||!fios_llama_uncertain){std::fputs("LLAMA_SYNC_UNCHECKED_RETIREMENT\n",stderr);return 3;}
+  target.status=1;draft.status=1;target.throws=false;const int before=syncs;
+  if(mlx_llama_ctx_try_free(c)!=0||syncs!=before||frees||batches||parent.children!=1)return 4;
+ }else if(result!=1||parent.children||parent.uncertain||fios_llama_uncertain)return 5;
+#else
+ if(result!=1||parent.children||parent.uncertain||fios_llama_uncertain)return 6;
+#endif
+ if(healthy&&std::strcmp(mode,"healthy")==0&&(frees!=2||batches!=2||syncs!=2))return 7;
+ std::puts("PASS: actual shim source cleanup/status control with synthetic resources; no native authority");
+}

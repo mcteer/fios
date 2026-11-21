@@ -1,0 +1,472 @@
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -44,6 +44,18 @@
+ // A future enrolled manager bridge must authenticate before calling these APIs.
+ pub const AdmissionPause = struct { instance: [16]u8, sequence: u64 };
+ pub const ModelMutation = struct { instance: [16]u8, slot: usize, sequence: u64 };
++// Native-internal scheduled-operation identity. This is neither a model
++// reservation nor completion proof. Old diagnostics/wire formats stay separate.
++pub const QueueTicket = struct { instance: [16]u8, slot: usize, sequence: u64 };
++pub const QueuePhase = enum { none, queued, active };
++const QueueOperation = struct {
++    phase: QueuePhase = .none,
++    sequence: u64 = 0,
++    // Original non-reusable root sequences; zero means absent. Each entry owns
++    // one independent reference, including after its creator leaves.
++    roots: [capacity]u64 = @splat(0),
++};
++
+ const MutationSlot = struct {
+     id: [model_limit]u8 = @splat(0),
+     len: usize = 0,
+@@ -72,6 +84,30 @@
+     preparing: usize = 0,
+     active: usize = 0,
+     responding: usize = 0,
++};
++// Separate five-phase partial source view. No resident/device state or
++// all-client coverage is asserted; existing four-phase transports are unchanged.
++pub const QueuedModelSnapshot = struct {
++    id: [model_limit]u8 = @splat(0),
++    len: usize = 0,
++    preparing: usize = 0,
++    queued: usize = 0,
++    active: usize = 0,
++    responding: usize = 0,
++};
++pub const QueuedSnapshot = struct {
++    instance: [16]u8,
++    sample_sequence: u64,
++    initialized: bool,
++    uncertain: bool,
++    owned: usize = 0,
++    ingress: usize = 0,
++    preparing: usize = 0,
++    queued: usize = 0,
++    active: usize = 0,
++    responding: usize = 0,
++    model_count: usize = 0,
++    models: [model_capacity]QueuedModelSnapshot = @splat(.{}),
+ };
+ pub const Snapshot = struct {
+     sequence: u64,
+@@ -157,6 +193,9 @@
+     backend_uncertainty_probe: ?BackendUncertaintyProbe = null,
+     mutations: [model_capacity]MutationSlot = @splat(.{}),
+     mutation_sequence: u64 = 0,
++    queue_sequence: u64 = 0,
++    queue_operations: [capacity]QueueOperation = @splat(.{}),
++
+     slots: [capacity]Slot = @splat(.{}),
+     models: [model_capacity]Model = @splat(.{}),
+     sequence: u64 = 0,
+@@ -739,6 +778,173 @@
+         // Clear identity without clearing the uncertainty fence or allowing replay.
+         slot.* = .{};
+     }
++    // Capture before queue publication. Validate the entire original union
++    // before retaining any root. No backend callback runs under this mutex.
++    pub fn beginQueued(self: *Tracker, io: std.Io, origins: *const Retained) !QueueTicket {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        if (origins.tracker != self or origins.count == 0 or origins.count > capacity) return error.InvalidQueuedOrigins;
++        var roots: [capacity]u64 = @splat(0);
++        for (origins.tokens[0..origins.count]) |token| {
++            const root = try self.checked(token);
++            if (root.primary == null or (root.phase != .preparing and root.phase != .active) or roots[token.slot] != 0)
++                return error.InvalidQueuedOrigins;
++            if (root.references == std.math.maxInt(u32)) {
++                self.uncertain = true;
++                return error.ReferenceOverflow;
++            }
++            roots[token.slot] = token.sequence;
++        }
++        if (self.queue_sequence == maximum_sample_sequence) {
++            self.uncertain = true;
++            return error.SequenceExhausted;
++        }
++        var vacant: ?usize = null;
++        for (self.queue_operations, 0..) |operation, index| {
++            if (operation.phase == .none) { vacant = index; break; }
++        }
++        const index = vacant orelse {
++            self.uncertain = true;
++            return error.TrackingLimit;
++        };
++        for (origins.tokens[0..origins.count]) |token| self.slots[token.slot].references += 1;
++        self.queue_sequence += 1;
++        self.queue_operations[index] = .{ .phase = .queued, .sequence = self.queue_sequence, .roots = roots };
++        return .{ .instance = self.instance, .slot = index, .sequence = self.queue_sequence };
++    }
++    fn checkedQueueLocked(self: *Tracker, ticket: QueueTicket) !*QueueOperation {
++        if (!std.mem.eql(u8, &ticket.instance, &self.instance) or ticket.slot >= capacity or ticket.sequence == 0)
++            return error.InvalidQueueTicket;
++        const operation = &self.queue_operations[ticket.slot];
++        if (operation.phase == .none or operation.sequence != ticket.sequence) return error.InvalidQueueTicket;
++        var found = false;
++        for (operation.roots, 0..) |sequence, index| {
++            if (sequence == 0) continue;
++            found = true;
++            _ = self.checked(.{ .instance = self.instance, .slot = index, .sequence = sequence }) catch |err| {
++                self.uncertain = true;
++                return err;
++            };
++        }
++        if (!found) { self.uncertain = true; return error.InvalidQueueTicket; }
++        return operation;
++    }
++    // The original operation's actual worker pickup, once. Other queued or
++    // running operations under the same request keep their own identities.
++    pub fn activateQueued(self: *Tracker, io: std.Io, ticket: QueueTicket) !void {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        const operation = try self.checkedQueueLocked(ticket);
++        if (operation.phase != .queued) return error.InvalidQueuePhase;
++        operation.phase = .active;
++    }
++    // An existing actor's pre-work hold returns the same operation to its
++    // existing native queue. This changes metadata only, never resubmits work.
++    pub fn parkQueued(self: *Tracker, io: std.Io, ticket: QueueTicket) !void {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        const operation = try self.checkedQueueLocked(ticket);
++        if (operation.phase != .active) return error.InvalidQueuePhase;
++        operation.phase = .queued;
++    }
++    // Local metadata retirement only: unpublished rollback/cancel and completed
++    // worker bookkeeping share this edge. Uncertainty retains the whole ticket;
++    // this method cannot issue terminal/not-sent/native-quiescence evidence.
++    pub fn retireQueued(self: *Tracker, io: std.Io, ticket: QueueTicket) !void {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        const operation = try self.checkedQueueLocked(ticket);
++        const roots = operation.roots;
++        for (roots, 0..) |sequence, index| {
++            if (sequence == 0) continue;
++            self.leaveLocked(.{ .instance = self.instance, .slot = index, .sequence = sequence }) catch |err| {
++                self.uncertain = true;
++                return err;
++            };
++        }
++        operation.* = .{};
++    }
++    // Internal partial metadata, not a normalized source/coverage statement.
++    // Active wins when another operation on this same root is still queued.
++    pub fn queuedRootPhase(self: *Tracker, io: std.Io, token: Token) !QueuePhase {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        _ = try self.checked(token);
++        return self.queuedRootPhaseLocked(token);
++    }
++    fn queuedRootPhaseLocked(self: *Tracker, token: Token) QueuePhase {
++        var phase: QueuePhase = .none;
++        for (self.queue_operations) |operation| {
++            if (operation.phase == .none or operation.roots[token.slot] != token.sequence) continue;
++            if (operation.phase == .active) return .active;
++            phase = .queued;
++        }
++        return phase;
++    }
++    pub fn queuedSnapshot(self: *Tracker, io: std.Io) QueuedSnapshot {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        self.advanceCaptureLocked();
++        var result: QueuedSnapshot = .{ .instance = self.instance, .sample_sequence = self.sample_sequence,
++            .initialized = self.initialized, .uncertain = self.uncertain };
++        // A lost/corrupted original root cannot turn an outstanding
++        // operation into a plausible empty source. Retain the ticket and fence;
++        // never recreate a replacement root or infer local/native completion.
++        for (self.queue_operations, 0..) |operation, index| {
++            if (operation.phase == .none) continue;
++            _ = self.checkedQueueLocked(.{ .instance = self.instance, .slot = index, .sequence = operation.sequence }) catch {
++                self.uncertain = true;
++                continue;
++            };
++        }
++        for (self.slots, 0..) |slot, index| {
++            if (slot.phase == .vacant) continue;
++            result.owned += 1;
++            const phase = self.queuedRootPhaseLocked(.{ .instance = self.instance, .slot = index, .sequence = slot.sequence });
++            if (slot.phase == .ingress) {
++                result.ingress += 1;
++                if (phase != .none or slot.primary != null) self.uncertain = true;
++                continue;
++            }
++            const primary = slot.primary orelse { self.uncertain = true; continue; };
++            const model = self.models[primary];
++            if (model.len == 0 or model.owners == 0) { self.uncertain = true; continue; }
++            const row = &result.models[primary];
++            row.id = model.id; row.len = model.len;
++            if (phase == .active) {
++                result.active += 1; row.active += 1;
++            } else if (phase == .queued) {
++                result.queued += 1; row.queued += 1;
++            } else switch (slot.phase) {
++                .preparing => { result.preparing += 1; row.preparing += 1; },
++                .active => { result.active += 1; row.active += 1; },
++                .responding => { result.responding += 1; row.responding += 1; },
++                else => self.uncertain = true,
++            }
++        }
++        for (0..model_capacity) |index| {
++            const row = result.models[index];
++            if (row.preparing + row.queued + row.active + row.responding == 0) continue;
++            result.models[result.model_count] = row;
++            result.model_count += 1;
++        }
++        for (result.model_count..model_capacity) |index| result.models[index] = .{};
++        if (result.owned != result.ingress + result.preparing + result.queued + result.active + result.responding)
++            self.uncertain = true;
++        result.uncertain = self.uncertain;
++        return result;
++    }
+     pub fn snapshot(self: *Tracker, io: std.Io) Snapshot {
+         self.mutex.lockUncancelable(io);
+         defer self.mutex.unlock(io);
+--- a/src/fios/current_slot_origins.zig
++++ b/src/fios/current_slot_origins.zig
+@@ -32,8 +32,42 @@
+     // all-client evidence. A partially attributed batch cannot drop its peers.
+     if (count == 0) return null;
+     if (missing) return invalid(io);
++    // These actor entries hold the slot's existing in_pass/cleanup custody.
++    // Activate once before native work; repeated prefill/decode/cleanup scopes
++    // retain the same operation. Older metadata-only slot shapes stay separate.
++    for (slots) |slot| if (comptime carriesQueueTicket(@TypeOf(slot))) {
++        if (slot.fios_queue_ticket) |ticket| if (!slot.fios_queue_started) {
++            const held = slot.fios_owner.?;
++            held.tracker.activateQueued(io, ticket) catch return invalid(io);
++            slot.fios_queue_started = true;
++        };
++    };
+     const origins: owners.Retained = .{ .tracker = owners.shared(), .tokens = tokens, .count = count };
+     return try Scope.retain(io, &origins);
++}
++// Existing pre-work memory hold only; preserve the same ticket and root.
++// Caller must be outside queue/registry locks, on the original slot actor.
++pub fn park(io: std.Io, slot: anytype) bool {
++    if (comptime carriesQueueTicket(@TypeOf(slot))) {
++        if (slot.fios_queue_ticket) |ticket| {
++            const held = slot.fios_owner orelse { owners.shared().fence(io); return false; };
++            if (!slot.fios_queue_started) { owners.shared().fence(io); return false; }
++            held.tracker.parkQueued(io, ticket) catch { owners.shared().fence(io); return false; };
++            slot.fios_queue_started = false;
++        }
++    }
++    return true;
++}
++// Embedded adapters also pass value records. Only the mutable one-object
++// pointer shape can carry this partial MLX operation; never mutate a copy.
++fn carriesQueueTicket(comptime T: type) bool {
++    return switch (@typeInfo(T)) {
++        .pointer => |pointer| if (pointer.size == .one) switch (@typeInfo(pointer.child)) {
++            .@"struct" => @hasField(pointer.child, "fios_queue_ticket") and @hasField(pointer.child, "fios_queue_started"),
++            else => false,
++        } else false,
++        else => false,
++    };
+ }
+ fn invalid(io: std.Io) error{InvalidSlotOrigins} {
+     owners.shared().fence(io);
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -573,6 +573,12 @@
+     model_held = false;
+     errdefer if (!slot.tryDeinit()) quarantineCleanup(self, slot);
+ 
++    // Partial ordinary-MLX generation attribution. Capture before capacity
++    // waits/publication; embedded worker books remain separately unintegrated.
++    if (!params.model.engineBacked()) if (slot.fios_owner) |*held| {
++        slot.fios_queue_ticket = try held.tracker.beginQueued(self.io, held);
++    };
++
+     self.queue_mu.lockUncancelable(self.io);
+     defer self.queue_mu.unlock(self.io);
+ 
+@@ -1484,7 +1490,99 @@
+         .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{},
+         .max_tokens = 1, .model = model,
+     });
++    if (slot.fios_queue_ticket == null) std.debug.print("FIO_CURRENT_SLOT_NOT_QUEUED\n", .{});
++    try std.testing.expect(slot.fios_queue_ticket != null);
++    const queued = fios_ownership.shared().queuedSnapshot(io);
++    try std.testing.expectEqual(@as(usize, 1), queued.queued);
++    try std.testing.expectEqual(@as(usize, 0), queued.active);
++    try std.testing.expectEqual(@as(usize, 1), queued.models[0].queued);
++    try std.testing.expect(std.mem.eql(u8, queued.models[0].id[0..queued.models[0].len], model.id));
++    const other_model = try registry.registerStub("fixture/current-slot-other", "/fixture/never-loaded-other", null);
++    other_model.config = &config;
++    defer other_model.config = null;
++    other_model.state = .ready;
++    other_model.refcount.store(1, .release);
++    defer registry.releaseStatus(other_model);
++    try std.testing.expectError(error.ModelConflict, submit(&scheduler, .{
++        .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{},
++        .max_tokens = 1, .model = other_model,
++    }));
++    try std.testing.expectEqual(@as(u32, 1), other_model.refcount.load(.acquire));
++    try std.testing.expectEqual(@as(usize, 1), scheduler.pending.items.len);
++    try std.testing.expectEqual(slot.fios_queue_ticket.?.sequence, fios_ownership.shared().queue_sequence);
++    scheduler.queue_cap = 1;
++    // A second real submit waits before publication. Its independent queued
++    // operation must already be visible, without entering a model/backend.
++    const second_root = try fios_ownership.shared().enter(io);
++    var second_root_live = true;
++    defer if (second_root_live) fios_ownership.shared().leave(io, second_root) catch {};
++    try fios_ownership.shared().bind(io, second_root, model.id);
++    const Sender = struct {
++        scheduler: *Scheduler,
++        model: *LoadedModel,
++        root: fios_ownership.Token,
++        slot: ?*Slot = null,
++        failure: ?anyerror = null,
++        done: std.atomic.Value(bool) = .init(false),
++        fn run(self: *@This()) void {
++            fios_ownership.current().* = self.root;
++            defer fios_ownership.current().* = null;
++            self.slot = submit(self.scheduler, .{
++                .prompt_ids = &.{2}, .sampling = .{}, .eos_token_ids = &.{},
++                .max_tokens = 1, .model = self.model,
++            }) catch |err| {
++                self.failure = err;
++                self.done.store(true, .release);
++                return;
++            };
++            self.done.store(true, .release);
++        }
++    };
++    var sender: Sender = .{ .scheduler = &scheduler, .model = model, .root = second_root };
++    const thread = try std.Thread.spawn(.{}, Sender.run, .{&sender});
++    var joined = false;
++    defer if (!joined) {
++        scheduler.queue_mu.lockUncancelable(io);
++        scheduler.shutdown.store(true, .release);
++        scheduler.submit_cond.broadcast(io);
++        scheduler.session_cond.broadcast(io);
++        scheduler.queue_mu.unlock(io);
++        thread.join();
++    };
++    var wait = io_util.Stopwatch.init(io);
++    var captured = false;
++    while (wait.read() < 3_000_000_000) {
++        const sample = fios_ownership.shared().queuedSnapshot(io);
++        if (!sample.uncertain and sample.queued == 2) { captured = true; break; }
++        if (sender.done.load(.acquire)) break;
++        std.Io.sleep(io, .fromMilliseconds(1), .real) catch {};
++    }
++    if (!captured) std.debug.print("FIO_CURRENT_QUEUE_WAIT_NOT_ACCOUNTED\n", .{});
++    try std.testing.expect(captured);
++    try std.testing.expect(!sender.done.load(.acquire));
++    scheduler.queue_mu.lockUncancelable(io);
++    const published = scheduler.pending.items.len;
++    const in_flight = scheduler.in_flight;
++    scheduler.queue_mu.unlock(io);
++    try std.testing.expectEqual(@as(usize, 1), published);
++    try std.testing.expectEqual(@as(usize, 1), in_flight);
+     complete(&scheduler, slot);
++    wait = io_util.Stopwatch.init(io);
++    while (!sender.done.load(.acquire) and wait.read() < 3_000_000_000)
++        std.Io.sleep(io, .fromMilliseconds(1), .real) catch {};
++    try std.testing.expect(sender.done.load(.acquire));
++    thread.join(); joined = true;
++    try std.testing.expect(sender.failure == null);
++    const second_slot = sender.slot orelse return error.MissingQueuedSlot;
++    try std.testing.expect(second_slot.fios_queue_ticket != null);
++    complete(&scheduler, second_slot);
++    const second_cleanup = scheduler.cleanup_queue.pop().?;
++    try std.testing.expect(second_cleanup == second_slot);
++    second_cleanup.deinit();
++    try fios_ownership.shared().leave(io, second_root);
++    second_root_live = false;
++    try std.testing.expectEqual(@as(usize, 1), fios_ownership.shared().queuedSnapshot(io).queued);
++
+     try std.testing.expectEqual(@as(usize, 1), scheduler.cleanup_queue.items.len);
+     registry.releaseStatus(model);
+     model_held = false;
+@@ -1553,6 +1651,9 @@
+     slot.sink = .{ .ctx = &probe, .event = Probe.event };
+     fios_ownership.current().* = null; // The worker must use the slot's original ownership.
+     @import("finish.zig").finishSlot(&scheduler, slot, "stop");
++    try std.testing.expect(slot.fios_queue_started);
++    try std.testing.expectEqual(@as(usize, 1), fios_ownership.shared().queuedSnapshot(io).active);
++    try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared().queuedSnapshot(io).queued);
+     complete(&scheduler, slot);
+     try std.testing.expect(probe.finished);
+     if (!probe.attributed) std.debug.print("FIO_CURRENT_FINISH_LOST_ORIGINS\n", .{});
+@@ -2023,6 +2124,7 @@
+     }
+     const slot = try submit(&scheduler, .{ .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{}, .max_tokens = 1, .model = model });
+     try std.testing.expect(slot.fios_owner == null);
++    try std.testing.expect(slot.fios_queue_ticket == null);
+     complete(&scheduler, slot);
+     registry.releaseStatus(model);
+     caller_held = false;
+--- a/src/engines/mlx/slot.zig
++++ b/src/engines/mlx/slot.zig
+@@ -45,6 +45,8 @@
+ pub const Slot = struct {
+     // Original attribution survives queueing and connection completion.
+     fios_owner: ?fios_ownership.Retained = null,
++    fios_queue_ticket: ?fios_ownership.QueueTicket = null,
++    fios_queue_started: bool = false,
+     fios_registry: ?*model_registry_mod.ModelRegistry = null,
+     fios_deinit_attempted: std.atomic.Value(bool) = .init(false),
+     // Scheduler-owned intrusive quarantine: no allocation or native authority.
+@@ -253,6 +255,10 @@
+         errdefer if (fios_owner) |held| {
+             if (!held.tracker.backendKnownUncertain(io)) _ = held.releaseIfCertain(io);
+         };
++        // The exact actual target must already belong to every original root
++        // before any slot cache/state preparation. Legacy untracked calls keep
++        // their existing behavior; this issues no admission or completion proof.
++        if (fios_owner) |*held| try held.tracker.validatePreparationOrigins(io, held, params.model.id);
+         const slot = try allocator.create(Slot);
+         errdefer allocator.destroy(slot);
+ 
+@@ -428,6 +434,7 @@
+         const io = self.io;
+         if (model_registry_mod.cleanupUncertain(io)) return false;
+         const owner = self.fios_owner;
++        const queue_ticket = self.fios_queue_ticket;
+         const registry = self.fios_registry;
+         const model = self.model;
+         // Unknown backend work retains the whole original slot/model custody.
+@@ -444,6 +451,11 @@
+         // spawned by cleanup clones these original roots before they leave.
+         defer if (locally_retired) if (owner) |held| { _ = held.releaseIfCertain(io); };
+         defer if (locally_retired and !model_registry_mod.cleanupUncertain(io)) if (registry) |r| r.releaseStatus(model);
++        // Retire only this local operation after cleanup. A refusal keeps its
++        // independent root references and fences later local ownership release.
++        defer if (locally_retired) if (queue_ticket) |ticket| if (owner) |held| {
++            held.tracker.retireQueued(io, ticket) catch { held.tracker.fence(io); };
++        };
+ 
+         // A slot freed before its terminator (a cancel pulled into cleanup) still tells its stream it is done.
+         if (self.sink != null) self.emitFinished(.cancelled, null);
+--- a/src/engines/mlx/step.zig
++++ b/src/engines/mlx/step.zig
+@@ -76,7 +76,12 @@
+         finishSlot(sch, slot, "cancelled");
+         return .finished;
+     }
+-    if (slotHoldsForMemory(sch, slot)) return .held;
++    if (slotHoldsForMemory(sch, slot)) {
++        if (!fios_slots.park(sch.io, slot)) {
++            slot.markError("InvalidSlotOrigins");return .errored;
++        }
++        return .held;
++    }
+     var prefill_sw = io_util.Stopwatch.init(sch.io);
+     var qsa_gap_retried = false;
+     prefill: while (true) {

@@ -1,0 +1,654 @@
+diff --git a/src/plugins/minimax_h3/h3.zig b/src/plugins/minimax_h3/h3.zig
+index 341b330..f0e45f7 100644
+--- a/src/plugins/minimax_h3/h3.zig
++++ b/src/plugins/minimax_h3/h3.zig
+@@ -1208,9 +1208,11 @@ const AneCalib = struct {
+     dtype: mlx.mlx_dtype,
+     pub fn buildBlock0(self: AneCalib, k: u32, units: u32, share: f32) !*ane.AnePrefill {
+         try self.m.aneBuildInner(self.io, self.rows, k, units, share, self.s, 1);
++        try ane.cleanup_guard.requireCertain();
+         return self.m.ane_eng.?;
+     }
+     pub fn complement(self: AneCalib, x: mlx.mlx_array) !mlx.mlx_array {
++        try ane.cleanup_guard.requireCertain();
+         return aneRestForward(&self.m.ane_rest[0], x, self.s);
+     }
+     pub fn teardown(self: AneCalib) void {
+@@ -2139,34 +2141,84 @@ pub const Model = struct {
+     }
+ 
+     pub fn deinit(self: *Model) void {
++        _ = self.tryDeinit();
++    }
++    pub fn tryDeinit(self: *Model) bool {
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        if (!self.prepareAneClose()) return false;
+         for ([_]mlx.mlx_array{
+             self.video_patch_w,  self.video_patch_b, self.audio_patch_w, self.audio_patch_b,
+             self.condition_bias, self.te_in_w,       self.te_in_b,       self.te_out_w,
+             self.te_out_b,       self.inv_freq,      self.final_norm,    self.video_out_w,
+             self.video_out_b,    self.audio_out_w,   self.audio_out_b,   self.refiner_final_norm,
+-        }) |a| _ = mlx.mlx_array_free(a);
++        }) |a| {
++            _ = mlx.mlx_array_free(a);
++            if (ane.cleanup_guard.retainIfKnown()) return false;
++        }
+         self.condition_proj.deinit();
+-        for (self.refiner) |*b| b.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        for (self.refiner) |*b| {
++            b.deinit();
++            if (ane.cleanup_guard.retainIfKnown()) return false;
++        }
+         self.allocator.free(self.refiner);
+-        for (self.blocks) |*b| b.deinit();
++        for (self.blocks) |*b| {
++            b.deinit();
++            if (ane.cleanup_guard.retainIfKnown()) return false;
++        }
+         self.allocator.free(self.blocks);
+         if (self.final_adaln) |*fa| fa.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         if (self.adaln_tables) |*t| t.deinit();
+-        self.aneDeinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        if (!ane.fios_ane_cleanup) self.aneDeinit();
++        return !ane.cleanup_guard.retainIfKnown();
+     }
+ 
+     fn aneDeinit(self: *Model) void {
+-        if (self.ane_eng) |e| e.deinit();
+-        self.ane_eng = null;
+-        for (self.ane_rest) |*r| r.deinit();
++        _ = self.aneTryDeinit();
++    }
++    fn prepareAneClose(self: *Model) bool {
++        if (!ane.fios_ane_cleanup) return true;
++        return self.aneTryDeinit();
++    }
++    fn aneTryDeinit(self: *Model) bool {
++        return self.aneTryDeinitWith(ane.fios_ane_cleanup, ane.cleanup_guard.known, ane.AnePrefill.tryDeinit);
++    }
++    fn aneTryDeinitWith(self: *Model, comptime enabled: bool, comptime negative: fn () bool, comptime close: anytype) bool {
++        if (enabled and negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return false;
++        }
++        if (self.ane_eng) |e| {
++            const accepted = close(e);
++            if (enabled and !accepted) {
++                ane.cleanup_guard.retainUncertain();
++                return false;
++            }
++            self.ane_eng = null;
++            if (enabled and negative()) {
++                ane.cleanup_guard.retainUncertain();
++                return false;
++            }
++        }
++        for (self.ane_rest) |*r| {
++            r.deinit();
++            if (enabled and negative()) {
++                ane.cleanup_guard.retainUncertain();
++                return false;
++            }
++        }
+         if (self.ane_rest.len > 0) self.allocator.free(self.ane_rest);
+         self.ane_rest = &.{};
++        return true;
+     }
+ 
+     /// Build the per-block ANE programs for a run of `seq_len` rows. Never
+     /// fails the request: every refusal is a NAMED `[ane]` line and the DiT
+     /// runs GPU-only. Called after LoRA attach, so a Turbo run declines.
+     pub fn buildAne(self: *Model, io: std.Io, seq_len: u32, s: S) void {
++        if (ane.cleanup_guard.retainIfKnown()) return;
+         if (self.ane_eng != null or !ane.aneState().media_offload.video) return;
+         if (!ane.available()) {
+             log.warn("[ane] video offload: AppleNeuralEngine framework not present — GPU only\n", .{});
+@@ -2185,7 +2237,9 @@ pub const Model = struct {
+         const ffn = self.cfg.ffn_hidden_size;
+         const probe: ane.QuantWeight = .{ .w = fc1.w, .scales = fc1.scales, .biases = fc1.biases, .bits = fc1.bits, .group_size = fc1.group_size, .in_dim = hidden, .out_dim = 2 * ffn };
+         const plan = ane.planMediaOffload(io, s, "video", self.blocks.len, hidden, ffn, rows, probe, AneCalib{ .m = self, .io = io, .rows = rows, .s = s, .dtype = self.dtype }) orelse return;
++        if (ane.cleanup_guard.retainIfKnown()) return;
+         self.aneBuildInner(io, rows, plan.k, plan.units, plan.share, s, self.blocks.len) catch |err| {
++            if (ane.cleanup_guard.retainIfKnown()) return;
+             log.warn("[ane] video offload build failed ({s}) — GPU only\n", .{@errorName(err)});
+             self.aneDeinit();
+         };
+@@ -2193,15 +2247,49 @@ pub const Model = struct {
+ 
+     /// Builds blocks [0, n); fewer than all is the calibration build.
+     fn aneBuildInner(self: *Model, io: std.Io, rows: u32, k: u32, units: u32, share: f32, s: S, n: usize) !void {
++        try ane.cleanup_guard.requireCertain();
++        if (ane.fios_ane_cleanup and (self.ane_eng != null or self.ane_rest.len != 0)) return error.AneOwnerOccupied;
+         const a = self.allocator;
+         const hidden = self.cfg.hidden_size;
+         const ffn = self.cfg.ffn_hidden_size;
+         const eng = try ane.AnePrefill.init(a, io, self.blocks.len, hidden, k, rows, rows, 0, 0, units);
+-        errdefer eng.deinit();
+-        const rests = try a.alloc(AneRestMlp, n);
+-        errdefer a.free(rests);
++        if (ane.fios_ane_cleanup) self.ane_eng = eng;
++        var rest_allocation: ?[]AneRestMlp = null;
+         var built: usize = 0;
+-        errdefer for (rests[0..built]) |*r| r.deinit();
++        // Private unwind closes native ownership first. A refused close or
++        // later independent fence retains the original allocation/container.
++        errdefer {
++            if (ane.fios_ane_cleanup) {
++                if (!ane.cleanup_guard.known() and eng.tryDeinit()) {
++                    self.ane_eng = null;
++                    if (!ane.cleanup_guard.retainIfKnown()) {
++                        if (rest_allocation) |rs| {
++                            var disposed = true;
++                            for (rs[0..built]) |*r| {
++                                r.deinit();
++                                if (ane.cleanup_guard.retainIfKnown()) {
++                                    disposed = false;
++                                    break;
++                                }
++                            }
++                            if (disposed) {
++                                a.free(rs);
++                                self.ane_rest = &.{};
++                            }
++                        }
++                    }
++                } else ane.cleanup_guard.retainUncertain();
++            } else {
++                if (rest_allocation) |rs| {
++                    for (rs[0..built]) |*r| r.deinit();
++                    a.free(rs);
++                }
++                eng.deinit();
++            }
++        }
++        const rests = try a.alloc(AneRestMlp, n);
++        rest_allocation = rests;
++        if (ane.fios_ane_cleanup) self.ane_rest = rests;
+ 
+         const start = std.Io.Timestamp.now(io, .awake);
+         const kh: usize = @as(usize, k) * hidden;
+@@ -2210,6 +2298,7 @@ pub const Model = struct {
+         const up_slice = try a.alloc(f32, kh);
+         defer a.free(up_slice);
+         for (self.blocks[0..n], 0..) |*b, i| {
++            try ane.cleanup_guard.requireCertain();
+             rests[i] = try aneBuildRest(&b.mlp, k * units, ffn, s);
+             built = i + 1;
+             // fc1 is [2*ffn, hidden]: gate rows [0..ffn), up rows [ffn..2*ffn).
+@@ -2219,6 +2308,7 @@ pub const Model = struct {
+             defer a.free(fc2);
+             const up_base: usize = @as(usize, ffn) * hidden;
+             for (0..units) |u| {
++                try ane.cleanup_guard.requireCertain();
+                 const r0: usize = u * kh;
+                 const c0: usize = u * @as(usize, k);
+                 for (0..hidden) |r| @memcpy(fc2_slice[r * k ..][0..k], fc2[r * ffn + c0 ..][0..k]);
+@@ -2230,7 +2320,9 @@ pub const Model = struct {
+                 };
+             }
+         }
++        try ane.cleanup_guard.requireCertain();
+         eng.finishPending();
++        try ane.cleanup_guard.requireCertain();
+         const ready = eng.coveredLayers();
+         if (ready == 0) return error.AneNoProgram;
+         const secs: f64 = @as(f64, @floatFromInt(@as(u64, @intCast(start.untilNow(io, .awake).nanoseconds)))) / 1e9;
+@@ -3565,21 +3657,109 @@ pub const Resident = struct {
+         return self.te != null or self.dit != null;
+     }
+ 
+-    /// Frees everything held; returns the bytes it was holding.
++    /// Local disposal bytes only; never native terminal/admission evidence.
+     pub fn release(self: *Resident) u64 {
++        return self.tryRelease() orelse 0;
++    }
++    pub fn tryRelease(self: *Resident) ?u64 {
++        return self.tryReleaseWith(ane.fios_ane_cleanup, ane.cleanup_guard.known,
++            Model.prepareAneClose, TextEncoder.deinit, Model.tryDeinit,
++            lora_mod.Stack.deinit, fiosH3ClearCache);
++    }
++    fn tryReleaseWith(self: *Resident, comptime active: bool, comptime negative: anytype,
++        comptime prepare: anytype, comptime close_text: anytype, comptime close_model: anytype,
++        comptime close_stack: anytype, comptime clear_cache: anytype) ?u64 {
++        if (active and negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return null;
++        }
++        // Private native ownership is checked before the sibling text encoder.
++        if (active) if (self.dit) |*m| {
++            if (!prepare(m)) {
++                ane.cleanup_guard.retainUncertain();
++                return null;
++            }
++        };
+         const freed = self.bytes;
+-        if (self.te) |*t| t.deinit();
++        if (self.te) |*t| close_text(t);
+         self.te = null;
+-        if (self.dit) |*m| m.deinit();
++        if (active and negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return null;
++        }
++        if (self.dit) |*m| {
++            const accepted = close_model(m);
++            if (active and !accepted) {
++                ane.cleanup_guard.retainUncertain();
++                return null;
++            }
++        }
+         self.dit = null;
++        if (active and negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return null;
++        }
++        if (!active) self.lora_bound = false;
++        close_stack(&self.stack);
++        if (active and negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return null;
++        }
+         self.lora_bound = false;
+-        self.stack.deinit();
++        if (!active) self.bytes = 0;
++        if (freed > 0) clear_cache();
++        if (active and negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return null;
++        }
+         self.bytes = 0;
+-        if (freed > 0) _ = mlx.mlx_clear_cache();
+         return freed;
+     }
+ };
+ 
++fn fiosH3ClearCache() void {
++    _ = mlx.mlx_clear_cache();
++}
++const FiosLocalCustody = struct {
++    allocator: std.mem.Allocator,
++    model: ?Model = null,
++    stack: lora_mod.Stack,
++    fn create(allocator: std.mem.Allocator) !*FiosLocalCustody {
++        try ane.cleanup_guard.requireCertain();
++        const self = try allocator.create(FiosLocalCustody);
++        self.* = .{ .allocator = allocator, .stack = .{ .allocator = allocator } };
++        return self;
++    }
++    fn tryDeinit(self: *FiosLocalCustody) bool {
++        return self.tryDeinitWith(ane.cleanup_guard.known, Model.tryDeinit, lora_mod.Stack.deinit);
++    }
++    fn tryDeinitWith(self: *FiosLocalCustody, comptime negative: anytype,
++        comptime close_model: anytype, comptime close_stack: anytype) bool {
++        if (negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return false;
++        }
++        if (self.model) |*m| {
++            if (!close_model(m)) {
++                ane.cleanup_guard.retainUncertain();
++                return false;
++            }
++            self.model = null;
++        }
++        if (negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return false;
++        }
++        close_stack(&self.stack);
++        if (negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return false;
++        }
++        self.allocator.destroy(self);
++        return true;
++    }
++};
++
+ /// Process-wide under `-Dunits` (sdk/util/shared.zig): one copy in the host.
+ const ResidentsState = struct {
+     /// Every engine's cache, so another model's load can ask them all to let go.
+@@ -3598,6 +3778,7 @@ pub fn registerResident(r: *Resident) void {
+ }
+ 
+ pub fn unregisterResident(r: *Resident) void {
++    if (ane.cleanup_guard.retainIfKnown()) return;
+     for (&residents().live_residents) |*slot| if (slot.* == r) {
+         slot.* = null;
+     };
+@@ -3607,8 +3788,11 @@ pub fn unregisterResident(r: *Resident) void {
+ /// be refused for memory: residency is opportunistic and never blocks anything.
+ pub fn releaseAllResidents() u64 {
+     var freed: u64 = 0;
++    if (ane.cleanup_guard.retainIfKnown()) return freed;
+     for (residents().live_residents) |slot| if (slot) |r| {
++        if (ane.cleanup_guard.retainIfKnown()) return freed;
+         freed += r.release();
++        if (ane.cleanup_guard.retainIfKnown()) return freed;
+     };
+     return freed;
+ }
+@@ -3817,6 +4001,7 @@ pub fn generate(
+     progress: ?gen_sse.Progress,
+     s: S,
+ ) !GenResult {
++    try ane.cleanup_guard.requireCertain();
+     if (req.chain_windows > 1) return generateChain(allocator, io, paths, req, progress, s);
+     return generateOne(allocator, io, paths, req, progress, s);
+ }
+@@ -3895,6 +4080,7 @@ fn generateOne(
+     progress: ?gen_sse.Progress,
+     s: S,
+ ) !GenResult {
++    try ane.cleanup_guard.requireCertain();
+     const vae_mod = @import("vae.zig");
+     const dt = mlx.mlx_dtype.bfloat16;
+ 
+@@ -4234,8 +4420,13 @@ fn generateOne(
+     {
+         // The stack outlives the DiT (declared first, so its `defer` runs last): every attached
+         // `Ref` points into it. A resident DiT keeps its stack in the cache instead.
++        var local_custody: ?*FiosLocalCustody = null;
++        if (ane.cleanup_guard.enabled and req.resident == null)
++            local_custody = try FiosLocalCustody.create(allocator);
++        defer if (local_custody) |cell| { _ = cell.tryDeinit(); };
+         var stack_local: lora_mod.Stack = .{ .allocator = allocator };
+-        defer stack_local.deinit();
++        defer if (!ane.cleanup_guard.known()) stack_local.deinit();
++        const local_stack = if (local_custody) |cell| &cell.stack else &stack_local;
+         var want_paths: [lora_mod.MAX_LORAS][]const u8 = undefined;
+         var want_scales: [lora_mod.MAX_LORAS]f32 = undefined;
+         const want_n = try wantedLoras(paths, req, &want_paths, &want_scales);
+@@ -4247,12 +4438,16 @@ fn generateOne(
+         // the map right away is safe — caught live by the `dit resident` log
+         // reading 33.4 GB where ~22 was expected.
+         var model_local: ?Model = null;
+-        defer if (model_local) |*m| m.deinit();
++        defer if (!ane.cleanup_guard.known()) { if (model_local) |*m| m.deinit(); };
+         const model: *Model = if (req.resident) |r| rb: {
+             if (r.dit == null) r.dit = try loadDit(allocator, paths.dit, req.geometry.dit, dt, s) else log.info("[minimax-h3] dit: resident hit\n", .{});
+             r.bytes = req.resident_bytes;
+             break :rb &r.dit.?;
+         } else lb: {
++            if (local_custody) |cell| {
++                cell.model = try loadDit(allocator, paths.dit, req.geometry.dit, dt, s);
++                break :lb &cell.model.?;
++            }
+             model_local = try loadDit(allocator, paths.dit, req.geometry.dit, dt, s);
+             break :lb &model_local.?;
+         };
+@@ -4265,7 +4460,7 @@ fn generateOne(
+                 r.lora_bound = true;
+             }
+         } else {
+-            try bindLoras(allocator, &stack_local, model, want_paths[0..want_n], want_scales[0..want_n], req.turbo);
++            try bindLoras(allocator, local_stack, model, want_paths[0..want_n], want_scales[0..want_n], req.turbo);
+         }
+         // AdaLN precompute must run while the trunk is still lazy — see
+         // precomputeAdaln. Default ON: it is what keeps the DiT residency at
+@@ -4282,6 +4477,7 @@ fn generateOne(
+         // ANE MLP offload for this run's row count (opt-in; declines under a
+         // LoRA, so a Turbo run stays GPU-only).
+         if (req.resident == null) model.buildAne(io, layout.seq_len, s);
++        try ane.cleanup_guard.requireCertain();
+         var active_bytes: usize = 0;
+         _ = mlx.mlx_get_active_memory(&active_bytes);
+         const load_ms = phase_timer.lapMs();
+@@ -4362,6 +4558,7 @@ fn generateOne(
+         }
+ 
+         for (0..req.steps) |i| {
++            try ane.cleanup_guard.requireCertain();
+             model.ablate = switch (abl_mode) {
+                 .off => .none,
+                 .ladder => ladderArmForStep(i),
+@@ -4716,6 +4913,7 @@ fn generateChain(
+     progress: ?gen_sse.Progress,
+     s: S,
+ ) !GenResult {
++    try ane.cleanup_guard.requireCertain();
+     const n = req.chain_windows;
+     std.debug.assert(n >= 2);
+     // A reference has no keyframe row to chain through; the handler rejects
+@@ -7378,3 +7576,132 @@ test "add_norm: fused gate + rmsnorm + modulation is bit-equal to modGate -> rms
+         if (with_add) try expectBitEqual(got.h, h1, "gated residual", s);
+     }
+ }
++
++// Actual MiniMax H3 cleanup method with CPU-only callbacks and empty rest metadata.
++// The fake child identity is never dereferenced or passed to native C.
++const FiosH3AneCloseProbe = struct {
++    var calls: usize = 0;
++    var blocked: bool = false;
++    var mode: enum { preexisting, refused, after, healthy } = .healthy;
++    fn negative() bool {
++        return blocked;
++    }
++    fn close(_: *ane.AnePrefill) bool {
++        calls += 1;
++        if (mode == .after) blocked = true;
++        return mode == .after or mode == .healthy;
++    }
++};
++fn fiosH3AneClose(mode: @TypeOf(FiosH3AneCloseProbe.mode)) !void {
++    const P = FiosH3AneCloseProbe;
++    P.mode = mode;
++    P.calls = 0;
++    P.blocked = mode == .preexisting;
++    var d: Model = undefined;
++    d.allocator = std.heap.page_allocator;
++    d.ane_rest = &.{};
++    const original: *ane.AnePrefill = @ptrFromInt(64);
++    d.ane_eng = original;
++    const accepted = d.aneTryDeinitWith(true, P.negative, P.close);
++    if (accepted != (mode == .healthy)) {
++        std.debug.print("FIO_H3_ANE_CLOSE_DROPPED_UNCERTAIN_PARENT\n", .{});
++        try std.testing.expect(false);
++    }
++    try std.testing.expectEqual(@as(usize, if (mode == .preexisting) 0 else 1), P.calls);
++    try std.testing.expect(d.ane_eng == (if (mode == .preexisting or mode == .refused) original else null));
++    try std.testing.expect(d.ane_rest.len == 0);
++}
++test "fios current MiniMax H3 ANE close retains preexisting uncertainty" {
++    try fiosH3AneClose(.preexisting);
++}
++test "fios current MiniMax H3 ANE close retains rejected child" {
++    try fiosH3AneClose(.refused);
++}
++test "fios current MiniMax H3 ANE close retains parent after later uncertainty" {
++    try fiosH3AneClose(.after);
++}
++test "fios current MiniMax H3 ANE close accepts healthy local disposal" {
++    try fiosH3AneClose(.healthy);
++}
++
++// Actual resident/cell methods with inert CPU metadata and callback outcomes.
++// Model/TextEncoder payloads are never dereferenced or passed to MLX/native C.
++const FiosH3ResidentProbe = struct {
++    var mode: enum { preexisting, refuse_prepare, refuse_model, after_model, healthy } = .healthy;
++    var blocked: bool = false;
++    var order: [5]u8 = undefined;
++    var count: usize = 0;
++    fn mark(value: u8) void { order[count] = value; count += 1; }
++    fn negative() bool { return blocked; }
++    fn prepare(_: *Model) bool { mark(0); return mode != .refuse_prepare; }
++    fn text(_: *TextEncoder) void { mark(1); }
++    fn model(_: *Model) bool { mark(2); if (mode == .after_model) blocked = true; return mode != .refuse_model; }
++    fn stack(_: *lora_mod.Stack) void { mark(3); }
++    fn cache() void { mark(4); }
++};
++fn fiosH3ResidentClose(mode: @TypeOf(FiosH3ResidentProbe.mode)) !void {
++    const P = FiosH3ResidentProbe;
++    P.mode = mode;
++    P.blocked = mode == .preexisting;
++    P.count = 0;
++    var r = Resident.init(std.heap.page_allocator);
++    r.te = @as(TextEncoder, undefined);
++    r.dit = @as(Model, undefined);
++    r.bytes = 41;
++    r.lora_bound = true;
++    const original = &r.dit.?;
++    const result = r.tryReleaseWith(true, P.negative, P.prepare, P.text, P.model, P.stack, P.cache);
++    const healthy = mode == .healthy;
++    const expected: ?u64 = if (healthy) 41 else null;
++    try std.testing.expectEqual(expected, result);
++    try std.testing.expectEqual(!healthy, r.lora_bound);
++    try std.testing.expectEqual(@as(u64, if (healthy) 0 else 41), r.bytes);
++    const held_model = mode == .preexisting or mode == .refuse_prepare or mode == .refuse_model;
++    try std.testing.expectEqual(held_model, r.dit != null);
++    if (held_model) try std.testing.expect(original == &r.dit.?);
++    try std.testing.expectEqual(mode == .preexisting or mode == .refuse_prepare, r.te != null);
++    const count: usize = switch (mode) { .preexisting => 0, .refuse_prepare => 1, .refuse_model, .after_model => 3, .healthy => 5 };
++    const ordered = [_]u8{0,1,2,3,4};
++    try std.testing.expectEqualSlices(u8, ordered[0..count], P.order[0..P.count]);
++}
++test "fios current H3 resident close retains preexisting metadata" { try fiosH3ResidentClose(.preexisting); }
++test "fios current H3 resident close checks native child before text sibling" { try fiosH3ResidentClose(.refuse_prepare); }
++test "fios current H3 resident close retains rejected model and adapter metadata" { try fiosH3ResidentClose(.refuse_model); }
++test "fios current H3 resident close retains adapter metadata after later uncertainty" { try fiosH3ResidentClose(.after_model); }
++test "fios current H3 resident close reports healthy local disposal bytes" { try fiosH3ResidentClose(.healthy); }
++
++const FiosH3LocalProbe = struct {
++    var mode: enum { preexisting, refused, healthy } = .healthy;
++    var model_calls: usize = 0;
++    var stack_calls: usize = 0;
++    fn negative() bool { return mode == .preexisting; }
++    fn model(_: *Model) bool { model_calls += 1; return mode == .healthy; }
++    fn stack(_: *lora_mod.Stack) void { stack_calls += 1; }
++};
++fn fiosH3LocalClose(mode: @TypeOf(FiosH3LocalProbe.mode)) !void {
++    const P = FiosH3LocalProbe;
++    P.mode = mode;
++    P.model_calls = 0;
++    P.stack_calls = 0;
++    var trace = std.testing.FailingAllocator.init(std.heap.page_allocator, .{});
++    const a = trace.allocator();
++    const cell = try FiosLocalCustody.create(a);
++    cell.model = @as(Model, undefined);
++    const original = &cell.model.?;
++    const accepted = cell.tryDeinitWith(P.negative, P.model, P.stack);
++    const healthy = mode == .healthy;
++    try std.testing.expectEqual(healthy, accepted);
++    try std.testing.expectEqual(@as(usize, if (mode == .preexisting) 0 else 1), P.model_calls);
++    try std.testing.expectEqual(@as(usize, if (healthy) 1 else 0), P.stack_calls);
++    if (healthy) {
++        try std.testing.expect(trace.allocated_bytes > 0 and trace.freed_bytes == trace.allocated_bytes);
++    } else {
++        try std.testing.expectEqual(@as(usize, 0), trace.freed_bytes);
++        try std.testing.expect(cell.model != null and original == &cell.model.?);
++        // Free only this test's inert CPU cell. No native object was created.
++        a.destroy(cell);
++    }
++}
++test "fios current H3 local cell survives preexisting uncertainty" { try fiosH3LocalClose(.preexisting); }
++test "fios current H3 local cell survives rejected child disposal" { try fiosH3LocalClose(.refused); }
++test "fios current H3 local cell retires after healthy local disposal" { try fiosH3LocalClose(.healthy); }
+diff --git a/src/plugins/minimax_h3/plugin.zig b/src/plugins/minimax_h3/plugin.zig
+index 5f95405..fbb68aa 100644
+--- a/src/plugins/minimax_h3/plugin.zig
++++ b/src/plugins/minimax_h3/plugin.zig
+@@ -16,6 +16,7 @@ const video_out = @import("../../sdk/media/video_out.zig");
+ const frame_in = @import("../../sdk/media/frame_in.zig");
+ const wav = @import("../../sdk/media/wav.zig");
+ const h3 = @import("h3.zig");
++const ane_cleanup = @import("../../sdk/ane/cleanup_guard.zig");
+ const vsa = @import("vsa.zig");
+ pub const config = @import("config.zig");
+ 
+@@ -41,6 +42,8 @@ const Verdict = abi.Verdict;
+ const A = mlx.mlx_array;
+ 
+ const Engine = struct {
++    // Private result handles remain owned if deferred native cleanup fences.
++    fios_pending_result: ?h3.GenResult = null,
+     model_dir: []u8,
+     stream: mlx.mlx_stream,
+     owns_stream: bool,
+@@ -72,6 +75,7 @@ const Engine = struct {
+ };
+ 
+ fn load(ctx: *const abi.LoadCtx, out: *Verdict) callconv(.c) ?*anyopaque {
++    if (ane_cleanup.retainIfKnown())  { out.* = Verdict.refuse(.failed, "minimax_h3: native cleanup uncertain"); return null; }
+     var buf: [1 << 20]u8 = undefined;
+     var why: Verdict = .{};
+     const cfg = ctx.dir.readFile("config.json", &buf, &why) orelse "{}";
+@@ -107,9 +111,24 @@ fn load(ctx: *const abi.LoadCtx, out: *Verdict) callconv(.c) ?*anyopaque {
+ 
+ fn unload(ep: *anyopaque) callconv(.c) void {
+     const e: *Engine = @ptrCast(@alignCast(ep));
+-    h3.unregisterResident(&e.resident);
+-    _ = e.resident.release();
++    if (ane_cleanup.enabled) {
++        if (ane_cleanup.retainIfKnown()) return;
++        if (e.fios_pending_result != null) {
++            ane_cleanup.retainUncertain();
++            return;
++        }
++        if (e.resident.tryRelease() == null) {
++            ane_cleanup.retainUncertain();
++            return;
++        }
++        if (ane_cleanup.retainIfKnown()) return;
++        h3.unregisterResident(&e.resident);
++    } else {
++        h3.unregisterResident(&e.resident);
++        _ = e.resident.release();
++    }
+     e.freeLoras();
++    if (ane_cleanup.retainIfKnown()) return;
+     gpa.free(e.result);
+     gpa.free(e.model_dir);
+     if (e.owns_stream) _ = mlx.mlx_stream_free(e.stream);
+@@ -119,6 +138,7 @@ fn unload(ep: *anyopaque) callconv(.c) void {
+ /// The request's adapters, proven HERE: the DiT loads per request, so `loadFile`'s own check would be reached minutes
+ /// into a generation. They stack with Turbo, which `generate` puts first.
+ fn setLoras(ep: *anyopaque, loras: abi.Span(abi.Lora)) callconv(.c) Verdict {
++    if (ane_cleanup.retainIfKnown()) return Verdict.refuse(.failed, "minimax_h3: native cleanup uncertain");
+     const e: *Engine = @ptrCast(@alignCast(ep));
+     e.freeLoras();
+     for (loras.slice()) |l| {
+@@ -343,7 +363,12 @@ fn residentFor(e: *Engine, dir: *const abi.PackDir, activations: u64, mem: Mem)
+ }
+ 
+ fn step(ep: *anyopaque, req: *const abi.Request, progress: *const abi.Progress) callconv(.c) Verdict {
++    if (ane_cleanup.retainIfKnown()) return Verdict.refuse(.failed, "minimax_h3: native cleanup uncertain");
+     const e: *Engine = @ptrCast(@alignCast(ep));
++    if (ane_cleanup.enabled and e.fios_pending_result != null) {
++        ane_cleanup.retainUncertain();
++        return Verdict.refuse(.failed, "minimax_h3: retained result cleanup uncertain");
++    }
+     const dir = req.dir orelse return Verdict.refuse(.failed, "minimax_h3: the host gave no pack dir");
+     var b = job.Body.parse(gpa, req.body.slice()) orelse return bad("invalid JSON body");
+     defer b.deinit();
+@@ -409,6 +434,7 @@ fn step(ep: *anyopaque, req: *const abi.Request, progress: *const abi.Progress)
+     const activations = config.activationBytes(rows, bcast_row);
+     const mem = memNow(req);
+     const plan = residentFor(e, dir, activations, mem);
++    if (ane_cleanup.retainIfKnown()) return Verdict.refuse(.failed, "minimax_h3: native cleanup uncertain");
+     if (plan == null) {
+         const dit = config.ditResidentBytes(config.ditFileBytes(dir, &e.machine), true) + (if (turbo) dir.fileBytes("turbo_lora.safetensors") else 0);
+         const bill = config.canvasBill(dit, activations, mem.host_avail, mem.gpu_limit, mem.gpu_active, mlx.cudaAvailable());
+@@ -465,8 +491,18 @@ fn step(ep: *anyopaque, req: *const abi.Request, progress: *const abi.Progress)
+         error.TurboLoraIncomplete => bad("turbo_lora.safetensors ships modules MiniMax-H3's DiT does not have — replace it with minimax_h3_turbo_4step_ema_ckpt850.safetensors from hf.co/larryvrh/MiniMax-H3-Turbo-Lora"),
+         else => job.failure(err, "MiniMax-H3 generation failed"),
+     };
+-    defer res.deinit();
+-    const members = encodeResult(&res, s) catch |err| return job.failure(err, "MiniMax-H3 generation failed");
++    if (ane_cleanup.enabled) e.fios_pending_result = res;
++    const result = if (ane_cleanup.enabled) &e.fios_pending_result.? else &res;
++    defer if (!ane_cleanup.known()) {
++        result.deinit();
++        if (ane_cleanup.enabled and !ane_cleanup.retainIfKnown()) e.fios_pending_result = null;
++    };
++    if (ane_cleanup.retainIfKnown()) return Verdict.refuse(.failed, "minimax_h3: native cleanup uncertain");
++    const members = encodeResult(result, s) catch |err| return job.failure(err, "MiniMax-H3 generation failed");
++    if (ane_cleanup.retainIfKnown()) {
++        gpa.free(members);
++        return Verdict.refuse(.failed, "minimax_h3: native cleanup uncertain");
++    }
+     gpa.free(e.result);
+     e.result = members;
+     return .ok;

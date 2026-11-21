@@ -1,0 +1,240 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const model = "fixture/Preparation-Original";
+const id: owners.CorrelationID = @splat(41);
+fn requireInterface() !void {
+    if (!@hasDecl(owners.Tracker, "attachPreparationIngress") or !@hasDecl(owners.Tracker, "attachPreparationIngressKnown")) {
+        std.debug.print("MISSING_ATOMIC_PREPARATION_INGRESS_LINK\n", .{});
+        return error.TestUnexpectedResult;
+    }
+}
+fn attach(t: *owners.Tracker, claim: owners.Token, ingress: owners.Token, name: []const u8, cid: owners.CorrelationID, known: bool) !void {
+    if (comptime @hasDecl(owners.Tracker, "attachPreparationIngress")) {
+        if (known) return t.attachPreparationIngressKnown(std.testing.io, claim, ingress, name, cid);
+        return t.attachPreparationIngress(std.testing.io, claim, ingress, name, cid);
+    } else return error.MissingInterface;
+}
+fn init(t: *owners.Tracker, seed: u8) !void {
+    try t.initialize(std.testing.io, @splat(seed));
+}
+const Pair = struct { claim: owners.Token, ingress: owners.Token };
+fn pair(t: *owners.Tracker, cid: owners.CorrelationID) !Pair {
+    const claim = try t.claimCorrelatedPreparation(std.testing.io, model, cid);
+    return .{ .claim = claim, .ingress = try t.enter(std.testing.io) };
+}
+test "preparation ingress interface" {
+    try requireInterface();
+}
+test "preparation ingress exact lineage survives creator release" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try init(&t, 161);
+    const p = try pair(&t, id);
+    try attach(&t, p.claim, p.ingress, model, id, false);
+    var s = t.correlationSnapshot(io, id);
+    try std.testing.expect(s.found and !s.uncertain);
+    try std.testing.expectEqual(p.claim.sequence, s.root_sequence);
+    try std.testing.expectEqual(@as(usize, 2), s.owners);
+    try std.testing.expectEqual(@as(u64, 2), s.references);
+    try t.leave(io, p.claim);
+    s = t.correlationSnapshot(io, id);
+    try std.testing.expectEqual(p.claim.sequence, s.root_sequence);
+    try std.testing.expectEqual(@as(usize, 1), s.owners);
+    try t.active(io, p.ingress);
+    s = t.correlationSnapshot(io, id);
+    try std.testing.expectEqual(@as(usize, 1), s.active);
+    try t.leave(io, p.ingress);
+    s = t.correlationSnapshot(io, id);
+    try std.testing.expect(!s.found and s.uncertain);
+    try std.testing.expect(!t.knownUncertain(io));
+}
+test "preparation ingress exact identity refusals preserve unpublished claim" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try init(&t, 162);
+    const p = try pair(&t, id);
+    try std.testing.expectError(error.ClaimModelMismatch, attach(&t, p.claim, p.ingress, "fixture/preparation-original", id, false));
+    try std.testing.expectError(error.ClaimCorrelationMismatch, attach(&t, p.claim, p.ingress, model, @splat(42), false));
+    const long: [owners.model_limit + 1]u8 = @splat('x');
+    try std.testing.expectError(error.InvalidModel, attach(&t, p.claim, p.ingress, &long, id, false));
+    try std.testing.expectError(error.InvalidModel, attach(&t, p.claim, p.ingress, "bad\x00id", id, false));
+    try std.testing.expectEqual(@as(usize, 1), t.correlationSnapshot(io, id).owners);
+    try std.testing.expectEqual(@as(usize, 2), t.snapshot(io).owned);
+    try attach(&t, p.claim, p.ingress, model, id, false);
+    try t.leave(io, p.claim);
+    try t.leave(io, p.ingress);
+}
+test "preparation ingress one use keeps unrelated ingress intact" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try init(&t, 163);
+    const p = try pair(&t, id);
+    try attach(&t, p.claim, p.ingress, model, id, false);
+    const other = try t.enter(io);
+    try std.testing.expectError(error.PreparationClaimUsed, attach(&t, p.claim, other, model, id, false));
+    try std.testing.expectEqual(@as(usize, 2), t.correlationSnapshot(io, id).owners);
+    try std.testing.expectEqual(@as(usize, 3), t.snapshot(io).owned);
+    try t.leave(io, p.claim);
+    try t.leave(io, p.ingress);
+    try std.testing.expectEqual(@as(usize, 1), t.snapshot(io).owned);
+    try t.associate(io, other, @splat(43));
+    try t.bind(io, other, model);
+    try std.testing.expectEqual(other.sequence, t.correlationSnapshot(io, @splat(43)).root_sequence);
+    try t.leave(io, other);
+}
+test "preparation ingress retained and forked roots refuse without retirement" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try init(&t, 164);
+    const p = try pair(&t, id);
+    try t.retain(io, p.claim);
+    try std.testing.expectError(error.PreparationClaimBusy, attach(&t, p.claim, p.ingress, model, id, false));
+    try t.leave(io, p.claim);
+    try t.retain(io, p.ingress);
+    try std.testing.expectError(error.PreparationClaimBusy, attach(&t, p.claim, p.ingress, model, id, false));
+    try t.leave(io, p.ingress);
+    const child = try t.reservePreparation(io, p.claim, model);
+    try std.testing.expectError(error.PreparationClaimBusy, attach(&t, p.claim, p.ingress, model, id, false));
+    try std.testing.expectEqual(@as(usize, 3), t.snapshot(io).owned);
+    try t.leave(io, child);
+    try attach(&t, p.claim, p.ingress, model, id, false);
+    try t.leave(io, p.claim);
+    try t.leave(io, p.ingress);
+}
+test "preparation ingress ordinary and auxiliary roots cannot impersonate claims" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try init(&t, 165);
+    const ordinary = try t.enter(io);
+    try t.associate(io, ordinary, @splat(44));
+    try t.bind(io, ordinary, model);
+    const incoming = try t.enter(io);
+    try std.testing.expectError(error.InvalidPreparationClaim, attach(&t, ordinary, incoming, model, @splat(44), false));
+    const claim = try t.claimCorrelatedPreparation(io, model, id);
+    try t.bindAuxiliary(io, claim, "fixture/companion");
+    try std.testing.expectError(error.InvalidPreparationClaim, attach(&t, claim, incoming, model, id, false));
+    try std.testing.expectError(error.InvalidClaimIngress, attach(&t, claim, claim, model, id, false));
+    try std.testing.expectEqual(@as(usize, 3), t.snapshot(io).owned);
+    try t.leave(io, claim);
+    try t.leave(io, incoming);
+    try t.leave(io, ordinary);
+}
+test "preparation ingress pause and uncertainty preserve older ownership" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try init(&t, 166);
+    const older = try t.claimCorrelatedPreparation(io, model, @splat(45));
+    const p = try pair(&t, id);
+    const pause = try t.pauseAdmissions(io);
+    try std.testing.expectError(error.AdmissionsPaused, attach(&t, p.claim, p.ingress, model, id, false));
+    try std.testing.expectEqual(@as(usize, 3), t.snapshot(io).owned);
+    try t.resumeAdmissions(io, pause);
+    try attach(&t, p.claim, p.ingress, model, id, false);
+    try t.leave(io, p.claim);
+    try t.leave(io, p.ingress);
+    try std.testing.expectEqual(@as(usize, 1), t.snapshot(io).owned);
+    try std.testing.expect(t.correlationSnapshot(io, @splat(45)).found);
+    t.fence(io);
+    try std.testing.expectError(error.CoverageUncertain, attach(&t, older, older, model, @splat(45), false));
+    try std.testing.expectEqual(@as(usize, 1), t.snapshot(io).owned);
+    try std.testing.expect(t.knownUncertain(io));
+}
+var probe_tracker: ?*owners.Tracker = null;
+var probe_calls: u32 = 0;
+var probe_unlocked = false;
+fn probe() bool {
+    probe_calls += 1;
+    if (probe_tracker) |t| {
+        if (t.mutex.tryLock()) {
+            probe_unlocked = true;
+            t.mutex.unlock(std.testing.io);
+        }
+    }
+    return false;
+}
+test "preparation ingress probe runs before lock and known edge has no callback" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try init(&t, 167);
+    probe_tracker = &t;
+    try t.enrollBackendUncertaintyProbe(io, probe);
+    const p = try pair(&t, id);
+    probe_calls = 0;
+    probe_unlocked = false;
+    try attach(&t, p.claim, p.ingress, model, id, false);
+    try std.testing.expectEqual(@as(u32, 1), probe_calls);
+    try std.testing.expect(probe_unlocked);
+    const next = try pair(&t, @splat(46));
+    probe_calls = 0;
+    try attach(&t, next.claim, next.ingress, model, @splat(46), true);
+    try std.testing.expectEqual(@as(u32, 0), probe_calls);
+    try t.leave(io, next.claim);
+    try t.leave(io, next.ingress);
+    try t.leave(io, p.claim);
+    try t.leave(io, p.ingress);
+    probe_tracker = null;
+}
+const Race = struct {
+    t: *owners.Tracker,
+    p: Pair,
+    accepted: bool = false,
+    failure: ?anyerror = null,
+    fn run(self: *Race) void {
+        attach(self.t, self.p.claim, self.p.ingress, model, id, false) catch |err| {
+            self.failure = err;
+            return;
+        };
+        self.accepted = true;
+    }
+};
+test "preparation ingress concurrent attachment has one retained winner" {
+    try requireInterface();
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try init(&t, 168);
+    const p = try pair(&t, id);
+    const other = try t.enter(io);
+    var races = [_]Race{ .{ .t = &t, .p = p }, .{ .t = &t, .p = .{ .claim = p.claim, .ingress = other } } };
+    const first = try std.Thread.spawn(.{}, Race.run, .{&races[0]});
+    const second = try std.Thread.spawn(.{}, Race.run, .{&races[1]});
+    first.join();
+    second.join();
+    try std.testing.expect(races[0].accepted != races[1].accepted);
+    const winner: usize = if (races[0].accepted) 0 else 1;
+    try std.testing.expectEqual(error.PreparationClaimUsed, races[1 - winner].failure.?);
+    try std.testing.expectEqual(@as(usize, 2), t.correlationSnapshot(io, id).owners);
+    try std.testing.expectEqual(@as(usize, 3), t.snapshot(io).owned);
+    try t.leave(io, p.claim);
+    try t.leave(io, races[winner].p.ingress);
+    try std.testing.expectEqual(@as(usize, 1), t.snapshot(io).owned);
+    try t.leave(io, races[1 - winner].p.ingress);
+}
+test "preparation ingress control original correlated claim remains" {
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = true };
+    try init(&t, 169);
+    const claim = try t.claimCorrelatedPreparation(io, model, id);
+    const s = t.correlationSnapshot(io, id);
+    try std.testing.expectEqual(claim.sequence, s.root_sequence);
+    try std.testing.expectEqual(@as(usize, 1), s.owners);
+    try t.leave(io, claim);
+}
+test "preparation ingress control diagnostic source stays unsupported" {
+    const io = std.testing.io;
+    var t: owners.Tracker = .{ .primary_guard = false };
+    try init(&t, 170);
+    try std.testing.expectError(error.UnsupportedSourceGuard, t.claimCorrelatedPreparation(io, model, id));
+    if (comptime @hasDecl(owners.Tracker, "attachPreparationIngress")) {
+        const token: owners.Token = .{ .slot = 0, .sequence = 1, .instance = @splat(170) };
+        try std.testing.expectError(error.UnsupportedSourceGuard, attach(&t, token, token, model, id, false));
+    }
+    try std.testing.expectEqual(@as(usize, 0), t.snapshot(io).owned);
+    try std.testing.expect(!t.knownUncertain(io));
+}

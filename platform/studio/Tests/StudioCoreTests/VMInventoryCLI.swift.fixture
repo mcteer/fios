@@ -1,0 +1,26 @@
+import Foundation
+import Darwin
+
+// Finite metadata-only CLI fixture. Never contacts a runtime or changes it.
+@main struct VMInventoryCLIFixture {
+    static func main() throws {
+        let env=ProcessInfo.processInfo.environment
+        guard let home=env["HOME"],home.hasPrefix("/"),env["PATH"]=="/usr/bin:/bin",
+              env["LANG"]=="C",env["LC_ALL"]=="C",
+              ["SSH_AUTH_SOCK","MLX_API_KEY","DYLD_INSERT_LIBRARIES","DOCKER_HOST","DOCKER_CONTEXT"].allSatisfy({env[$0]==nil}) else {exit(42)}
+        let args=Array(CommandLine.arguments.dropFirst()),directory=URL(fileURLWithPath:home)
+        let operation:String,output:String
+        switch args {
+        case ["status"]:
+            operation="status"
+            output=try String(contentsOf:directory.appendingPathComponent("status"),encoding:.utf8)
+        case ["config","get","memory_mib"]:operation="config";output="12288\n"
+        case ["list","--format","json"]:operation="list";output="[]\n"
+        default:exit(42)
+        }
+        let calls=directory.appendingPathComponent("calls")
+        var data=(try? Data(contentsOf:calls)) ?? Data()
+        data.append(Data((operation+"\n").utf8));try data.write(to:calls)
+        FileHandle.standardOutput.write(Data(output.utf8))
+    }
+}

@@ -1,0 +1,17 @@
+# Checked DS4 wrapper destruction
+
+This source increment preserves the existing inference engine and numerical paths. It changes ownership cleanup in the private reviewed-source composition only. It does not add an engine or enable installed native admission.
+
+The selected DS4 C source exposes `ds4_session_free_checked` and `ds4_engine_close_checked`. They return1 only after destruction; a refusal can leave the native object alive. The legacy void entry points discard this result. Previously the Zig bridge used those void functions and then destroyed its session/engine wrapper and owned paths regardless of refusal. In particular, a session refusal could leave a live native session while the caller proceeded to engine cleanup.
+
+With `fios_source_ds4=true`, the bridge uses the checked ABI through a fixed helper. Only result1 permits wrapper/path deallocation. Every other result latches a process-wide atomic uncertainty flag through the existing vendor `Shared` storage; later cleanup calls refuse without calling C. The existing DS4 negative backend composition includes this latch, so the adapter's existing cleanup checks fence and retain its remaining state. Wrapper allocation-failure cleanup also uses the checked helper, and engine-path error cleanup retains paths after a refusal. There is no latch reset or reconstruction from zero counts.
+
+With the reviewed source option absent/false, the bridge retains the existing void ABI and ordinary cleanup behavior. The new checked symbols must not become a dependency of the ordinary prebuilt composition. Its regression executable therefore supplies no checked C symbols at all. The FFI file remains a mechanical declaration mirror; the helper owns the conditional behavior.
+
+The regression fixture imports the actual bridge, helper and FFI. Explicit C cleanup substitutes operate on dummy handles, and a counting allocator measures whether wrappers and exact model/MTP paths are freed. Separate processes cover session refusal, engine refusal, an unexpected result2, successful destruction, the unselected legacy ABI, and session-wrapper allocation failure after native creation in Debug and ReleaseSafe. Refusal checks also exercise the actual negative backend composition with independent C negative getters explicitly returning0. Original-wrapper controls must fail the allocator assertion before reading freed storage. The fixture disposes only its own allocations after successful retention assertions; it never frees a real native object or clears native uncertainty.
+
+A separately compiled unit reports a refusal through the same host-owned latch. A plain module-global negative control reproduces the split state in both build modes; it must fail before the shared-storage candidate passes.
+
+The strict checker binds a four-file parent projection, reverses/reapplies the patch, records its Zig dependency closure, denies network access and verifies inputs after the run. The inert Metal module is a declared fixture substitute: no kernel extraction, engine open, model load or device operation executes. These tests are component evidence, not whole-repository/native provenance or physical fault acceptance.
+
+Concurrency of independently initiated destruction, every engine-open failure path, complete all-client coverage, actual installed lifecycle, native terminal/quiescence proofs and atomic admission remain separate unfinished work. A successful checked destruction or zero negative flag is not an inference terminal receipt and cannot release a manager claim.

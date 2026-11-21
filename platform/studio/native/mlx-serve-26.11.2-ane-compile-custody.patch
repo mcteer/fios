@@ -1,0 +1,280 @@
+diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m
+index 48aa143..db3dc7d 100644
+--- a/lib/ane/ane_bridge.m
++++ b/lib/ane/ane_bridge.m
+@@ -20,9 +20,27 @@
+ #include <stdint.h>
+ static _Atomic(uint32_t) fios_ane_flags;
+ static pthread_mutex_t fios_ane_mutex = PTHREAD_MUTEX_INITIALIZER;
+-enum { FIOS_ANE_PARENT = 1u, FIOS_ANE_REQUEST = 2u, FIOS_ANE_EVAL = 4u, FIOS_ANE_UNLOAD = 8u };
++enum { FIOS_ANE_PARENT = 1u, FIOS_ANE_REQUEST = 2u, FIOS_ANE_EVAL = 4u, FIOS_ANE_UNLOAD = 8u, FIOS_ANE_LOAD = 16u, FIOS_ANE_COMPILE = 32u, FIOS_ANE_CONSTRUCTOR = 64u };
+ static void fios_ane_fence(uint32_t reason) { atomic_fetch_or_explicit(&fios_ane_flags, reason, memory_order_acq_rel); }
+ #endif
++#ifdef FIOS_ANE_SOURCE
++/* Process-lifetime quarantine of declared Objective-C owners after a reported
++ * refusal. There is deliberately no local release/reset or terminal claim. */
++static NSMutableArray *fios_ane_compile_quarantine(void) {
++    static NSMutableArray *graphs;
++    static dispatch_once_t once;
++    dispatch_once(&once, ^{ graphs=[NSMutableArray array]; });
++    return graphs;
++}
++static void fios_ane_keep_compile_graph(NSArray *owners) {
++    NSMutableArray *graphs=fios_ane_compile_quarantine();
++    @synchronized(graphs) { [graphs addObject:owners]; }
++}
++static void fios_ane_release_compile_reservation(NSArray *owners) {
++    NSMutableArray *graphs=fios_ane_compile_quarantine();
++    @synchronized(graphs) { [graphs removeObjectIdenticalTo:owners]; }
++}
++#endif
+ /* Fixed readonly negative evidence; never initializes a framework or worker. */
+ uint32_t msv_ane_source_uncertainty(void) {
+ #ifdef FIOS_ANE_SOURCE
+@@ -434,14 +452,32 @@ static BOOL bridge_unload(id model, NSError **failure) {
+ 
+ /* Load `model`, again after a pause when the runtime refuses. */
+ static BOOL bridge_load(id model, NSDictionary *options, NSError **failure) {
++#ifdef FIOS_ANE_SOURCE
++    *failure=nil;
++    if (msv_ane_source_uncertainty()) return NO;
++    /* Reserve original strong owners before any foreign load call. Refusal
++     * requires no allocation to retain the graph. */
++    NSArray *load_owners=@[model,options];
++    fios_ane_keep_compile_graph(load_owners);
++    *failure=nil;
++    if (msv_ane_source_uncertainty()) return NO;
++#endif
+     for (int attempt = 0;; attempt++) {
+         *failure = nil;
+         if (((BOOL(*)(id, SEL, unsigned int, id, NSError **))objc_msgSend)(
+                 model, @selector(loadWithQoS:options:error:), 21, options, failure)) {
+             bridge_mark_resident(model, true);
++#ifdef FIOS_ANE_SOURCE
++            if (!msv_ane_source_uncertainty()) fios_ane_release_compile_reservation(load_owners);
++#endif
+             return YES;
+         }
++#ifdef FIOS_ANE_SOURCE
++        fios_ane_fence(FIOS_ANE_LOAD);
++        return NO;
++#else
+         if (attempt + 1 >= BRIDGE_BARE_TRIES) return NO;
++#endif
+         usleep(200000);
+     }
+ }
+@@ -462,10 +498,15 @@ static bool fios_ane_pid_metadata_allows_reap(pid_t owner, pid_t self,
+ /* Compile (or restore from the compile cache) and load the program in `descriptor` as `model`;
+  * the staging directory it serves from is returned in `staging` (the framework's contract: it
+  * stays for the model's life). Returns false with `error` set and nothing left on disk. */
+-static bool bridge_compile_load(const char *name, id model, NSData *program,
++static bool bridge_compile_load(const char *name, id descriptor, id model, NSData *program,
+                                 NSData *weights, NSDictionary *compile_options,
+                                 NSDictionary *options, NSString **staging, bool *cache_hit,
+                                 char *error, size_t error_size) {
++#ifdef FIOS_ANE_SOURCE
++    NSArray *constructor_owners=@[descriptor,model,program,weights,compile_options,options];
++    fios_ane_keep_compile_graph(constructor_owners);
++    if (msv_ane_source_uncertainty()) return false;
++#endif
+     NSError *failure = nil;
+     NSString *identifier = ((id(*)(id, SEL))objc_msgSend)(
+         model, @selector(hexStringIdentifier));
+@@ -513,8 +554,11 @@ static bool bridge_compile_load(const char *name, id model, NSData *program,
+     NSString *directory = [NSTemporaryDirectory() stringByAppendingPathComponent:identifier];
+     NSFileManager *files = [NSFileManager defaultManager];
+ #ifdef FIOS_ANE_SOURCE
++    NSArray *staging_owner=@[directory];
++    fios_ane_keep_compile_graph(staging_owner);
+     bool cached = false;
+     if (!fios_ane_prepare_staging(identifier, directory, &cached)) {
++        fios_ane_fence(FIOS_ANE_CONSTRUCTOR);
+         bridge_fail(error, error_size, "ANE %s staging unavailable; existing/partial trees retained", name);
+         return false;
+     }
+@@ -530,6 +574,10 @@ static bool bridge_compile_load(const char *name, id model, NSData *program,
+               error:nil];
+     bool loaded = cached && bridge_load(model, options, &failure);
+     if (cached && !loaded) {
++#ifdef FIOS_ANE_SOURCE
++        bridge_fail(error,error_size,"ANE %s cached load refused; graph retained",name);
++        return false;
++#endif
+         failure = nil;
+         bridge_write_sources(directory, program, weights);
+     }
+@@ -539,6 +587,9 @@ static bool bridge_compile_load(const char *name, id model, NSData *program,
+             failure = nil;
+             compiled = ((BOOL(*)(id, SEL, unsigned int, id, NSError **))objc_msgSend)(
+                 model, @selector(compileWithQoS:options:error:), 21, compile_options, &failure);
++#ifdef FIOS_ANE_SOURCE
++            if (!compiled) { fios_ane_fence(FIOS_ANE_COMPILE);break; }
++#endif
+             if (!compiled && !bridge_retryable(failure) && attempt + 1 >= BRIDGE_BARE_TRIES) break;
+         }
+         if (!compiled) {
+@@ -547,15 +598,25 @@ static bool bridge_compile_load(const char *name, id model, NSData *program,
+             if (failure && failure.userInfo[NSUnderlyingErrorKey])
+                 bridge_fail(error, error_size, "ANE %s compile failed: %s", name,
+                             [failure.userInfo[NSUnderlyingErrorKey] description].UTF8String);
++#ifndef FIOS_ANE_SOURCE
+             [files removeItemAtPath:directory error:nil];
++#endif
+             return false;
+         }
+         if (!bridge_load(model, options, &failure)) {
+             bridge_fail(error, error_size, "ANE %s load failed: %s", name,
+                         failure ? failure.localizedDescription.UTF8String : "?");
++#ifndef FIOS_ANE_SOURCE
+             [files removeItemAtPath:directory error:nil];
++#endif
+             return false;
+         }
++#ifdef FIOS_ANE_SOURCE
++        if (msv_ane_source_uncertainty()) {
++            bridge_fail(error,error_size,"ANE %s load source uncertain; graph retained",name);
++            return false;
++        }
++#endif
+         bridge_cache_prune();
+         bridge_cache_store(identifier, directory);
+     }
+@@ -570,10 +631,19 @@ static bool bridge_compile_load(const char *name, id model, NSData *program,
+      * passes a single immediate eval and then fails later evals with
+      * "ANEProgramProcessRequestDirect ... Program Inference error"
+      * (measured, 352 failures over one 32k benchmark serve). */
++#ifndef FIOS_ANE_SOURCE
+     [files removeItemAtPath:[directory stringByAppendingPathComponent:@"weights"] error:nil];
+     [files removeItemAtPath:[directory stringByAppendingPathComponent:@"model.mil"] error:nil];
++#endif
+     *staging = directory;
+     *cache_hit = loaded;
++#ifdef FIOS_ANE_SOURCE
++    if (msv_ane_source_uncertainty()) return false;
++    /* Drop only the extra CPU reservation. The successful caller still owns
++     * the original model/descriptor graph and its staging lease. */
++    fios_ane_release_compile_reservation(staging_owner);
++    fios_ane_release_compile_reservation(constructor_owners);
++#endif
+     return true;
+ }
+ 
+@@ -596,6 +666,9 @@ msv_ane_model *msv_ane_model_create(const char *name, const char *mil,
+                                   uint32_t input_count, IOSurfaceRef output,
+                                   uint32_t procedure_count, int ane_instance,
+                                   char *error, size_t error_size) {
++#ifdef FIOS_ANE_SOURCE
++    if (msv_ane_source_uncertainty()) { free(weight_bytes_owned);return NULL; }
++#endif
+     if (!procedure_count) procedure_count = 1;
+     if (!msv_ane_bridge_available()) {
+         free(weight_bytes_owned);
+@@ -632,7 +705,7 @@ msv_ane_model *msv_ane_model_create(const char *name, const char *mil,
+         double started = bridge_seconds();
+         NSString *directory = nil;
+         bool loaded = false;
+-        if (!bridge_compile_load(name, model, program, weights, options, options, &directory,
++        if (!bridge_compile_load(name, descriptor, model, program, weights, options, options, &directory,
+                                  &loaded, error, error_size)) {
+             free(handle);
+             return NULL;
+@@ -793,6 +866,7 @@ struct msv_ane_program {
+     uint32_t fios_children;
+     bool fios_close_attempted;
+     struct msv_ane_request *fios_requests;
++    void *fios_constructor_inputs;
+ #endif
+     void *models;      /* NSArray of _ANEInMemoryModel, one per instance */
+     void *attributes;  /* NSDictionary: the first instance's modelAttributes */
+@@ -916,6 +990,9 @@ msv_ane_program *msv_ane_program_create(const char *name, const char *mil,
+                                         void *weights_owned, size_t weight_bytes,
+                                         uint32_t instances, const uint32_t *ane_hints,
+                                         char *error, size_t error_size) {
++#ifdef FIOS_ANE_SOURCE
++    if (msv_ane_source_uncertainty()) { free(weights_owned);return NULL; }
++#endif
+     if (!instances) instances = 1;
+     if (!msv_ane_bridge_available()) {
+         free(weights_owned);
+@@ -934,6 +1011,11 @@ msv_ane_program *msv_ane_program_create(const char *name, const char *mil,
+         id descriptor = bridge_descriptor(program, weights);
+         NSMutableArray *models = [NSMutableArray array];
+         NSMutableArray *options_list = [NSMutableArray array];
++#ifdef FIOS_ANE_SOURCE
++        p->models=(__bridge_retained void *)models;
++        p->options=(__bridge_retained void *)options_list;
++        p->fios_constructor_inputs=(__bridge_retained void *)@[program,weights,descriptor ?: [NSNull null]];
++#endif
+         double started = bridge_seconds();
+         for (uint32_t i = 0; i < instances; i++) {
+             NSDictionary *options = bridge_options(ane_hints ? (int)ane_hints[i] : 0);
+@@ -941,11 +1023,17 @@ msv_ane_program *msv_ane_program_create(const char *name, const char *mil,
+             id model = descriptor ? bridge_model(descriptor) : nil;
+             if (!model) {
+                 bridge_fail(error, error_size, "ANE %s model rejected", name);
++#ifdef FIOS_ANE_SOURCE
++                fios_ane_fence(FIOS_ANE_CONSTRUCTOR);
++#endif
+                 goto fail;
+             }
++#ifdef FIOS_ANE_SOURCE
++            [models addObject:model];
++#endif
+             if (i == 0) {
+                 NSString *directory = nil;
+-                if (!bridge_compile_load(name, model, program, weights, @{}, options, &directory,
++                if (!bridge_compile_load(name, descriptor, model, program, weights, @{}, options, &directory,
+                                          &p->cache_hit, error, error_size))
+                     goto fail;
+                 p->staging_directory = strdup(directory.UTF8String);
+@@ -960,11 +1048,15 @@ msv_ane_program *msv_ane_program_create(const char *name, const char *mil,
+                     goto fail;
+                 }
+             }
++#ifndef FIOS_ANE_SOURCE
+             [models addObject:model];
++#endif
+         }
+         p->compile_seconds = bridge_seconds() - started;
++#ifndef FIOS_ANE_SOURCE
+         p->models = (__bridge_retained void *)models;
+         p->options = (__bridge_retained void *)options_list;
++#endif
+         {
+             id inner = bridge_inner_model(models[0]);
+             NSDictionary *attrs = [inner respondsToSelector:@selector(modelAttributes)] ?
+@@ -978,10 +1070,24 @@ msv_ane_program *msv_ane_program_create(const char *name, const char *mil,
+         }
+         return p;
+     fail:
++#ifdef FIOS_ANE_SOURCE
++        /* The raw parent and its original arrays/inputs stay owned; a local
++         * constructor return cannot release independent native uncertainty. */
++        if (msv_ane_source_uncertainty()) return NULL;
++#endif
+         for (id m in models) {
+             NSError *failure = nil;
+-            bridge_unload(m, &failure);
++            if (!bridge_unload(m, &failure)) {
++#ifdef FIOS_ANE_SOURCE
++                fios_ane_fence(FIOS_ANE_UNLOAD);return NULL;
++#endif
++            }
+         }
++#ifdef FIOS_ANE_SOURCE
++        if (p->models) { id value=(__bridge_transfer id)p->models;(void)value; }
++        if (p->options) { id value=(__bridge_transfer id)p->options;(void)value; }
++        if (p->fios_constructor_inputs) { id value=(__bridge_transfer id)p->fios_constructor_inputs;(void)value; }
++#endif
+         if (p->staging_directory) {
+             if (bridge_staging_release(p->staging_directory))
+                 [[NSFileManager defaultManager] removeItemAtPath:@(p->staging_directory) error:nil];
+@@ -1048,6 +1154,7 @@ bool msv_ane_program_try_free(msv_ane_program *p) {
+         if (p->models) { id value=(__bridge_transfer id)p->models;p->models=NULL;(void)value; }
+         if (p->attributes) { id value=(__bridge_transfer id)p->attributes;p->attributes=NULL;(void)value; }
+         if (p->options) { id value=(__bridge_transfer id)p->options;p->options=NULL;(void)value; }
++        if (p->fios_constructor_inputs) { id value=(__bridge_transfer id)p->fios_constructor_inputs;p->fios_constructor_inputs=NULL;(void)value; }
+         if (p->staging_directory) {
+             if (bridge_staging_release(p->staging_directory))
+                 [[NSFileManager defaultManager] removeItemAtPath:@(p->staging_directory) error:nil];

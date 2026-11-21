@@ -1,0 +1,69 @@
+--- a/src/sdk/weights/streamed/sdk_ext/expert/stream.zig
++++ b/src/sdk/weights/streamed/sdk_ext/expert/stream.zig
+@@ -4,6 +4,9 @@
+ 
+ const std = @import("std");
+ const builtin = @import("builtin");
++const fios_host = @import("mlx_host");
++const fios_copy_origins = if (@hasDecl(fios_host, "fios_warm_request_owners_enabled")) fios_host.fios_warm_request_owners_enabled else false;
++const fios_owners = if (fios_copy_origins) fios_host.fios_warm_request_owners else struct {};
+ const mlx = @import("sdk").mlx;
+ const expert = @import("../expert.zig");
+ const expert_io = @import("io.zig");
+@@ -1215,7 +1218,7 @@
+             const Copy = struct { dst: []u8, src: []const u8 };
+ 
+             /// One promotion's copies, in submission order (`seq`).
+-            const Batch = struct { copies: []Copy, bytes: u64, seq: u64 };
++            const Batch = struct { copies: []Copy, bytes: u64, seq: u64, origins: ?*anyopaque = null };
+ 
+             /// The thread that runs the batches in order, its queue and the fences: `done` is the last batch copied,
+             /// `window_seq[w]` the last batch reading from transient window `w`, `layer_seq` the last writing a layer's
+@@ -1241,8 +1244,16 @@
+                         if (c.queue.items.len == 0) return;
+                         const b = c.queue.orderedRemove(0);
+                         c.mutex.unlock(io);
++                        const scope = if (comptime fios_copy_origins) fios_owners.fios_native_request_owners_enter(b.origins) else 0;
++                        if (comptime fios_copy_origins) if (scope == 0) fios_owners.fios_native_request_owners_uncertain();
++                        // Pure CPU copies still finish on a fenced source; original references stay quarantined.
+                         copyParallel(b.copies, b.bytes);
+                         std.heap.c_allocator.free(b.copies);
++                        if (comptime fios_copy_origins) {
++                            if (scope != 0 and fios_owners.fios_native_request_owners_leave(scope) != 0)
++                                fios_owners.fios_native_request_owners_uncertain();
++                            fios_owners.fios_native_request_owners_release(b.origins);
++                        }
+                         c.mutex.lockUncancelable(io);
+                         c.done = b.seq;
+                         c.cond.broadcast(io);
+@@ -1264,6 +1275,14 @@
+                 const c = &self.copier;
+                 const ca = std.heap.c_allocator;
+                 const owned = ca.dupe(Copy, copies) catch return copyParallel(copies, bytes);
++                const origins = if (comptime fios_copy_origins) fios_owners.fios_native_request_owners_capture() else null;
++                if (comptime fios_copy_origins) if (origins == null) {
++                    fios_owners.fios_native_request_owners_uncertain();
++                    ca.free(owned);
++                    return copyParallel(copies, bytes);
++                };
++                var transferred = false;
++                defer if (comptime fios_copy_origins) if (!transferred) fios_owners.fios_native_request_owners_release(origins);
+                 if (c.thread == null) {
+                     c.layer_seq.resize(ca, self.layers.len) catch {
+                         ca.free(owned);
+@@ -1277,13 +1296,14 @@
+                 }
+                 c.mutex.lockUncancelable(Copier.io);
+                 defer c.mutex.unlock(Copier.io);
+-                c.queue.append(ca, .{ .copies = owned, .bytes = bytes, .seq = c.submitted + 1 }) catch {
++                c.queue.append(ca, .{ .copies = owned, .bytes = bytes, .seq = c.submitted + 1, .origins = origins }) catch {
+                     c.mutex.unlock(Copier.io);
+                     copyParallel(owned, bytes);
+                     ca.free(owned);
+                     c.mutex.lockUncancelable(Copier.io);
+                     return;
+                 };
++                transferred = true;
+                 c.submitted += 1;
+                 const cap = self.layers[layer].policy.capacity;
+                 for (items) |it| c.window_seq[(it.from - cap) / self.max_route_ids] = c.submitted;

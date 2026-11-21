@@ -46,6 +46,30 @@ test('host readiness is independent of stale gateway listings; recovery is exact
   assert.ok(calls.every(c=>c.options.redirect==='error'));
 });
 
+test('an advertised Bonjour alias uses only its exact configured Studio endpoint', async () => {
+  const base='http://gateway/v1',studio='http://fios-edge-b.local:11234/v1';
+  const advertised={id:'org/model@Mac.home',lan_peer:'Mac.home',capabilities:['chat']};
+  const legacy={id:'org/model@fios-edge-b.lab',lan_peer:'fios-edge-b.lab',capabilities:['chat']};
+  let up=true;
+  const fetchImpl=async (url,{headers})=>{
+    const target=new URL(url),isGateway=target.hostname==='gateway';
+    assert.equal(target.hostname,isGateway?'gateway':'fios-edge-b.local');
+    assert.equal(headers.Authorization,isGateway?'Bearer MOCK_GATEWAY_KEY':undefined);
+    if(!isGateway&&!up) throw new Error('offline');
+    return Response.json(target.pathname==='/health'?{status:'ok'}:{data:isGateway?[advertised,legacy]:[{id:'org/model',capabilities:['chat']}]});
+  };
+  const peers={'fios-edge-b':studio};
+  const options={base,key:'MOCK_GATEWAY_KEY',fetchImpl};
+  const unmapped=await discover({...options,peers});
+  assert.deepEqual(unmapped.models.map(m=>[m.id,m.reason]),[[advertised.id,'host_unverified'],[legacy.id,'host_unverified']]);
+  const mapped={...peers,'Mac.home':studio};
+  const recovered=await discover({...options,peers:mapped});
+  assert.deepEqual(recovered.models.map(m=>[m.id,m.availability]),[[advertised.id,'available'],[legacy.id,'unknown']]);
+  up=false;
+  const unavailable=await discover({...options,peers:mapped});
+  assert.deepEqual(unavailable.models.map(m=>[m.id,m.reason]),[[advertised.id,'host_down'],[legacy.id,'host_unverified']]);
+});
+
 test('unknown peers, malformed/oversized catalogs, auth and probe timeouts fail closed', async () => {
   const base='http://gateway/v1';
   const goodHealth = url => url.endsWith('/health');

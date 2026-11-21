@@ -1,0 +1,247 @@
+diff --git a/src/engines/mlx/runtime/model_state.zig b/src/engines/mlx/runtime/model_state.zig
+index b772df0..cfd6958 100644
+--- a/src/engines/mlx/runtime/model_state.zig
++++ b/src/engines/mlx/runtime/model_state.zig
+@@ -10,7 +10,7 @@ const LoadedModel = registry.LoadedModel;
+ pub fn freeMlx(self: *LoadedModel) void {
+     self.fios_local_free_finished = false;
+     const io = std.Io.Threaded.global_single_threaded.io();
+-    if (registry.cleanupUncertain(io)) return;
++    if (self.fios_load_uncertain.load(.acquire) or registry.cleanupUncertain(io)) return;
+     // Cache snapshots call into their plugin binding, which the transformer owns.
+     if (self.prefix_cache) |hc| {
+         hc.deinit();
+@@ -79,7 +79,7 @@ pub fn freeMlx(self: *LoadedModel) void {
+ /// mlx frees happen on the inference thread.
+ pub fn unloadResident(self: *LoadedModel) void {
+     const io = std.Io.Threaded.global_single_threaded.io();
+-    if (registry.cleanupUncertain(io)) return;
++    if (self.fios_load_uncertain.load(.acquire) or registry.cleanupUncertain(io)) return;
+     // A Thunderbolt pair's model unloads on both Macs; its next load plans again.
+     if (distributed.serves(self.path)) distributed.release();
+     if (registry.cleanupUncertain(io) or !self.tryCloseEngine()) return;
+@@ -108,3 +108,62 @@ pub fn unloadResident(self: *LoadedModel) void {
+     // This private bit records a local return, never native completion.
+     self.fios_local_unload_finished = true;
+ }
++
++test "fios current raw MLX state API preserves individual pre-epoch uncertainty" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../../fios/request_ownership.zig");
++    const shell = @import("../modules/shell.zig").moduleShell;
++    const Transformer = @import("../transformer.zig").Transformer;
++    const Config = @import("../../../sdk/config/model.zig").ModelConfig;
++    const mlxc = @import("../../../mlx/ffi.zig");
++    owners.shared().primary_guard = false;
++    const Trace = struct {
++        transformer: usize = 0,
++        freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.transformer) self.freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    for ([_]bool{ false, true }) |unknown| {
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const allocator = trace.allocator();
++        const reg = try registry.ModelRegistry.init(allocator, io, null, 2, 0, null);
++        const entry = try reg.registerStub("fixture/raw-preinit-cleanup", "/fixture/no-model", 123);
++        const xfm = try allocator.create(Transformer);
++        const config = std.mem.zeroInit(Config, .{ .model_type = "llama", .num_hidden_layers = 0 });
++        xfm.* = try shell(allocator, config, mlxc.gpuStream());
++        trace.transformer = @intFromPtr(xfm);
++        entry.transformer = xfm;
++        entry.bytes_resident = 123;
++        if (unknown) {
++            reg.mutex.lockUncancelable(io);
++            reg.markLoadUncertainLocked(entry);
++            reg.mutex.unlock(io);
++        }
++        freeMlx(entry);
++        if (unknown) {
++            if (trace.freed) std.debug.print("FIO_CURRENT_RAW_MLX_FREE_DROPPED_PER_MODEL_CUSTODY\n", .{});
++            try std.testing.expect(!trace.freed); // Witness before graph access.
++            try std.testing.expect(entry.transformer == xfm and !entry.fios_local_free_finished);
++            unloadResident(entry);
++            try std.testing.expect(!trace.freed and entry.transformer == xfm);
++            try std.testing.expectEqual(@as(u64, 123), entry.bytes_resident);
++            try std.testing.expect(owners.shared().knownUncertain(io));
++        } else {
++            try std.testing.expect(trace.freed and entry.transformer == null and entry.fios_local_free_finished);
++            unloadResident(entry);
++            try std.testing.expectEqual(@as(u64, 0), entry.bytes_resident);
++            reg.deinit();
++            page.destroy(trace);
++        }
++    }
++}
+diff --git a/src/host/media_jobs/plugin/engine.zig b/src/host/media_jobs/plugin/engine.zig
+index 6bcdfaa..81bb595 100644
+--- a/src/host/media_jobs/plugin/engine.zig
++++ b/src/host/media_jobs/plugin/engine.zig
+@@ -71,33 +71,41 @@ pub const Engine = struct {
+ 
+     /// Loads the pack at `model_dir` through `t` on stream `s`; a refusal is logged with the plugin's reason.
+     pub fn load(io: std.Io, allocator: std.mem.Allocator, model_dir: []const u8, t: *const MediaTable, s: mlx.mlx_stream) !*Engine {
+-        if (model_dir.len == 0 or !std.fs.path.isAbsolute(model_dir)) return error.FileNotFound; // openDirAbsolute UB class
++        const options = @import("build_options");
++        const cleanup = @import("../../../fios/current_cleanup_uncertainty.zig");
++        if (cleanup.known(io, options.fios_source_sdk, options.llama_engine)) return error.NativeCleanupUncertain;
++        if (model_dir.len == 0 or !std.fs.path.isAbsolute(model_dir)) return error.FileNotFound;
+         var dir = try std.Io.Dir.openDirAbsolute(io, model_dir, .{});
+-        errdefer dir.close(io);
++        errdefer if (!cleanup.known(io, options.fios_source_sdk, options.llama_engine)) dir.close(io);
+         const self = try allocator.create(Engine);
+-        errdefer allocator.destroy(self);
+-        const fs: FsPackDir = .{ .io = io, .root = dir };
+-        const pd = fs.packDir();
+-        const m = machine();
++        errdefer if (!cleanup.known(io, options.fios_source_sdk, options.llama_engine)) allocator.destroy(self);
+         const window = if (t.modality == .decision) gen.decisionBatchWindowUs() else 0;
++        // Associate owned directory/diagnostic fields before the callback. A
++        // refusal retains this shell; its partially initialized handle is never
++        // reusable. Public LoadCtx remains valid during load only.
++        self.* = .{ .allocator = allocator, .io = io, .table = t, .handle = undefined, .dir = dir, .fs = .{ .io = io, .root = dir }, .pack = undefined, .machine = machine(), .batch_window_us = window };
++        self.pack = self.fs.packDir();
+         var settings_buf: [128]u8 = undefined;
+         const settings = if (t.modality == .decision) gen.decisionSettingsJson(&settings_buf, window) else "";
++        if (cleanup.known(io, options.fios_source_sdk, options.llama_engine)) return error.NativeCleanupUncertain;
+         var why: abi.Verdict = .{};
+-        const handle = t.load(&.{
++        const opened = t.load(&.{
+             .model_dir = .of(model_dir),
+-            .dir = &pd,
++            .dir = &self.pack,
+             .settings_json = .of(settings),
+             .stream = .{ .ctx = s.ctx },
+-            .machine = &m,
+-        }, &why) orelse {
++            .machine = &self.machine,
++        }, &why);
++        if (opened) |handle| self.handle = handle;
++        if (cleanup.known(io, options.fios_source_sdk, options.llama_engine)) return error.NativeCleanupUncertain;
++        if (opened == null) {
+             log.err("[gen] {s} does not load: {s}\n", .{ t.name.slice(), why.why.slice() });
+             if (why.code == .busy) return error.OutOfMemory;
+             refused_load = why.why.slice();
+             return error.MediaPluginLoadFailed;
+-        };
+-        self.* = .{ .allocator = allocator, .io = io, .table = t, .handle = handle, .dir = dir, .fs = fs, .pack = undefined, .machine = m, .batch_window_us = window };
+-        self.pack = self.fs.packDir();
+-        t.caps(&pd, &self.caps);
++        }
++        t.caps(&self.pack, &self.caps);
++        if (cleanup.known(io, options.fios_source_sdk, options.llama_engine)) return error.NativeCleanupUncertain;
+         log.info("[gen] {s} ready through its plugin table\n", .{t.name.slice()});
+         if (t.modality == .decision) log.info("[decision] {s} engine ready\n", .{t.name.slice()});
+         return self;
+@@ -204,3 +212,101 @@ test "fios current media close retains callback uncertainty and directory" {
+         }
+     }
+ }
++
++test "fios current media load refuses uncertainty before publication and retains directory" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../../fios/request_ownership.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(233));
++    const Trace = struct {
++        wrapper: usize = 0,
++        freed: bool = false,
++        allocations: usize = 0,
++        fn alloc(raw: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            const result = std.heap.page_allocator.rawAlloc(n, alignment, ret);
++            self.allocations += 1;
++            if (result) |memory| {
++                if (n == @sizeOf(Engine)) self.wrapper = @intFromPtr(memory);
++            }
++            return result;
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.wrapper) self.freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        var current: ?*@This() = null;
++        io: std.Io,
++        unknown: bool,
++        loads: usize = 0,
++        unloads: usize = 0,
++        caps_calls: usize = 0,
++        fn load(_: *const abi.LoadCtx, _: *abi.Verdict) callconv(.c) ?*anyopaque {
++            const self = current.?;
++            self.loads += 1;
++            if (self.unknown) owners.shared().fence(self.io);
++            return self;
++        }
++        fn unload(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.unloads += 1;
++        }
++        fn caps(_: *const abi.PackDir, out: *abi.MediaCaps) callconv(.c) void {
++            current.?.caps_calls += 1;
++            out.* = .{};
++        }
++    };
++    const media_table = try page.create(MediaTable);
++    media_table.* = undefined;
++    media_table.name = .of("fixture-media-metadata");
++    media_table.modality = .image;
++    media_table.load = Probe.load;
++    media_table.unload = Probe.unload;
++    media_table.caps = Probe.caps;
++    for ([_]bool{ false, true }) |unknown| {
++        const temp = try page.create(std.testing.TmpDir);
++        temp.* = std.testing.tmpDir(.{});
++        const path = try temp.dir.realPathFileAlloc(io, ".", page);
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .unknown = unknown };
++        Probe.current = probe;
++        const result = Engine.load(io, trace.allocator(), path, media_table, .{ .ctx = null });
++        if (unknown) {
++            if (result) |_| {
++                std.debug.print("FIO_CURRENT_MEDIA_PUBLISHED_UNCERTAIN_LOAD\n", .{});
++                return error.TestExpectedError;
++            } else |err| try std.testing.expectEqual(error.NativeCleanupUncertain, err);
++            try std.testing.expect(!trace.freed and trace.wrapper != 0);
++            const engine: *Engine = @ptrFromInt(trace.wrapper);
++            _ = try engine.dir.stat(io);
++            try std.testing.expectEqual(@as(usize, 1), probe.loads);
++            try std.testing.expectEqual(@as(usize, 0), probe.caps_calls);
++            try std.testing.expectEqual(@as(usize, 0), probe.unloads);
++            try std.testing.expect(!engine.tryDeinit());
++            const before = trace.allocations;
++            try std.testing.expectError(error.NativeCleanupUncertain, Engine.load(io, trace.allocator(), path, media_table, .{ .ctx = null }));
++            try std.testing.expectEqual(before, trace.allocations);
++            try std.testing.expectEqual(@as(usize, 1), probe.loads);
++            try std.testing.expect(!trace.freed);
++            // Keep the unknown wrapper, directory, temp parent and path.
++        } else {
++            const engine = try result;
++            _ = try engine.dir.stat(io);
++            try std.testing.expect(engine.tryDeinit());
++            try std.testing.expect(trace.freed and probe.loads == 1 and probe.caps_calls == 1 and probe.unloads == 1);
++            page.free(path);
++            temp.cleanup();
++            page.destroy(temp);
++            page.destroy(probe);
++            page.destroy(trace);
++        }
++    }
++}

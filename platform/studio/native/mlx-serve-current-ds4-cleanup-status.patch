@@ -1,0 +1,13 @@
+diff --git a/src/fios/current_backend_fences.zig b/src/fios/current_backend_fences.zig
+index 8fc69b2..a1f77b4 100644
+--- a/src/fios/current_backend_fences.zig
++++ b/src/fios/current_backend_fences.zig
+@@ -18,7 +18,7 @@ pub fn read() protocol.CurrentBackendFenceReadings {
+         .sdk_uncertain = if (comptime enabled("fios_source_sdk")) Source.fios_current_sdk_known_uncertain() != 0 else null,
+         .llama_uncertain = if (comptime enabled("llama_engine")) Source.mlx_llama_source_uncertainty() != 0 else null,
+         .streamed_pool_uncertain = if (comptime enabled("mlx_stream")) Source.fios_q3ld_cleanup_uncertain() != 0 else null,
+-        .ds4_host_uncertain = if (comptime enabled("fios_source_ds4")) Source.ds4_host_source_uncertainty() != 0 else null,
++        .ds4_host_uncertain = if (comptime enabled("fios_source_ds4")) (@import("current_ds4_checked_cleanup.zig").known() or Source.ds4_host_source_uncertainty() != 0) else null,
+         .ds4_gpu_uncertain = if (comptime enabled("fios_source_ds4")) Source.ds4_gpu_source_uncertainty() != 0 else null,
+         .ane_reported_uncertain = if (comptime enabled("fios_source_ane")) @import("current_ane_run_uncertainty.zig").known() else null,
+         .ane_native_uncertain = if (comptime enabled("fios_source_ane")) Source.msv_ane_source_uncertainty() != 0 else null,

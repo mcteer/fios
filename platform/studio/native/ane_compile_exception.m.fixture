@@ -1,0 +1,92 @@
+// Actual constructor helper with CPU stand-ins and private bounded fixture files.
+#import <Foundation/Foundation.h>
+#include <stdlib.h>
+// Explicit filesystem-location port: Foundation ignores TMPDIR on this OS.
+// All actual constructor/cache logic operates on this private fixture directory.
+static NSString *fios_fixture_temporary_directory(void) {
+    const char *value=getenv("TMPDIR");return value?@(value):nil;
+}
+#define NSTemporaryDirectory fios_fixture_temporary_directory
+// ACTUAL_BRIDGE_INCLUDE
+#undef NSTemporaryDirectory
+static unsigned fixture_scenario,identifier_calls,compile_calls,load_calls;
+static bool fixture_at_compile;
+static NSString *fixture_identifier,*fixture_directory;
+static void fixture_throw(void) {
+    @throw [NSException exceptionWithName:@"FiosOrdinaryFixtureException" reason:@"private CPU fixture" userInfo:nil];
+}
+@interface FiosCompileErrorMetadata:NSObject
+@end
+@implementation FiosCompileErrorMetadata
+- (NSString *)hexStringIdentifier {
+    ++identifier_calls;
+    if(!fixture_at_compile && fixture_scenario==1)fixture_throw();
+#ifdef FIOS_ANE_SOURCE
+    if(!fixture_at_compile && fixture_scenario==3)fios_ane_fence(FIOS_ANE_CONSTRUCTOR);
+#endif
+    return fixture_identifier;
+}
+- (BOOL)compileWithQoS:(unsigned)qos options:(id)options error:(NSError **)error {
+    (void)qos;(void)options;++compile_calls;
+    if(fixture_at_compile && fixture_scenario==1)fixture_throw();
+    if(fixture_scenario==2){*error=[NSError errorWithDomain:@"FiosCPUFixture" code:1 userInfo:nil];return NO;}
+#ifdef FIOS_ANE_SOURCE
+    if(fixture_at_compile && fixture_scenario==3)fios_ane_fence(FIOS_ANE_CONSTRUCTOR);
+#endif
+    return [[NSData dataWithBytes:"a" length:1] writeToFile:[fixture_directory stringByAppendingPathComponent:@"cpu.artifact"] atomically:YES];
+}
+- (BOOL)loadWithQoS:(unsigned)qos options:(id)options error:(NSError **)error {
+    (void)qos;(void)options;(void)error;++load_calls;return YES;
+}
+@end
+int fios_ane_compile_exception_fixture(const char *api,unsigned scenario) {
+    @autoreleasepool {
+        fixture_scenario=scenario;fixture_at_compile=strcmp(api,"compile")==0;
+        identifier_calls=compile_calls=load_calls=0;
+        const char *root_path=getenv("FIOS_ANE_FIXTURE_ROOT");
+        if(!root_path || !getenv("MLX_SERVE_ANE_CACHE_DIR"))return 12;
+        NSString *root=@(root_path),*tmp=fios_fixture_temporary_directory();
+        if(![root hasPrefix:@"/private/tmp/"] || ![tmp hasPrefix:[root stringByAppendingString:@"/"]] ||
+           ![@(getenv("MLX_SERVE_ANE_CACHE_DIR")) isEqualToString:[root stringByAppendingPathComponent:@"cache"]]){fprintf(stderr,"FIXTURE_PATH_REFUSAL root=%s tmp=%s cache=%s\n",root.UTF8String,tmp.UTF8String,getenv("MLX_SERVE_ANE_CACHE_DIR"));return 13;}
+        fixture_identifier=@"fios-constructor-cpu-fixture";
+        fixture_directory=[tmp stringByAppendingPathComponent:fixture_identifier];
+        NSFileManager *files=[NSFileManager defaultManager];
+        if([files fileExistsAtPath:fixture_directory])return 14;
+        FiosCompileErrorMetadata *value=[FiosCompileErrorMetadata new];
+        NSObject *descriptor=[NSObject new];NSData *program=[NSData dataWithBytes:"p" length:1],*weights=[NSData dataWithBytes:"w" length:1];
+#ifdef FIOS_ANE_SOURCE
+        const NSUInteger before=fios_ane_compile_quarantine().count;
+        if(scenario==4)fios_ane_fence(FIOS_ANE_CONSTRUCTOR);
+#endif
+        NSString *staging=nil;bool hit=false;char text[256]={0};int result=-1,caught=0;
+        @try {result=bridge_compile_load("fixture",descriptor,value,program,weights,@{},@{},&staging,&hit,text,sizeof(text));}
+        @catch(NSException *exception){(void)exception;caught=1;}
+#ifdef FIOS_ANE_SOURCE
+        if(scenario==1 && caught && !msv_ane_source_uncertainty()) {
+            fprintf(stderr,"ANE_CONSTRUCTOR_EXCEPTION_ESCAPES_WITHOUT_NEGATIVE_FENCE\n");return 1;
+        }
+        if(caught || result!=(scenario==0))return 2;
+        if(scenario==0) {
+            if(msv_ane_source_uncertainty() || hit || ![staging isEqualToString:fixture_directory] ||
+               identifier_calls!=1 || compile_calls!=1 || load_calls!=1 ||
+               fios_ane_compile_quarantine().count!=before || ![files fileExistsAtPath:[staging stringByAppendingPathComponent:@"cpu.artifact"]])return 3;
+        }else {
+            if(!msv_ane_source_uncertainty() || fios_ane_compile_quarantine().count<=before || staging)return 4;
+            if(scenario==1 && (!strstr(text,"ownership uncertain") || compile_calls!=(fixture_at_compile?1:0) || load_calls))return 5;
+            if(scenario==2 && (compile_calls!=1 || load_calls || ![files fileExistsAtPath:fixture_directory]))return 6;
+            if(scenario==4 && (identifier_calls || compile_calls || load_calls || [files fileExistsAtPath:fixture_directory]))return 7;
+        }
+#else
+        if(scenario==1){if(!caught)return 8;}
+        else if(scenario==2){if(result || compile_calls!=BRIDGE_BARE_TRIES || load_calls)return 9;}
+        else if(caught || result!=1 || compile_calls!=1 || load_calls!=1)return 10;
+#endif
+        fprintf(stderr,"PASS actual ANE constructor error boundary with CPU metadata/private files; no native authority\n");return 0;
+    }
+}
+#ifndef FIOS_ZIG_CLIENT
+int main(int argc,char **argv) {
+    if(argc!=3 || (strcmp(argv[1],"identifier") && strcmp(argv[1],"compile")))return 11;
+    return fios_ane_compile_exception_fixture(argv[1],(unsigned)strtoul(argv[2],NULL,10));
+}
+#endif

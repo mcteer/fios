@@ -1,0 +1,142 @@
+// Only the genuine pinned CPU pread/pthread source fragment is inserted here.
+// No Metal SDK types, device/model handles or backend ABI are substituted.
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <limits.h>
+#include <errno.h>
+#include <unistd.h>
+#include <time.h>
+static int g_model_fd = -1;
+static pthread_mutex_t checkpoint_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t checkpoint_cond = PTHREAD_COND_INITIALIZER;
+static int entered, released;
+static void fixture_checkpoint(void) {
+    pthread_mutex_lock(&checkpoint_mutex);
+    ++entered;
+    pthread_cond_broadcast(&checkpoint_cond);
+    while (!released) pthread_cond_wait(&checkpoint_cond, &checkpoint_mutex);
+    pthread_mutex_unlock(&checkpoint_mutex);
+}
+#define REQUIRE(test, marker) do { if (!(test)) { fprintf(stderr, "%s\n", marker); exit(77); } } while (0)
+// Explicit syscall-boundary software faults: first worker is real; second
+// creation is refused without creating a thread. Join refusal is injected only
+// after the real owned worker has joined, never by faking thread terminality.
+static int partial_create_fault, partial_join_fault, creation_calls;
+static int fixture_pthread_create(pthread_t* thread,const pthread_attr_t* attributes,void* (*entry)(void*),void* argument){
+    if(partial_create_fault&&creation_calls++==1)return EAGAIN;
+    return pthread_create(thread,attributes,entry,argument);
+}
+static int fixture_pthread_join(pthread_t thread,void** value){
+    int result=pthread_join(thread,value);
+    return result==0&&partial_join_fault?EIO:result;
+}
+// FIOS_GENUINE_PREAD_SOURCE
+int main(int argc, char **argv) {
+    REQUIRE(argc == 2, "BAD_ARGUMENTS");
+    REQUIRE(!ds4_gpu_fios_pread_pool_try_retire(), "COLD_POOL_CLAIMED_RETIREMENT");
+    REQUIRE(!g_stream_expert_pread_pool_initialized && !atomic_load(&g_fios_pread_pool_sealed), "COLD_POOL_MUTATED");
+    setenv("DS4_METAL_STREAMING_EXPERT_PREAD_THREADS", "2", 1);
+#ifdef FIOS_COMPOSED_CLEANUP
+    if(!strcmp(argv[1],"--partial-join-error")||!strcmp(argv[1],"--partial-create")){
+        partial_create_fault=1;partial_join_fault=!strcmp(argv[1],"--partial-join-error");
+        REQUIRE(!ds4_gpu_stream_expert_pread_pool_init(2),"PARTIAL_CREATE_WAS_ACCEPTED");
+        if(partial_join_fault){
+            REQUIRE(g_fios_pread_pool_uncertain&&atomic_load(&g_fios_pread_pool_sealed)&&
+                g_stream_expert_pread_pool_thread_count==1&&g_stream_expert_pread_pool_stopping&&
+                !ds4_gpu_fios_pread_pool_prepare_cleanup(),"FIO_DS4_PARTIAL_CREATE_LOST_UNCERTAIN_WORKER");
+            ds4_gpu_stream_expert_pread_pool_shutdown();
+            REQUIRE(g_fios_pread_pool_uncertain&&g_stream_expert_pread_pool_thread_count==1,"FIO_DS4_PARTIAL_CREATE_LEGACY_REFUNDED_JOIN");
+        }else{
+            REQUIRE(!g_fios_pread_pool_uncertain&&atomic_load(&g_fios_pread_pool_sealed)&&
+                !g_stream_expert_pread_pool_thread_count&&g_fios_pread_pool_joined==1&&
+                ds4_gpu_fios_pread_pool_prepare_cleanup(),"FIO_DS4_PARTIAL_CREATE_LOST_CHECKED_JOIN");
+        }
+        puts("PASS: actual first worker/second creation refusal; exact checked join or retained injected acknowledgement failure.");return 0;
+    }
+#endif
+    REQUIRE(ds4_gpu_stream_expert_pread_pool_init(2), "POOL_INIT_FAILED");
+    if (!strcmp(argv[1], "--exhausted")) {
+        uint8_t bytes[16];
+        ds4_gpu_stream_expert_pread_task tasks[2] = {{.len=8,.dst=bytes},{.len=8,.dst=bytes+8}};
+        pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+        g_stream_expert_pread_pool_generation=UINT64_MAX; // Explicit private counter boundary.
+        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+        int accepted=ds4_gpu_stream_expert_pread_pool_begin(tasks,2,2);
+        int preserved=!accepted && g_fios_pread_pool_uncertain && atomic_load(&g_fios_pread_pool_sealed) &&
+            g_stream_expert_pread_pool_generation==UINT64_MAX && !g_stream_expert_pread_pool_tasks &&
+            !g_stream_expert_pread_pool_remaining_workers && g_stream_expert_pread_pool_thread_count==2;
+        // Exact private CPU-thread cleanup, retaining source uncertainty. The
+        // admitted-mutant path may be in the private scheduling checkpoint.
+        pthread_mutex_lock(&checkpoint_mutex); released=1;
+        pthread_cond_broadcast(&checkpoint_cond); pthread_mutex_unlock(&checkpoint_mutex);
+        pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+        g_stream_expert_pread_pool_stopping=1;
+        pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
+        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+        for (uint32_t i=0;i<2;++i) REQUIRE(pthread_join(g_stream_expert_pread_pool_threads[i],NULL)==0,"EXHAUSTED_FIXTURE_THREAD_NOT_JOINED");
+        REQUIRE(preserved,"FIO_DS4_PREAD_GENERATION_WRAPPED");
+        REQUIRE(g_fios_pread_pool_uncertain,"EXHAUSTED_CLEANUP_REFUNDED_UNCERTAINTY");
+        puts("PASS: exhausted dispatch refuses before task publication and retains independent uncertainty.");
+        return 0;
+    }
+    if (!strcmp(argv[1], "--join-error")) {
+        // Exact genuine OS self-join refusal. Keep the original owned thread
+        // separately so test cleanup never guesses or signals a numeric ID.
+        pthread_t original = g_stream_expert_pread_pool_threads[0];
+        g_stream_expert_pread_pool_threads[0] = pthread_self();
+        int result = ds4_gpu_fios_pread_pool_try_retire();
+        REQUIRE(pthread_join(original, NULL) == 0, "OWNED_FIXTURE_THREAD_NOT_JOINED");
+        REQUIRE(!result && g_fios_pread_pool_uncertain && g_stream_expert_pread_pool_initialized &&
+                g_stream_expert_pread_pool_thread_count == 2 && g_stream_expert_pread_pool_stopping &&
+                g_fios_pread_pool_joined == 2, "FIO_DS4_PREAD_JOIN_REFUSAL_CLEARED");
+        REQUIRE(!ds4_gpu_fios_pread_pool_try_retire() && g_fios_pread_pool_uncertain,
+                "FIO_DS4_PREAD_UNCERTAINTY_REOPENED");
+        ds4_gpu_stream_expert_pread_pool_shutdown();
+        REQUIRE(g_fios_pread_pool_uncertain && g_stream_expert_pread_pool_initialized &&
+                g_stream_expert_pread_pool_thread_count == 2 && g_fios_pread_pool_joined == 2,
+                "FIO_DS4_PREAD_LEGACY_CLEARED_REFUSAL");
+        puts("PASS: genuine self-join error retains pool vector/count, one-way gate and independent uncertainty.");
+        return 0;
+    }
+    REQUIRE(!strcmp(argv[1], "--positive"), "BAD_MODE");
+    char file[] = "/private/tmp/fios-ds4-pread-XXXXXX";
+    g_model_fd = mkstemp(file); REQUIRE(g_model_fd >= 0, "FIXTURE_FILE_FAILED");
+    REQUIRE(unlink(file) == 0 && write(g_model_fd, "abcdefgh", 8) == 8, "FIXTURE_WRITE_FAILED");
+    uint8_t first[8], second[8];
+    ds4_gpu_stream_expert_pread_task tasks[2] = {
+        {.offset=0, .len=8, .dst=first}, {.offset=0, .len=8, .dst=second}
+    };
+    REQUIRE(ds4_gpu_stream_expert_pread_pool_begin(tasks, 2, 2), "POOL_DISPATCH_FAILED");
+    pthread_mutex_lock(&checkpoint_mutex);
+    while (entered != 2) pthread_cond_wait(&checkpoint_cond, &checkpoint_mutex);
+    pthread_mutex_unlock(&checkpoint_mutex);
+    REQUIRE(!ds4_gpu_fios_pread_pool_try_retire() && !g_stream_expert_pread_pool_stopping &&
+            !atomic_load(&g_fios_pread_pool_sealed), "ACTIVE_POOL_WAS_RETIRED");
+    pthread_mutex_lock(&checkpoint_mutex); released=1;
+    pthread_cond_broadcast(&checkpoint_cond); pthread_mutex_unlock(&checkpoint_mutex);
+    REQUIRE(ds4_gpu_stream_expert_pread_pool_wait(), "POOL_WAIT_FAILED");
+    REQUIRE(tasks[0].ok && tasks[1].ok && tasks[0].read_bytes == 8 && tasks[1].read_bytes == 8 &&
+            !memcmp(first,"abcdefgh",8) && !memcmp(second,"abcdefgh",8), "GENUINE_PREAD_FAILED");
+    REQUIRE(ds4_gpu_fios_pread_pool_try_retire() && g_fios_pread_pool_joined == 3 &&
+            !g_stream_expert_pread_pool_initialized && !g_stream_expert_pread_pool_thread_count,
+            "EXACT_POOL_JOIN_FAILED");
+    int rearmed = ds4_gpu_stream_expert_pread_pool_init(2);
+    if (rearmed) {
+        // Observe the faulty rearm first, then join only the two actual CPU
+        // threads this private mutant just created. Do not refund source seals.
+        pthread_mutex_lock(&g_stream_expert_pread_pool_mutex);
+        g_stream_expert_pread_pool_stopping=1;
+        pthread_cond_broadcast(&g_stream_expert_pread_pool_start_cond);
+        pthread_mutex_unlock(&g_stream_expert_pread_pool_mutex);
+        for (uint32_t i=0; i<2; ++i)
+            REQUIRE(pthread_join(g_stream_expert_pread_pool_threads[i],NULL)==0, "OWNED_MUTANT_THREAD_NOT_JOINED");
+    }
+    REQUIRE(!rearmed, "FIO_DS4_PREAD_REARMED_SEALED_POOL");
+    REQUIRE(close(g_model_fd) == 0, "FIXTURE_FILE_CLOSE_FAILED");
+    puts("PASS: actual source pread workers refuse busy retirement, join exactly and preserve the sealed gate.");
+    return 0;
+}

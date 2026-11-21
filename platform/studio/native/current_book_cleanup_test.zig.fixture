@@ -1,0 +1,72 @@
+
+test "fios current book cleanup retains callback uncertainty and payload" {
+    const owners = @import("../../fios/request_ownership.zig");
+    const owner_io = testing.io;
+    const page = std.heap.page_allocator;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(owner_io, @splat(179));
+    const Trace = struct {
+        request: usize = 0,
+        freed: bool = false,
+        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.request) self.freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    const Probe = struct {
+        owner_io: std.Io,
+        unknown: bool,
+        calls: usize = 0,
+        fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (ev.kind == .finished) {
+                self.calls += 1;
+                if (self.unknown) owners.shared().fence(self.owner_io);
+            }
+            return .go;
+        }
+    };
+    for ([_]bool{ false, true }) |unknown| {
+        const root = try owners.shared().enter(owner_io);
+        try owners.shared().bind(owner_io, root, "fixture/book-cleanup");
+        owners.current().* = root;
+        const trace = try page.create(Trace);
+        trace.* = .{};
+        const b = try page.create(Book);
+        b.* = .{ .gpa = trace.allocator(), .max_waiting = 2 };
+        const probe = try page.create(Probe);
+        probe.* = .{ .owner_io = owner_io, .unknown = unknown };
+        var verdict: abi.Verdict = .{};
+        const sink: abi.Sink = .{ .ctx = probe, .event = Probe.event };
+        const request = b.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 }, sink, &verdict).?;
+        trace.request = @intFromPtr(request);
+        try owners.shared().leave(owner_io, root);
+        owners.current().* = null;
+        try testing.expect(b.next(false).? == request);
+        b.done(request, .stop, "");
+        try testing.expectEqual(@as(usize, 1), probe.calls);
+        if (unknown) {
+            if (trace.freed) std.debug.print("FIO_CURRENT_BOOK_DROPPED_CALLBACK_PAYLOAD\n", .{});
+            try testing.expect(!trace.freed); // Witness before dereference.
+            try testing.expectEqualSlices(u32, &.{1}, request.prompt);
+            if (@hasField(Book, "fios_quarantine")) try testing.expect(b.fios_quarantine == request);
+            b.deinit();
+            try testing.expect(!trace.freed);
+            try testing.expect(b.add(.{}, 2, &.{ .prompt = abi.span(u32, &.{2}), .max_tokens = 1 }, sink, &verdict) == null);
+            try testing.expectEqual(@as(usize, 1), probe.calls);
+            try testing.expect(owners.shared().knownUncertain(owner_io));
+        } else {
+            try testing.expect(trace.freed);
+            b.deinit();
+            page.destroy(b);
+            page.destroy(probe);
+            page.destroy(trace);
+        }
+    }
+}

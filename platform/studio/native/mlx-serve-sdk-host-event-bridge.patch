@@ -1,0 +1,25 @@
+--- a/src/fios/current_sdk_owners.cpp
++++ b/src/fios/current_sdk_owners.cpp
+@@ -11,6 +11,9 @@
+ extern "C" void* fios_native_request_owners_merge(void*,void*);
+ extern "C" int fios_native_request_owners_covers_current(void*);
+ extern "C" void fios_native_request_owners_uncertain();
++#ifdef MLX_FIOS_REQUEST_HOST_EVENTS_V1
++extern "C" int fios_native_host_request_event_observe(void*,uint64_t,uint32_t);
++#endif
+ namespace {
+ __attribute__((constructor)) void enable_current_source_sdk_owners() {
+     static const mlx::core::FiosRequestOwnerHooks hooks{
+@@ -20,6 +23,12 @@
+         fios_native_request_owners_uncertain};
+     if (!mlx::core::fios_register_request_owner_hooks(&hooks) ||
+         !mlx::core::fios_enable_stream_custody_fixture()) std::_Exit(78);
++#ifdef MLX_FIOS_REQUEST_HOST_EVENTS_V1
++    static const mlx::core::FiosHostRequestEventHooksV1 events{
++        1,sizeof(mlx::core::FiosHostRequestEventHooksV1),
++        fios_native_host_request_event_observe};
++    if (!mlx::core::fios_register_host_request_event_hooks_v1(&events)) std::_Exit(78);
++#endif
+ }
+ }
+ extern "C" int fios_current_sdk_known_uncertain() {

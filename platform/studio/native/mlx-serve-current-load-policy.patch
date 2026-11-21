@@ -1,0 +1,31 @@
+diff --git a/src/engines/mlx/runtime/load_requests.zig b/src/engines/mlx/runtime/load_requests.zig
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -199,7 +199,10 @@ pub fn runLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
+     };
+     // Re-apply so `fit` capacity covers everything this load brought in
+     // (MTP head / drafter / vision land after the mid-load apply).
+-    logWiredPolicy(mlx.applyWiredPolicy());
++    if (model_registry_mod.cleanupUncertain(sch.io)) return failLoadRequest(sch, req, error.NativeCleanupUncertain);
++    const wired_policy = mlx.applyWiredPolicy();
++    if (model_registry_mod.cleanupUncertain(sch.io)) return failLoadRequest(sch, req, error.NativeCleanupUncertain);
++    logWiredPolicy(wired_policy);
+     readyLoadRequest(sch, req);
+ }
+ 
+@@ -215,6 +218,7 @@ fn aneBuildThread(sch: *Scheduler, req: *LoadRequest) void {
+     if (fios_scope) |*scope| scope.enter(sch.io) catch |err| { return failLoadRequest(sch, req, err); };
+     defer if (fios_scope) |*scope| { _ = scope.finish(sch.io); };
+     const built = engines_load.aneOpen(sch, req) catch |err| return failLoadRequest(sch, req, err);
++    if (model_registry_mod.cleanupUncertain(sch.io)) return failLoadRequest(sch, req, error.NativeCleanupUncertain);
+     if (built) return readyLoadRequest(sch, req);
+     req.ane_declined = true;
+     sch.queue_mu.lockUncancelable(sch.io);
+@@ -225,6 +229,7 @@ fn aneBuildThread(sch: *Scheduler, req: *LoadRequest) void {
+ }
+ 
+ fn readyLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
++    if (model_registry_mod.cleanupUncertain(sch.io)) return failLoadRequest(sch, req, error.NativeCleanupUncertain);
+     log.info("[registry] model id={s} ready ({d:.2} GB resident)\n", .{
+         req.entry.id,
+         @as(f64, @floatFromInt(req.entry.bytes_resident)) / 1_073_741_824.0,

@@ -1,0 +1,6 @@
+{
+  "src/plugins/deepseek_v41/engram.zig": "0170556e3f49f1d27e6a2e042b9e5fdecfff5ed8807f8771a49464c873b35492",
+  "src/plugins/deepseek_v41/deepseek_v41.zig": "e79b5829c4a5ce9acaf711e4ac219c902107112ccbbe02dfeb3a4124729d88d1",
+  "src/plugins/deepseek_v41/plugin.zig": "4a17ed14fb620b50daf9462742a79624d6cc47419d15fe28bfea82c890fec9d8",
+  "src/sdk/util/engram_prefetch_uncertainty.zig": "48bb862d704436d6a2b1a2a12e43b3c04e6590a5abdd41a53b83d835850dd1d3"
+}

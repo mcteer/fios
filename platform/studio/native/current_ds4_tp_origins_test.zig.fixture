@@ -1,0 +1,53 @@
+const std=@import("std");
+const owners=@import("fios/request_ownership.zig");
+const sdk=@import("fios/sdk_request_ownership.zig");
+extern "c" fn getenv([*:0]const u8) ?[*:0]const u8;
+extern fn fios_tp_fixture_prepare() c_int;
+extern fn fios_tp_fixture_run() c_int;
+extern fn fios_tp_fixture_retained() c_int;
+var expected:owners.Token=undefined;
+var second:owners.Token=undefined;
+var cached=false;
+pub export fn fios_tp_fixture_callback() c_int {
+ const token=owners.current().* orelse {std.debug.print("FIO_TP_ACTUAL_HOST_CONTEXT_MISSING\n",.{});return 0;};
+ const group=owners.current_group().* orelse return 0;
+ if(token.slot!=expected.slot or token.sequence!=expected.sequence or !std.mem.eql(u8,&token.instance,&expected.instance) or group.len!=2 or group[0].slot!=expected.slot or group[0].sequence!=expected.sequence or !std.mem.eql(u8,&group[0].instance,&expected.instance) or group[1].slot!=second.slot or group[1].sequence!=second.sequence or !std.mem.eql(u8,&group[1].instance,&second.instance)) return 0;
+ if(cached) sdk.fios_native_request_owners_uncertain();
+ return 1;
+}
+pub export fn fios_tp_fixture_scope_restored() c_int {
+ return @intFromBool(owners.current().*==null and owners.current_group().*==null);
+}
+test "fios ordinary TP actual host origins" {
+ const io=std.testing.io;
+ cached=getenv("FIOS_TP_CACHED")!=null;
+ try owners.shared().initialize(io,@splat(7));try sdk.initialize(io);
+ expected=try owners.shared().enter(io);
+ try owners.shared().associate(io,expected,@splat(13));
+ try owners.shared().bind(io,expected,"fixture/tp-origins");
+ try owners.shared().active(io,expected);
+ second=try owners.shared().enter(io);
+ try owners.shared().associate(io,second,@splat(14));
+ try owners.shared().bind(io,second,"fixture/tp-origins");
+ try owners.shared().active(io,second);
+ var group=[_]owners.Token{expected,second};
+ owners.current_group().*=&group;
+ owners.current().*=expected;
+ try std.testing.expectEqual(@as(c_int,1),fios_tp_fixture_prepare());
+ owners.current().*=null;
+ owners.current_group().*=null;
+ try owners.shared().leave(io,expected);
+ try owners.shared().leave(io,second);
+ try std.testing.expectEqual(@as(usize,2),owners.shared().snapshot(io).owned);
+ try std.testing.expectEqual(@as(u32,1),sdk.diagnostic().active_contexts);
+ try std.testing.expect(owners.shared().correlationSnapshot(io,@splat(13)).found);
+ try std.testing.expect(owners.shared().correlationSnapshot(io,@splat(14)).found);
+ try std.testing.expectEqual(@as(c_int,1),fios_tp_fixture_run());
+ try std.testing.expectEqual(cached,sdk.diagnostic().uncertain);
+ try std.testing.expectEqual(cached,owners.shared().correlationSnapshot(io,@splat(13)).found);
+ try std.testing.expectEqual(cached,owners.shared().correlationSnapshot(io,@splat(14)).found);
+ try std.testing.expectEqual(@as(u32,if(cached) 1 else 0),sdk.diagnostic().active_contexts);
+ try std.testing.expectEqual(@as(usize,if(cached) 2 else 0),owners.shared().snapshot(io).owned);
+ try std.testing.expectEqual(@as(c_int,if(cached) 1 else 0),fios_tp_fixture_retained());
+ std.debug.print("PASS: actual host request context spans original TP callback and preserves independent uncertainty\n",.{});
+}

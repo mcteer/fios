@@ -1,0 +1,56 @@
+// Actual SDK owner scope; modeled capture metadata only. No Metal object or backend call.
+#include <memory>
+#include <string>
+#include <stdexcept>
+#include <utility>
+#include "mlx/stream.h"
+#include "mlx/error.h"
+namespace fixture {
+using Error=mlx::core::Error;
+using FiosRequestOwnerScope=mlx::core::FiosRequestOwnerScope;
+struct FiosMetalCapture {std::shared_ptr<mlx::core::FiosRequestOwners> owners;unsigned ended=0;bool failed=false;};
+static auto fios_take_metal_request_owners(const std::shared_ptr<FiosMetalCapture>& value) {return value->owners;}
+static void fios_metal_capture_end(const std::shared_ptr<FiosMetalCapture>& value,bool failed) {value->ended++;value->failed=failed;}
+// FIOS_GENUINE_CALLBACK_HELPER
+template<class Work,class Cleanup>
+auto invoke_callback(const std::shared_ptr<FiosMetalCapture>& capture,Error& error,Work&& work,Cleanup&& cleanup,bool failed,int)
+ -> decltype(fios_owned_metal_callback(capture,error,std::forward<Work>(work),std::forward<Cleanup>(cleanup),failed),void()) {
+ fios_owned_metal_callback(capture,error,std::forward<Work>(work),std::forward<Cleanup>(cleanup),failed);
+}
+template<class Work,class Cleanup>
+void invoke_callback(const std::shared_ptr<FiosMetalCapture>& capture,Error& error,Work&& work,Cleanup&& cleanup,bool,long) {
+ fios_owned_metal_callback(capture,error,std::forward<Work>(work),std::forward<Cleanup>(cleanup));
+}
+
+static std::shared_ptr<FiosMetalCapture> capture;
+static int (*observer)(int);
+}
+extern "C" int fios_fixture_register(const mlx::core::FiosRequestOwnerHooks *hooks,int (*observer)(int)) {
+ fixture::observer=observer;return mlx::core::fios_register_request_owner_hooks(hooks)?1:0;
+}
+extern "C" int fios_fixture_prepare() {
+ fixture::capture=std::make_shared<fixture::FiosMetalCapture>();
+ fixture::capture->owners=mlx::core::fios_capture_request_owners();
+ return fixture::capture->owners?1:0;
+}
+extern "C" int fios_fixture_run(int mode) {
+ fixture::Error error;
+ const bool command_failed=mode>=6;
+ if(mode==3||mode==7)error.set_message(std::make_shared<std::string>("existing bounded CPU error"));
+ fixture::invoke_callback(fixture::capture,error,[&] {
+  fixture::observer(2);
+  if(mode==1||mode==5)throw std::runtime_error("bounded ordinary CPU work error");
+  if(mode==2)throw 7;
+ },[&] {
+  fixture::observer(0);
+  if(mode==4||mode==5)throw std::runtime_error("bounded ordinary CPU cleanup error");
+  fixture::fios_metal_capture_end(fixture::capture,error.valid()||command_failed);
+ },command_failed,0);
+ fixture::observer(1);
+ const bool failed=error.valid();
+ const char *expected=(mode==3||mode==7)?"existing bounded CPU error":(mode==1||mode==5)?"bounded ordinary CPU work error":mode==2?"Native Metal callback failed":"bounded ordinary CPU cleanup error";
+ try {error.check();if(failed)return 32;}
+ catch(const std::exception& message) {if(!failed||std::string(message.what())!=expected)return 64;}
+ return (failed?2:0)|(fixture::capture->failed?4:0)|(fixture::capture->ended==1?8:0);
+}
+extern "C" void fios_fixture_release() {fixture::capture.reset();}

@@ -1,0 +1,56 @@
+diff --git a/src/host/http/router.zig b/src/host/http/router.zig
+index dde6a22..32915f1 100644
+--- a/src/host/http/router.zig
++++ b/src/host/http/router.zig
+@@ -632,7 +632,17 @@ pub fn handleConnection(
+             return;
+         }
+     }
+-    const lm = scheduler.ensureLoaded(requested_model_id) catch |err| {
++    // Diagnostic primary ownership begins before CPU preparation or cold load.
++    // This is a partial host edge; backend/SDK custody remains unenrolled and
++    // the primary guard is not enabled as native admission authority.
++    const ownership_token = fios_ownership.current;
++    const ownership_entry = if (ownership_token != null) registry.resolveEntry(requested_model_id) catch null else null;
++    if (ownership_entry) |entry| fios_ownership.shared.bind(stream.io, ownership_token.?, entry.id) catch |err| {
++        try sendEnsureLoadedError(allocator, stream, scheduler, entry.id, err);
++        return;
++    };
++    const load_target_id = if (ownership_entry) |entry| entry.id else requested_model_id;
++    const lm = scheduler.ensureLoaded(load_target_id) catch |err| {
+         // Headless gen-only boot (media models resident, no default chat
+         // model): /props keeps answering with the live memory counters —
+         // the app's tray polls it, and a 503 here read as "0 MB".
+@@ -640,12 +650,16 @@ pub fn handleConnection(
+             try handlePropsNoModel(allocator, stream);
+             return;
+         }
+-        try sendEnsureLoadedError(allocator, stream, scheduler, requested_model_id, err);
++        try sendEnsureLoadedError(allocator, stream, scheduler, load_target_id, err);
+         return;
+     };
+     // A status read must not look like use — see `isStatusRoute`.
+     const status_read = isStatusRoute(method, path);
+     defer if (status_read) scheduler.releaseStatus(lm) else scheduler.release(lm);
++    if (ownership_entry != null) try fios_ownership.shared.active(stream.io, ownership_token.?);
++    defer if (ownership_entry != null) {
++        fios_ownership.shared.responding(stream.io, ownership_token.?) catch { fios_ownership.shared.fence(stream.io); };
++    };
+ 
+     // A model loaded on demand freezes its own auto-context here, for the same
+     // reason the `--model` primary does at startup: the number we advertise is
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index b6130f8..4de7729 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -414,6 +414,10 @@ pub fn serve(
+     startup.stop();
+     var fios_instance: [16]u8 = undefined;
+     std.Io.random(io, &fios_instance);
++    // Current host-only attribution is incomplete. The shared companion's
++    // historical serving default must not become a partial model policy here.
++    // Trusted startup only, before any current ingress or tracker operation.
++    fios_ownership.shared.primary_guard = false;
+     try fios_ownership.shared.initialize(io, fios_instance);
+     const fios_bridge = try fios_control.Bridge.start(io, allocator, @import("build_options").version, null);
+     defer if (fios_bridge) |bridge| bridge.stop();

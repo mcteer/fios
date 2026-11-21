@@ -1,0 +1,82 @@
+import Foundation
+import CryptoKit
+
+func runTransferTests() throws {
+    let data=Data("bounded payload".utf8)
+    let hash=SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined()
+    var stream=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:.input)
+    try stream.append(index:0,base64:data.base64EncodedString(),now:1001)
+    guard try stream.finish(now:1002)==data else { fatalError("Transfer corrupted") }
+    do { _=try stream.finish(now:1003);fatalError("Completion replay accepted") } catch TransferError.invalid {}
+    var gap=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:.input)
+    do { try gap.append(index:1,base64:data.base64EncodedString(),now:1001);fatalError("Gap accepted") } catch TransferError.invalid {}
+    do { try gap.append(index:0,base64:data.base64EncodedString(),now:1002);fatalError("Failed stream resurrected") } catch TransferError.invalid {}
+    var expired=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:.artifact)
+    do { try expired.append(index:0,base64:data.base64EncodedString(),now:31000);fatalError("Expired stream accepted") } catch TransferError.expired {}
+    var wrong=try ChunkTransfer(length:data.count,sha256:String(repeating:"0",count:64),created:1000,kind:.artifact)
+    try wrong.append(index:0,base64:data.base64EncodedString(),now:1001)
+    do { _=try wrong.finish(now:1002);fatalError("Hash mismatch accepted") } catch TransferError.hash {}
+    var budget=TransferBudget()
+    try budget.chargeOutput(16<<20)
+    do { try budget.chargeOutput(1);fatalError("Output reservation exceeded") } catch TransferError.invalid {}
+    let chunk=Data(repeating:97,count:32768)
+    let chunkHash=SHA256.hash(data:chunk).map {String(format:"%02x",$0)}.joined()
+    var exact=try ChunkTransfer(length:chunk.count,sha256:chunkHash,created:1000,kind:.input)
+    try exact.append(index:0,base64:chunk.base64EncodedString(),now:1001)
+    guard try exact.finish(now:1002)==chunk else {fatalError("Exact32KiB chunk refused")}
+    for encoded in [Data(repeating:97,count:32769).base64EncodedString(),"","*","YR=="] {
+        var malformed=try ChunkTransfer(length:chunk.count,sha256:chunkHash,created:1000,kind:.input)
+        do {try malformed.append(index:0,base64:encoded,now:1001);fatalError("Oversized/invalid/noncanonical chunk accepted")}catch TransferError.invalid{}
+        do {try malformed.validate(now:1002);fatalError("Invalid chunk stream resurrected")}catch TransferError.invalid{}
+    }
+    let fullInput=Data(repeating:97,count:4<<20)
+    let fullHash=SHA256.hash(data:fullInput).map {String(format:"%02x",$0)}.joined()
+    let canonicalChunk=chunk.base64EncodedString()
+    var full=try ChunkTransfer(length:fullInput.count,sha256:fullHash,created:1000,kind:.input)
+    var overrun=try ChunkTransfer(length:fullInput.count,sha256:fullHash,created:1000,kind:.input)
+    for index in 0..<(fullInput.count/chunk.count) {
+        try full.append(index:index,base64:canonicalChunk,now:1001)
+        try overrun.append(index:index,base64:canonicalChunk,now:1001)
+    }
+    guard try full.finish(now:1002)==fullInput else {fatalError("Exactly 4MiB did not survive bounded framing")}
+    do {
+        try overrun.append(index:fullInput.count/chunk.count,base64:"YQ==",now:1002)
+        fatalError("Extra byte accepted after full input budget")
+    } catch TransferError.invalid {}
+    do {_=try overrun.finish(now:1003);fatalError("Overrunning stream revived at finish")}catch TransferError.invalid{}
+    var duplicate=try ChunkTransfer(length:2*data.count,sha256:hash,created:1000,kind:.input)
+    try duplicate.append(index:0,base64:data.base64EncodedString(),now:1001)
+    do {try duplicate.append(index:0,base64:data.base64EncodedString(),now:1002);fatalError("Duplicate chunk accepted")}catch TransferError.invalid{}
+    var rollback=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:.input)
+    try rollback.append(index:0,base64:data.base64EncodedString(),now:1002)
+    do {_=try rollback.finish(now:1001);fatalError("Transfer clock rollback accepted")}catch TransferError.expired{}
+    do {_=try rollback.finish(now:1003);fatalError("Rollback stream resurrected")}catch TransferError.invalid{}
+    for (kind,duration) in [(TransferKind.input,Int64(10000)),(.artifact,Int64(30000))] {
+        let maximum=ActivityPolicy.maximumTimestamp
+        let emptyHash=SHA256.hash(data:Data()).map {String(format:"%02x",$0)}.joined()
+        var empty=try ChunkTransfer(length:0,sha256:emptyHash,created:maximum-duration,kind:kind)
+        guard try empty.finish(now:maximum-1).isEmpty else {fatalError("Empty stream altered output at upper clock boundary")}
+        do {_=try ChunkTransfer(length:0,sha256:emptyHash,created:maximum-duration+1,kind:kind);fatalError("Transfer deadline exceeded clock domain")}
+        catch TransferError.invalid {}
+        var extreme=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:kind)
+        try extreme.append(index:0,base64:data.base64EncodedString(),now:1001)
+        do {_=try extreme.finish(now:Int64.max);fatalError("Out-of-domain clock completed an active transfer")}
+        catch TransferError.expired {}
+        do {_=try extreme.finish(now:1002);fatalError("Active transfer revived after invalid time")}
+        catch TransferError.invalid {}
+        var boundary=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:kind)
+        try boundary.append(index:0,base64:data.base64EncodedString(),now:1000+duration-1)
+        guard try boundary.finish(now:1000+duration-1)==data else {fatalError("Last valid transfer millisecond refused")}
+        var timedOut=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:kind)
+        do {try timedOut.append(index:0,base64:data.base64EncodedString(),now:1000+duration);fatalError("Exact transfer deadline accepted")}catch TransferError.expired{}
+        var polled=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:kind)
+        try polled.append(index:0,base64:data.base64EncodedString(),now:1001)
+        try polled.validate(now:1000+duration-1)
+        do {_=try polled.finish(now:1000+duration);fatalError("Run-loop validation extended the original transfer deadline")}catch TransferError.expired{}
+        do {_=try polled.finish(now:1000+duration-1);fatalError("Expired polled transfer revived")}catch TransferError.invalid{}
+        var rewound=try ChunkTransfer(length:data.count,sha256:hash,created:1000,kind:kind)
+        try rewound.validate(now:1003)
+        do {try rewound.append(index:0,base64:data.base64EncodedString(),now:1002);fatalError("Transfer ignored its last run-loop clock")}catch TransferError.expired{}
+    }
+    print("PASS: exact32KiB/canonical chunks, gap/duplicate/replay/hash/timeout/rollback refusal, irreversible failure and cumulative output limit")
+}

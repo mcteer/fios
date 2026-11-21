@@ -1,0 +1,294 @@
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+index 0b8a033..9671379 100644
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -905,6 +905,16 @@ pub const Tracker = struct {
+         self.observeBackendUncertainty(io);
+         self.mutex.lockUncancelable(io);
+         defer self.mutex.unlock(io);
++        return self.queuedSnapshotLocked();
++    }
++    // Bounded metadata-only capture under an enclosing registry lock. The
++    // caller probes independent negatives BEFORE that lock, never in here.
++    pub fn tryQueuedSnapshotKnown(self: *Tracker, io: std.Io) ?QueuedSnapshot {
++        if (!self.mutex.tryLock()) return null;
++        defer self.mutex.unlock(io);
++        return self.queuedSnapshotLocked();
++    }
++    fn queuedSnapshotLocked(self: *Tracker) QueuedSnapshot {
+         self.advanceCaptureLocked();
+         var result: QueuedSnapshot = .{ .instance = self.instance, .sample_sequence = self.sample_sequence,
+             .initialized = self.initialized, .uncertain = self.uncertain };
+diff --git a/src/fios/control_protocol.zig b/src/fios/control_protocol.zig
+index d9cd3d0..2d4e378 100644
+--- a/src/fios/control_protocol.zig
++++ b/src/fios/control_protocol.zig
+@@ -159,6 +159,74 @@ pub fn dispatchQueuedActivity(tracker: *ownership.Tracker, io: std.Io, request:
+     return response;
+ }
+ 
++// Version3 couples registry-declared facts to the same request capture. This
++// readonly frame contains no coverage, device-idle or admission grant.
++const registry_facts = @import("current_registry_activity.zig");
++pub const RegistryActivitySource = struct {
++    context: *anyopaque,
++    read: *const fn (*anyopaque, std.Io, *ownership.Tracker) anyerror!registry_facts.Observation,
++};
++pub const registry_record_size = 24 + ownership.model_limit;
++pub const registry_response_size = 96 + ownership.model_capacity * registry_record_size;
++pub fn dispatchRegistryActivity(tracker: *ownership.Tracker, io: std.Io, request: *const [primary_request_size]u8, source: ?RegistryActivitySource) [registry_response_size]u8 {
++    var response: [registry_response_size]u8 = @splat(0);
++    @memcpy(response[0..4], "FIT9");response[4] = 3;
++    if (!std.mem.eql(u8, request[0..4], "FIA9") or request[4] != 3 or
++        !std.mem.allEqual(u8, request[5..8], 0) or !std.mem.allEqual(u8, request[24..32], 0)) {
++        response[5] = @intFromEnum(Status.invalid);return response;
++    }
++    // Foreign probes run before the provider takes any registry/tracker lock.
++    _ = tracker.backendKnownUncertain(io);
++    const before = tracker.snapshot(io);
++    if (!before.initialized or !std.mem.eql(u8, request[8..24], &before.instance)) {
++        response[5] = @intFromEnum(Status.wrong_instance);return response;
++    }
++    const provider = source orelse {response[5] = @intFromEnum(Status.maintenance);return response;};
++    const captured_at = std.Io.Clock.real.now(io).toMilliseconds();
++    const value = provider.read(provider.context, io, tracker) catch {response[5] = @intFromEnum(Status.maintenance);return response;};
++    if (!std.mem.eql(u8,&value.instance,&before.instance) or value.sample_sequence <= before.sample_sequence or
++        value.sample_sequence > ownership.maximum_sample_sequence or value.registry_generation > ownership.maximum_sample_sequence or
++        value.model_count > ownership.model_capacity) {response[5] = @intFromEnum(Status.invalid);return response;}
++    inline for (.{value.owned,value.ingress,value.preparing,value.queued,value.active,value.responding}) |count|
++        if (count > ownership.capacity) {response[5] = @intFromEnum(Status.invalid);return response;};
++    if (value.owned != value.ingress + value.preparing + value.queued + value.active + value.responding) {
++        response[5] = @intFromEnum(Status.invalid);return response;
++    }
++    @memcpy(response[8..24],&value.instance);
++    std.mem.writeInt(u64,response[24..32],value.sample_sequence,.big);
++    const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence) @intCast(captured_at) else std.math.maxInt(u64);
++    std.mem.writeInt(u64,response[32..40],stamp,.big);std.mem.writeInt(u64,response[40..48],value.registry_generation,.big);
++    response[7] = @intFromBool(value.uncertain);response[76] = @intFromBool(value.transitioning);
++    inline for (.{value.owned,value.ingress,value.preparing,value.queued,value.active,value.responding,value.model_count},0..) |count,index|
++        std.mem.writeInt(u32,response[48 + index * 4 ..][0..4],@intCast(count),.big);
++    var totals: [4]usize = @splat(0);var transitioning = false;
++    for (value.models[0..value.model_count],0..) |model,index| {
++        if (model.len == 0 or model.len > ownership.model_limit or !std.unicode.utf8ValidateSlice(model.id[0..model.len]) or
++            std.mem.indexOfScalar(u8,model.id[0..model.len],0) != null or (model.uncertain and !value.uncertain)) {
++            response[5] = @intFromEnum(Status.invalid);return response;
++        }
++        for (value.models[0..index]) |prior| if (std.mem.eql(u8,prior.id[0..prior.len],model.id[0..model.len])) {
++            response[5] = @intFromEnum(Status.invalid);return response;
++        };
++        const phases = .{model.preparing,model.queued,model.active,model.responding};var sum: usize = 0;
++        inline for (phases,0..) |count,phase| {
++            if (count > ownership.capacity) {response[5] = @intFromEnum(Status.invalid);return response;}
++            totals[phase] += count;sum += count;
++        }
++        if (sum == 0 and !model.ready_declared and !model.transitioning and !model.uncertain) {response[5] = @intFromEnum(Status.invalid);return response;}
++        transitioning = transitioning or model.transitioning;
++        const offset = 96 + index * registry_record_size;
++        std.mem.writeInt(u16,response[offset..][0..2],@intCast(model.len),.big);
++        response[offset + 2] = @intFromBool(model.ready_declared);
++        response[offset + 3] = @as(u8,@intFromBool(model.transitioning)) | (@as(u8,@intFromBool(model.uncertain)) << 1);
++        inline for (phases,0..) |count,phase| std.mem.writeInt(u32,response[offset + 4 + phase * 4 ..][0..4],@intCast(count),.big);
++        @memcpy(response[offset + 24 ..][0..model.len],model.id[0..model.len]);
++    }
++    if (!std.mem.eql(usize,&totals,&.{value.preparing,value.queued,value.active,value.responding}) or transitioning != value.transitioning)
++        response[5] = @intFromEnum(Status.invalid);
++    return response;
++}
++
+ // Separate readonly frame namespace: never reinterpret lineage bytes as an
+ // ingress action. A missing live lineage is unknown, not terminal/not-sent.
+ pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const [lineage_request_size]u8) [lineage_response_size]u8 {
+diff --git a/src/fios/control_transport.zig b/src/fios/control_transport.zig
+index f9c3281..ac4d509 100644
+--- a/src/fios/control_transport.zig
++++ b/src/fios/control_transport.zig
+@@ -8,6 +8,7 @@ pub const OwnerBarrier = protocol.OwnerBarrier;
+ pub const BackendFenceReadings = protocol.BackendFenceReadings;
+ pub const BackendFenceSource = protocol.BackendFenceSource;
+ pub const CurrentBackendFenceSource = protocol.CurrentBackendFenceSource;
++pub const RegistryActivitySource = protocol.RegistryActivitySource;
+ const c = std.c;
+ extern "c" fn getpeereid(fd: c_int, uid: *c.uid_t, gid: *c.gid_t) c_int;
+ 
+@@ -18,6 +19,7 @@ pub const Bridge = struct {
+     barrier: ?OwnerBarrier,
+     backend_fences: ?BackendFenceSource = null,
+     current_backend_fences: ?CurrentBackendFenceSource = null,
++    registry_activity: ?RegistryActivitySource = null,
+     path: [256:0]u8,
+     identity: c.Stat,
+     stopped: std.atomic.Value(bool) = .init(false),
+@@ -30,6 +32,9 @@ pub const Bridge = struct {
+         return startWithSources(io, allocator, version, barrier, backend_fences, null);
+     }
+     pub fn startWithSources(io: std.Io, allocator: std.mem.Allocator, version: []const u8, barrier: ?OwnerBarrier, backend_fences: ?BackendFenceSource, current_backend_fences: ?CurrentBackendFenceSource) !?*Bridge {
++        return startWithActivity(io, allocator, version, barrier, backend_fences, current_backend_fences, null);
++    }
++    pub fn startWithActivity(io: std.Io, allocator: std.mem.Allocator, version: []const u8, barrier: ?OwnerBarrier, backend_fences: ?BackendFenceSource, current_backend_fences: ?CurrentBackendFenceSource, registry_activity: ?RegistryActivitySource) !?*Bridge {
+         const enabled = c.getenv("FIOS_NATIVE_CONTROL");
+         if (enabled == null) return null;
+         if (!std.mem.eql(u8, std.mem.span(enabled.?), "isolated-source-fixture") or
+@@ -64,7 +69,7 @@ pub const Bridge = struct {
+             return error.ControlUnavailable;
+         const self = try allocator.create(Bridge);
+         errdefer allocator.destroy(self);
+-        self.* = .{ .io = io, .allocator = allocator, .fd = fd, .barrier = barrier, .backend_fences = backend_fences, .current_backend_fences = current_backend_fences, .path = path_buffer, .identity = info };
++        self.* = .{ .io = io, .allocator = allocator, .fd = fd, .barrier = barrier, .backend_fences = backend_fences, .current_backend_fences = current_backend_fences, .registry_activity = registry_activity, .path = path_buffer, .identity = info };
+         self.thread = try std.Thread.spawn(.{}, run, .{self});
+         return self;
+     }
+@@ -126,8 +131,12 @@ pub const Bridge = struct {
+             count += @intCast(n);
+             if (count > protocol.lineage_request_size) return;
+         } else return;
+-        var storage: [protocol.queued_primary_response_size]u8 = undefined;
+-        const response: []const u8 = if (count == protocol.queued_primary_request_size and input[4] == 2 and std.mem.eql(u8, input[0..4], "FIA9")) queued: {
++        var storage: [protocol.registry_response_size]u8 = undefined;
++        const response: []const u8 = if (count == protocol.primary_request_size and input[4] == 3 and std.mem.eql(u8, input[0..4], "FIA9")) registry: {
++            const value = protocol.dispatchRegistryActivity(ownership.shared(), self.io, input[0..protocol.primary_request_size], self.registry_activity);
++            @memcpy(storage[0..protocol.registry_response_size], &value);
++            break :registry storage[0..protocol.registry_response_size];
++        } else if (count == protocol.queued_primary_request_size and input[4] == 2 and std.mem.eql(u8, input[0..4], "FIA9")) queued: {
+             const value = protocol.dispatchQueuedActivity(ownership.shared(), self.io, input[0..protocol.queued_primary_request_size]);
+             @memcpy(storage[0..protocol.queued_primary_response_size], &value);
+             break :queued storage[0..protocol.queued_primary_response_size];
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index 5c40f4d..93076c1 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -424,7 +424,7 @@ pub fn serve(
+     var scheduler = try mlx_engine.start(allocator, io, load_params, max_concurrent);
+     defer scheduler.deinit();
+     startup.stop();
+-    const fios_bridge = try fios_control.Bridge.startWithSources(io, allocator, @import("build_options").version, null, null, @import("../../fios/current_backend_fences.zig").read);
++    const fios_bridge = try fios_control.Bridge.startWithActivity(io, allocator, @import("build_options").version, null, null, @import("../../fios/current_backend_fences.zig").read, .{ .context = load_params.registry, .read = fiosRegistryCapture });
+     defer if (fios_bridge) |bridge| bridge.stop();
+     // The ordinary vendor path stays untracked unless the existing private
+     // fixture-only transport explicitly starts. No backend barrier is supplied.
+@@ -1002,3 +1002,10 @@ fn fiosKnownBackendUncertain() bool {
+     const options = @import("build_options");
+     return @import("../../fios/current_ane_native_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
+ }
++
++// The bridge is stopped/joined before scheduler/registry teardown by serve's
++// existing defer order. This callback reads only stable registry metadata.
++fn fiosRegistryCapture(raw: *anyopaque, io: std.Io, tracker: *fios_ownership.Tracker) anyerror!@import("../../fios/current_registry_activity.zig").Observation {
++    const registry: *ModelRegistry = @ptrCast(@alignCast(raw));
++    return @import("../../fios/current_registry_activity.zig").captureKnown(io, tracker, registry);
++}
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index f16c05f..bbb189d 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -3253,3 +3253,27 @@ test "fios current registry transition uses cached metadata under its mutex" {
+     defer owners.shared().endModelMutation(io, ticket) catch unreachable;
+     try testing.expect(Probe.calls.load(.monotonic) > before);
+ }
++
++test "fios current registry coupled observation uses real metadata without model effects" {
++    const io = std.testing.io;
++    const facts = @import("../../fios/current_registry_activity.zig");
++    const registry = try ModelRegistry.init(std.testing.allocator,io,null,2,0,null);defer registry.deinit();
++    const model = try registry.registerStub("fixture/coupled-registry","/fixture/never-loaded",null);
++    defer {
++        registry.mutex.lockUncancelable(io);model.state = .unloaded;registry.mutex.unlock(io);
++    }
++    var tracker: fios_owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io,@splat(135));
++    const root = try tracker.enter(io);try tracker.bind(io,root,model.id);
++    const held = try tracker.retainTokens(io,&.{root});const ticket = try tracker.beginQueued(io,&held);try tracker.leave(io,root);
++    const queued = try facts.captureKnown(io,&tracker,registry);
++    try std.testing.expectEqual(@as(usize,1),queued.queued);try std.testing.expectEqual(@as(usize,1),queued.model_count);
++    try std.testing.expect(std.mem.eql(u8,queued.models[0].id[0..queued.models[0].len],model.id));
++    try std.testing.expect(!queued.models[0].ready_declared and !queued.transitioning);
++    registry.mutex.lockUncancelable(io);model.state = .loading;_ = registry.generation.fetchAdd(1,.release);registry.mutex.unlock(io);
++    try tracker.activateQueued(io,ticket);
++    const active = try facts.captureKnown(io,&tracker,registry);
++    try std.testing.expect(active.transitioning and active.models[0].transitioning);
++    try std.testing.expectEqual(@as(usize,1),active.active);try std.testing.expectEqual(@as(usize,0),active.queued);
++    try std.testing.expect(active.registry_generation>queued.registry_generation and active.sample_sequence>queued.sample_sequence);
++    try tracker.retireQueued(io,ticket);try std.testing.expect(held.releaseIfCertain(io));
++}
+diff --git a/src/fios/current_registry_activity.zig b/src/fios/current_registry_activity.zig
+new file mode 100644
+index 0000000..4aecbc2
+--- /dev/null
++++ b/src/fios/current_registry_activity.zig
+@@ -0,0 +1,78 @@
++//! Coupled readonly registry/request facts. No sampled GPU, idle, reservation
++//! or all-client authority; ready_declared describes only the registry enum.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++pub const scan_limit = 4096;
++pub const Row = struct {
++    id: [owners.model_limit]u8 = @splat(0),
++    len: usize = 0,
++    ready_declared: bool = false,
++    transitioning: bool = false,
++    uncertain: bool = false,
++    preparing: usize = 0,
++    queued: usize = 0,
++    active: usize = 0,
++    responding: usize = 0,
++};
++pub const Observation = struct {
++    instance: [16]u8,
++    sample_sequence: u64,
++    registry_generation: u64,
++    uncertain: bool,
++    transitioning: bool = false,
++    owned: usize,
++    ingress: usize,
++    preparing: usize,
++    queued: usize,
++    active: usize,
++    responding: usize,
++    model_count: usize = 0,
++    models: [owners.model_capacity]Row = @splat(.{}),
++};
++// Registry→tracker is the existing transition lock order. Try both locks;
++// contention yields unavailable, never stale/empty fallback or waiting on work.
++pub fn captureKnown(io: std.Io, tracker: *owners.Tracker, registry: anytype) !Observation {
++    if (!registry.mutex.tryLock()) return error.RegistryBusy;
++    defer registry.mutex.unlock(io);
++    if (registry.entries.count() > scan_limit) return error.RegistryScanLimit;
++    const generation = registry.generation.load(.acquire);
++    if (generation > owners.maximum_sample_sequence) return error.RegistryGenerationLimit;
++    const snapshot = tracker.tryQueuedSnapshotKnown(io) orelse return error.TrackerBusy;
++    if (!snapshot.initialized or snapshot.owned != snapshot.ingress + snapshot.preparing + snapshot.queued + snapshot.active + snapshot.responding)
++        return error.IncoherentOwnership;
++    var result: Observation = .{ .instance = snapshot.instance, .sample_sequence = snapshot.sample_sequence,
++        .registry_generation = generation, .uncertain = snapshot.uncertain, .owned = snapshot.owned,
++        .ingress = snapshot.ingress, .preparing = snapshot.preparing, .queued = snapshot.queued,
++        .active = snapshot.active, .responding = snapshot.responding };
++    for (snapshot.models[0..snapshot.model_count]) |model| {
++        const id = model.id[0..model.len];
++        const registered = registry.entries.get(id) orelse return error.MissingRegistryIdentity;
++        if (!std.mem.eql(u8, registered.id, id)) return error.MissingRegistryIdentity;
++        const row = try add(&result, id);
++        row.preparing = model.preparing;row.queued = model.queued;row.active = model.active;row.responding = model.responding;
++    }
++    var iterator = registry.entries.iterator();
++    while (iterator.next()) |entry| {
++        const model = entry.value_ptr.*;
++        const uncertain = model.fios_load_uncertain.load(.acquire);
++        const transitioning = model.state == .loading or model.state == .evicting;
++        if (model.state != .ready and !transitioning and !uncertain and find(&result, model.id) == null) continue;
++        const row = try add(&result, model.id);
++        row.ready_declared = model.state == .ready;row.transitioning = transitioning;row.uncertain = uncertain;
++        result.transitioning = result.transitioning or transitioning;
++        result.uncertain = result.uncertain or uncertain;
++    }
++    if (registry.generation.load(.acquire) != generation) return error.RegistryChanged;
++    return result;
++}
++fn find(result: *Observation, id: []const u8) ?*Row {
++    for (result.models[0..result.model_count]) |*row| if (std.mem.eql(u8, row.id[0..row.len], id)) return row;
++    return null;
++}
++fn add(result: *Observation, id: []const u8) !*Row {
++    if (id.len == 0 or id.len > owners.model_limit or !std.unicode.utf8ValidateSlice(id) or std.mem.indexOfScalar(u8,id,0) != null) return error.InvalidRegistryIdentity;
++    if (find(result,id)) |row| return row;
++    if (result.model_count == owners.model_capacity) return error.RegistryModelLimit;
++    const row = &result.models[result.model_count];row.* = .{};row.len = id.len;@memcpy(row.id[0..id.len],id);result.model_count += 1;
++    return row;
++}

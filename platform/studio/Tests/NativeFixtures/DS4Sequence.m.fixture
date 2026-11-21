@@ -1,0 +1,33 @@
+// Explicit private counter boundary. No GPU/model/backend initialization.
+#define REQUIRE(v,m) do{if(!(v)){fprintf(stderr,"%s\n",m);return 77;}}while(0)
+int main(int argc,char **argv){@autoreleasepool{
+ REQUIRE(argc==2,"SEQUENCE_ARGUMENTS");
+ REQUIRE(!g_initialized&&!g_device&&!g_fios_pending_uncertain,"SEQUENCE_NOT_COLD");
+ g_stream_expert_cache_cb_seq=UINT64_MAX;
+ g_stream_expert_cache_done_seq=9;g_stream_expert_cache_batch_seq=13;
+ g_stream_expert_cache_owned_seq=12;g_stream_expert_cache_pending_max_seq=14;
+ g_stream_expert_cache[0][0].inflight_seq=23;
+ uint64_t expected_owned=12;
+ if (!strcmp(argv[1],"--last")) {
+  g_stream_expert_cache_cb_seq=UINT64_MAX-1;
+  REQUIRE(ds4_gpu_stream_expert_cache_note_owned_created()&&g_stream_expert_cache_cb_seq==UINT64_MAX&&
+    g_stream_expert_cache_owned_seq==UINT64_MAX&&!g_fios_pending_uncertain,"LAST_VALID_SEQUENCE_REFUSED");
+  expected_owned=UINT64_MAX;
+ }
+ if (!strcmp(argv[1],"--begin")) {
+  REQUIRE(!ds4_gpu_begin_commands()&&!g_initialized&&!g_device,"FIO_DS4_EXHAUSTION_INITIALIZED_BACKEND");
+ } else {
+  REQUIRE(!strcmp(argv[1],"--counter")||!strcmp(argv[1],"--last"),"SEQUENCE_MODE");
+  REQUIRE(ds4_gpu_stream_expert_cache_next_cb_seq()==0,"FIO_DS4_CACHE_SEQUENCE_WRAPPED");
+ }
+ REQUIRE(g_fios_pending_uncertain&&g_stream_expert_cache_cb_seq==UINT64_MAX&&
+  g_stream_expert_cache_done_seq==9&&g_stream_expert_cache_batch_seq==13&&
+  g_stream_expert_cache_owned_seq==expected_owned&&g_stream_expert_cache_pending_max_seq==14&&
+  g_stream_expert_cache[0][0].inflight_seq==23,"FIO_DS4_CACHE_SEQUENCE_DISCARDED_CUSTODY");
+ REQUIRE(!ds4_gpu_stream_expert_cache_note_batch_created()&&!ds4_gpu_stream_expert_cache_note_owned_created(),"FIO_DS4_EXHAUSTION_CREATED_SEQUENCE");
+ REQUIRE(ds4_gpu_stream_expert_cache_next_cb_seq()==0&&!ds4_gpu_begin_commands()&&!ds4_gpu_synchronize(),"FIO_DS4_CACHE_EXHAUSTION_REOPENED");
+ ds4_gpu_cleanup();
+ REQUIRE(!g_initialized&&!g_device&&g_fios_pending_uncertain,"CACHE_EXHAUSTION_INITIALIZED_OR_REFUNDED");
+ puts("PASS: exhausted actual cache sequence refuses without initialization and preserves all prior accounting.");
+ return 0;
+}}

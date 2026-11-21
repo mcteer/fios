@@ -1,0 +1,389 @@
+diff --git a/src/engines/mlx/plugin/driver.zig b/src/engines/mlx/plugin/driver.zig
+index 34c408f..6bba945 100644
+--- a/src/engines/mlx/plugin/driver.zig
++++ b/src/engines/mlx/plugin/driver.zig
+@@ -47,6 +47,7 @@ const Array = mlx.mlx_array;
+ 
+ /// A loaded plugin model behind a `Transformer` shell (`Transformer.plugin`).
+ pub const Bound = struct {
++    fios_unbind_attempted: std.atomic.Value(bool) = .init(false),
+     table: *const abi.ModelTable,
+     model: *anyopaque,
+     /// The shell carries the trunk's embedding table and head and the forward captures layers: drafters bind.
+@@ -404,9 +405,20 @@ fn adoptRotations(xfm: *Transformer, table: *const abi.ModelTable, m: *anyopaque
+     }
+ }
+ 
+-pub fn unbind(b: *Bound, a: std.mem.Allocator) void {
++pub fn tryUnbind(b: *Bound, a: std.mem.Allocator) bool {
++    if (b.fios_unbind_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
++    const options = @import("build_options");
++    const cleanup = @import("../../../fios/current_cleanup_uncertainty.zig");
++    const io = std.Io.Threaded.global_single_threaded.io();
++    if (cleanup.known(io, options.fios_source_sdk, options.llama_engine)) return false;
+     b.table.unload(b.model);
++    if (cleanup.known(io, options.fios_source_sdk, options.llama_engine)) return false;
+     a.destroy(b);
++    return true;
++}
++
++pub fn unbind(b: *Bound, a: std.mem.Allocator) void {
++    _ = tryUnbind(b, a);
+ }
+ 
+ /// The first `ForwardCtx` field a served forward has no hook for; null when it serves them all.
+diff --git a/src/engines/mlx/runtime/model_state.zig b/src/engines/mlx/runtime/model_state.zig
+index 71be922..b772df0 100644
+--- a/src/engines/mlx/runtime/model_state.zig
++++ b/src/engines/mlx/runtime/model_state.zig
+@@ -8,9 +8,13 @@ const LoadedModel = registry.LoadedModel;
+ /// Frees the entry's MLX objects (MTP head, drafters, vision tower, transformer, weights, prefix cache), in
+ /// dependency order. Null fields are skipped.
+ pub fn freeMlx(self: *LoadedModel) void {
++    self.fios_local_free_finished = false;
++    const io = std.Io.Threaded.global_single_threaded.io();
++    if (registry.cleanupUncertain(io)) return;
+     // Cache snapshots call into their plugin binding, which the transformer owns.
+     if (self.prefix_cache) |hc| {
+         hc.deinit();
++        if (registry.cleanupUncertain(io)) return;
+         self.allocator.destroy(hc);
+         self.prefix_cache = null;
+     }
+@@ -21,11 +25,13 @@ pub fn freeMlx(self: *LoadedModel) void {
+         switch (h.*) {
+             .qwen => |q| {
+                 q.deinit();
++                if (registry.cleanupUncertain(io)) return;
+                 self.allocator.destroy(q);
+             },
+             .qwen4 => {},
+             .plugin => |m| {
+                 m.deinit();
++                if (registry.cleanupUncertain(io)) return;
+                 self.allocator.destroy(m);
+             },
+         }
+@@ -34,29 +40,35 @@ pub fn freeMlx(self: *LoadedModel) void {
+     }
+     if (self.drafter) |d| {
+         d.deinit();
++        if (registry.cleanupUncertain(io)) return;
+         self.allocator.destroy(d);
+         self.drafter = null;
+     }
+     if (self.dflash) |d| {
+         d.deinit();
++        if (registry.cleanupUncertain(io)) return;
+         self.allocator.destroy(d);
+         self.dflash = null;
+     }
+     if (self.vision_encoder) |v| {
+         v.deinit();
++        if (registry.cleanupUncertain(io)) return;
+         self.allocator.destroy(v);
+         self.vision_encoder = null;
+     }
+     if (self.transformer) |x| {
+-        x.deinit();
++        if (!x.tryDeinit()) return;
+         self.allocator.destroy(x);
+         self.transformer = null;
+     }
+     if (self.weights) |w| {
+         w.deinit();
++        if (registry.cleanupUncertain(io)) return;
+         self.allocator.destroy(w);
+         self.weights = null;
+     }
++    if (registry.cleanupUncertain(io)) return;
++    self.fios_local_free_finished = true;
+ }
+ 
+ /// Free only the mlx-allocating state (weights/transformer/vision/
+@@ -75,7 +87,7 @@ pub fn unloadResident(self: *LoadedModel) void {
+     if (registry.cleanupUncertain(io)) return;
+     self.gen_busy = false;
+     freeMlx(self);
+-    if (registry.cleanupUncertain(io)) return;
++    if (!self.fios_local_free_finished or registry.cleanupUncertain(io)) return;
+     if (self.drafter_path.len > 0) {
+         self.allocator.free(self.drafter_path);
+         self.drafter_path = "";
+diff --git a/src/engines/mlx/transformer.zig b/src/engines/mlx/transformer.zig
+index 5fb3034..1228e05 100644
+--- a/src/engines/mlx/transformer.zig
++++ b/src/engines/mlx/transformer.zig
+@@ -468,6 +468,7 @@ pub const Transformer = struct {
+     mlx_stream_ext: ?*mlx_stream_mod.Model = null,
+     /// A pack served through its plugin's table (`engines/mlx/plugin/driver.zig`): every forward goes there.
+     plugin: ?*plugin_driver.Bound = null,
++    fios_deinit_attempted: std.atomic.Value(bool) = .init(false),
+ 
+     // MoE-specific (null/empty for standard models)
+     moe_layers: ?[]MoeLayerWeights,
+@@ -805,32 +806,51 @@ pub const Transformer = struct {
+     pub const createSlidingWindowDecodeMask = @import("methods/masks.zig").createSlidingWindowDecodeMask;
+     pub const createSlidingWindowMask = @import("methods/masks.zig").createSlidingWindowMask;
+ 
++    fn fiosCleanupUnknown() bool {
++        const options = @import("build_options");
++        return @import("../../fios/current_cleanup_uncertainty.zig").known(std.Io.Threaded.global_single_threaded.io(), options.fios_source_sdk, options.llama_engine);
++    }
++
+     pub fn deinit(self: *Transformer) void {
++        _ = self.tryDeinit();
++    }
++
++    /// Checked local field retirement only. Partially retired members are not
++    /// reusable, and no callback may be replayed after a retained refusal.
++    pub fn tryDeinit(self: *Transformer) bool {
++        if (self.fios_deinit_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
++        if (fiosCleanupUnknown()) return false;
+         lane_qmm.release(@intFromPtr(self));
++        if (fiosCleanupUnknown()) return false;
+         if (self.ane_prefill) |eng| {
+             eng.deinit();
++            if (fiosCleanupUnknown()) return false;
+             self.ane_prefill = null;
+         }
+         if (self.ane_chan) |rests| {
+             for (rests) |*r| r.deinit();
++            if (fiosCleanupUnknown()) return false;
+             self.allocator.free(rests);
+             self.ane_chan = null;
+         }
+         if (self.mlx_stream_ext) |m| {
+             mlx_stream_mod.close(m);
++            if (fiosCleanupUnknown()) return false;
+             self.mlx_stream_ext = null;
+         }
+         if (self.plugin) |b| {
+-            plugin_driver.unbind(b, self.allocator);
++            if (!plugin_driver.tryUnbind(b, self.allocator)) return false;
+             self.plugin = null;
+         }
+         if (self.rht) |reg| {
+             reg.deinit();
++            if (fiosCleanupUnknown()) return false;
+             self.allocator.destroy(reg);
+             self.rht = null;
+         }
+         if (self.int8_cache) |c| {
+             c.deinit();
++            if (fiosCleanupUnknown()) return false;
+             self.allocator.destroy(c);
+             self.int8_cache = null;
+         }
+@@ -852,6 +872,7 @@ pub const Transformer = struct {
+         self.yarn_mscale_cast.deinit();
+         if (self.prompt_cache) |*pc| pc.deinit();
+         self.cache.deinit();
++        if (fiosCleanupUnknown()) return false;
+         if (self.emb_scale) |es| _ = mlx.mlx_array_free(es);
+         if (self.gelu_coeff) |g| _ = mlx.mlx_array_free(g);
+         if (self.gelu_inner) |g| _ = mlx.mlx_array_free(g);
+@@ -887,6 +908,8 @@ pub const Transformer = struct {
+         _ = mlx.mlx_stream_free(self.s);
+         // The free above is a no-op on the default stream's wrapper but we keep it for symmetry
+         // with the Zig copy of the mlx_stream struct that init handed us.
++        if (fiosCleanupUnknown()) return false;
++        return true;
+     }
+ 
+     /// Re-bind `self.s` to the *current* thread's default GPU stream. Must be called from any
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index efba739..a4b3a1c 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -296,6 +296,10 @@ pub const LoadedModel = struct {
+     bytes_resident: u64,
+     /// Local function return only; never native terminality or admission.
+     fios_local_unload_finished: bool = false,
++    /// Local function completion only: never device/global native terminality.
++    fios_local_free_finished: bool = false,
++    fios_local_cleanup_done: bool = false,
++    fios_teardown_attempted: std.atomic.Value(bool) = .init(false),
+     /// MLX bytes the load added, measured at ready: above `bytes_resident` when the model fills its own cache
+     /// at load (a plugin's streamed-expert cache), so eviction credits what unloading frees.
+     bytes_live: u64 = 0,
+@@ -416,10 +420,26 @@ pub const LoadedModel = struct {
+     /// must run on the scheduler's inference thread (thread-local GPU
+     /// stream); the caller arranges this via `unloadResident` invoked
+     /// from the inference thread before registry teardown.
+-    pub fn deinit(self: *LoadedModel) void {
+-        if (!self.tryCloseEngine() or !self.tryCloseMedia()) return;
++    pub fn tryReleaseNativeFields(self: *LoadedModel) bool {
++        if (self.fios_local_cleanup_done) return true;
++        const io = std.Io.Threaded.global_single_threaded.io();
++        if (cleanupUncertain(io) or self.refcount.load(.acquire) != 0) return false;
++        if (self.fios_teardown_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return false;
++        if (!self.tryCloseEngine() or !self.tryCloseMedia()) return false;
+         self.gen_busy = false;
++        self.fios_local_free_finished = false;
+         mlx_engine.api().free_model_state(self);
++        if (!self.fios_local_free_finished or cleanupUncertain(io)) return false;
++        self.fios_local_cleanup_done = true;
++        return true;
++    }
++
++    pub fn deinit(self: *LoadedModel) void {
++        if (!self.tryReleaseNativeFields()) return;
++        self.deinitCpu();
++    }
++
++    fn deinitCpu(self: *LoadedModel) void {
+         if (self.token_bytes) |*tb| {
+             // Decoded from `tokenizer`'s vocabulary — same lifetime, freed
+             // first so the table never outlives the ids it describes.
+@@ -633,7 +653,8 @@ pub const ModelRegistry = struct {
+         idle_evict_secs: ?u32,
+     ) !*ModelRegistry {
+         const self = try allocator.create(ModelRegistry);
+-        errdefer allocator.destroy(self);
++        var destroy_self_on_error = true;
++        errdefer if (destroy_self_on_error) allocator.destroy(self);
+         self.* = .{
+             .allocator = allocator,
+             .io = io,
+@@ -656,7 +677,7 @@ pub const ModelRegistry = struct {
+         // on-demand. Allocation failures here roll back any partial
+         // entries via errdefer so we don't leak strings on OOM.
+         if (discovery) |d| {
+-            errdefer self.deinitInternal();
++            errdefer if (!self.deinitInternal()) { destroy_self_on_error = false; };
+             for (d.models) |m| {
+                 _ = try self.registerStubWithArch(m.id, m.path, m.bytes_on_disk, m.model_type);
+             }
+@@ -682,27 +703,28 @@ pub const ModelRegistry = struct {
+         }
+         self.mutex.unlock(self.io);
+         if (borrowed) return;
+-        // Complete existing served callbacks before freeing ANY entry keys.
+-        // Refusal can then retain a valid map even after earlier normal closes.
+-        // Constructor rollback contains only unloaded stubs and bypasses this
+-        // public shutdown phase; other media/MLX destructors remain separate.
+-        var closers = self.entries.valueIterator();
+-        while (closers.next()) |entry| {
+-            if (!entry.*.tryCloseEngine() or !entry.*.tryCloseMedia()) return;
+-        }
+-        self.deinitInternal();
++        if (!self.deinitInternal()) return;
+         self.allocator.destroy(self);
+     }
+ 
+-    fn deinitInternal(self: *ModelRegistry) void {
++    fn deinitInternal(self: *ModelRegistry) bool {
++        // Phase one may call native-capable callbacks. Keep EVERY map key and
++        // entry intact until all checked local field retirements succeed.
++        var native_entries = self.entries.valueIterator();
++        while (native_entries.next()) |entry| {
++            if (!entry.*.tryReleaseNativeFields()) return false;
++        }
++        if (cleanupUncertain(self.io)) return false;
++        // No native-capable operation remains in this CPU-only phase.
+         var it = self.entries.valueIterator();
+         while (it.next()) |entry_ptr| {
+             const entry = entry_ptr.*;
+-            entry.deinit();
++            entry.deinitCpu();
+             self.allocator.destroy(entry);
+         }
+         self.entries.deinit();
+         if (self.discovery) |*d| d.deinit();
++        return true;
+     }
+ 
+     /// Insert an `.unloaded` stub for a model. Returns the heap-allocated
+@@ -2871,3 +2893,91 @@ test "fios current registry media close retains callback refusal through the par
+         }
+     }
+ }
++
++test "fios current MLX model teardown retains callback uncertainty through registry" {
++    const io = std.testing.io;
++    const page = std.heap.page_allocator;
++    const owners = @import("../../fios/request_ownership.zig");
++    const plugin_driver = @import("../../engines/mlx/plugin/driver.zig");
++    const plugin_api = @import("../../abi/plugin.zig");
++    const moduleShell = @import("../../engines/mlx/modules/shell.zig").moduleShell;
++    const mlxc = @import("../../mlx/ffi.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(199));
++    const Trace = struct {
++        model: usize = 0,
++        registry: usize = 0,
++        sibling: usize = 0,
++        wrapper: usize = 0,
++        transformer: usize = 0,
++        model_freed: bool = false,
++        registry_freed: bool = false,
++        sibling_freed: bool = false,
++        wrapper_freed: bool = false,
++        transformer_freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.model) self.model_freed = true;
++            if (@intFromPtr(bytes.ptr) == self.registry) self.registry_freed = true;
++            if (@intFromPtr(bytes.ptr) == self.sibling) self.sibling_freed = true;
++            if (@intFromPtr(bytes.ptr) == self.wrapper) self.wrapper_freed = true;
++            if (@intFromPtr(bytes.ptr) == self.transformer) self.transformer_freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        io: std.Io,
++        unknown: bool,
++        calls: usize = 0,
++        fn unload(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            if (self.unknown) owners.shared().fence(self.io);
++        }
++    };
++    const model_table = try page.create(plugin_api.ModelTable);
++    model_table.* = undefined;
++    model_table.unload = Probe.unload;
++    for ([_]bool{ false, true }) |unknown| {
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const allocator = trace.allocator();
++        const registry = try ModelRegistry.init(allocator, io, null, 2, 0, null);
++        const model = try registry.registerStub("fixture/mlx-registry-cleanup", "/fixture/never-loaded", null);
++        const sibling = try registry.registerStub("fixture/mlx-registry-sibling", "/fixture/also-never-loaded", null);
++        trace.sibling = @intFromPtr(sibling);
++        trace.registry = @intFromPtr(registry);
++        trace.model = @intFromPtr(model);
++        const probe = try page.create(Probe);
++        probe.* = .{ .io = io, .unknown = unknown };
++        const bound = try allocator.create(plugin_driver.Bound);
++        bound.* = .{ .table = model_table, .model = probe };
++        const transformer = try allocator.create(Transformer);
++        const config = std.mem.zeroInit(model_mod.ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
++        transformer.* = try moduleShell(allocator, config, mlxc.gpuStream());
++        transformer.plugin = bound;
++        trace.wrapper = @intFromPtr(bound);
++        trace.transformer = @intFromPtr(transformer);
++        model.transformer = transformer;
++        registry.deinit();
++        try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        if (unknown) {
++            if (trace.model_freed or trace.registry_freed) std.debug.print("FIO_CURRENT_MLX_REGISTRY_DROPPED_CALLBACK_CUSTODY\n", .{});
++            try std.testing.expect(!trace.model_freed and !trace.registry_freed and !trace.sibling_freed and !trace.wrapper_freed and !trace.transformer_freed);
++            try std.testing.expectEqualStrings("fixture/mlx-registry-cleanup", model.id);
++            try std.testing.expect(model.transformer == transformer and transformer.plugin == bound);
++            try std.testing.expectEqual(@as(usize, 2), registry.entries.count());
++            registry.deinit();
++            try std.testing.expectEqual(@as(usize, 1), probe.calls);
++        } else {
++            try std.testing.expect(trace.model_freed and trace.registry_freed and trace.sibling_freed and trace.wrapper_freed and trace.transformer_freed);
++            page.destroy(probe);
++            page.destroy(trace);
++        }
++    }
++}

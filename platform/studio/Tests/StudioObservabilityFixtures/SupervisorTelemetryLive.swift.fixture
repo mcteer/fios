@@ -1,0 +1,8 @@
+@main struct SupervisorTelemetryLive {
+    static func main() throws {
+        let args=CommandLine.arguments
+        guard args.count==4 else {exit(2)}
+        try SupervisorRuntime.run(directory:URL(fileURLWithPath:args[1]),manager:URL(fileURLWithPath:args[3]),
+            telemetry:CapturedTelemetry(destination:URL(fileURLWithPath:args[2]),service:.supervisor))
+    }
+}

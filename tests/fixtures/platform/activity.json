@@ -1,0 +1,622 @@
+{
+  "version": 1,
+  "scope": "normalized_activity_policy_only",
+  "native_authority": false,
+  "cases": [
+    {
+      "id": "source-ceiling-unknown",
+      "coverage": "all_clients",
+      "source_coverage": "unknown",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [],
+      "transitioning": false,
+      "expected": {"coverage": "unknown", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "source-ceiling-unsupported",
+      "coverage": "all_clients",
+      "source_coverage": "unsupported",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [],
+      "transitioning": false,
+      "expected": {"coverage": "unsupported", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "claimed-coverage-unknown",
+      "coverage": "unknown",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [],
+      "transitioning": false,
+      "expected": {"coverage": "unknown", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "claimed-coverage-unsupported",
+      "coverage": "unsupported",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [],
+      "transitioning": false,
+      "expected": {"coverage": "unsupported", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "idle-resident",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "model-a", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "idle", "model": "model-a", "owners": 0},
+      "permits": [
+        {"target": "model-a", "allowed": true},
+        {"target": "model-b", "allowed": true}
+      ]
+    },
+    {
+      "id": "idle-empty",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "idle", "model": null, "owners": 0},
+      "permits": [
+        {"target": "model-a", "allowed": true},
+        {"target": "model-b", "allowed": true}
+      ]
+    },
+    {
+      "id": "phase-ingress",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 1, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "model-a", "resident": true, "phases": {"ingress": 1, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "preparing", "model": "model-a", "owners": 1},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "phase-preparing",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 1, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "model-a", "resident": true, "phases": {"ingress": 0, "preparing": 1, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "preparing", "model": "model-a", "owners": 1},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "phase-queued",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 1, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "model-a", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 1, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "queued", "model": "model-a", "owners": 1},
+      "permits": [
+        {"target": "model-a", "allowed": true},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "phase-active",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 1, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "model-a", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 1, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "active", "model": "model-a", "owners": 1},
+      "permits": [
+        {"target": "model-a", "allowed": true},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "phase-responding",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 1},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "model-a", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 1}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "active", "model": "model-a", "owners": 1},
+      "permits": [
+        {"target": "model-a", "allowed": true},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "slow-response",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 2},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "model-a", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 2}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "active", "model": "model-a", "owners": 2},
+      "permits": [
+        {"target": "model-a", "allowed": true},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "aggregate-mismatch",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 2},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "model-a", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "multiple-residents",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "a", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "b", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "duplicate-model",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "model-a", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "model-a", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "unattributed-active",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 1, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 1, "responding": 0},
+      "models": [],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "transitioning",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [],
+      "transitioning": true,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "negative-counter",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": -1, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "a", "resident": true, "phases": {"ingress": -1, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "oversize-counter",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 2147483648, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "a", "resident": true, "phases": {"ingress": 2147483648, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "owner-sum-overflow",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 2147483647, "preparing": 1, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "a", "resident": true, "phases": {"ingress": 2147483647, "preparing": 1, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "model-sum-overflow",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 2147483647, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "a", "resident": false, "phases": {"ingress": 2147483647, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "b", "resident": false, "phases": {"ingress": 1, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "model-capacity",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "m0", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m1", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m2", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m3", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m4", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m5", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m6", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m7", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m8", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m9", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m10", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m11", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m12", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m13", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m14", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m15", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m16", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m17", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m18", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m19", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m20", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m21", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m22", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m23", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m24", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m25", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m26", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m27", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m28", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m29", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m30", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m31", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m32", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m33", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m34", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m35", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m36", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m37", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m38", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m39", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m40", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m41", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m42", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m43", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m44", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m45", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m46", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m47", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m48", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m49", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m50", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m51", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m52", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m53", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m54", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m55", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m56", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m57", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m58", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m59", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m60", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m61", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m62", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m63", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "idle", "model": null, "owners": 0},
+      "permits": [
+        {"target": "model-a", "allowed": true},
+        {"target": "model-b", "allowed": true}
+      ]
+    },
+    {
+      "id": "model-capacity-overflow",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "m0", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m1", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m2", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m3", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m4", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m5", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m6", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m7", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m8", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m9", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m10", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m11", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m12", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m13", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m14", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m15", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m16", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m17", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m18", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m19", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m20", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m21", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m22", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m23", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m24", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m25", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m26", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m27", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m28", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m29", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m30", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m31", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m32", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m33", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m34", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m35", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m36", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m37", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m38", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m39", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m40", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m41", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m42", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m43", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m44", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m45", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m46", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m47", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m48", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m49", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m50", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m51", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m52", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m53", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m54", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m55", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m56", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m57", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m58", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m59", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m60", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m61", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m62", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "m63", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "overflow", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "empty-model",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "model-byte-boundary",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "idle", "model": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "owners": 0},
+      "permits": [
+        {"target": "model-b", "allowed": true}
+      ]
+    },
+    {
+      "id": "model-byte-overflow",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "busy-nonresident-conflict",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 1, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "active", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 1, "active": 0, "responding": 0}},
+        {"model": "other", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "multiple-busy-models",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 2, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "a", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 1, "active": 0, "responding": 0}},
+        {"model": "b", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 1, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    },
+    {
+      "id": "unicode-target-byte-identity",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 1, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "café", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 1, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "queued", "model": "café", "owners": 1},
+      "permits": [
+        {"target": "café", "allowed": true},
+        {"target": "café", "allowed": false}
+      ]
+    },
+    {
+      "id": "unicode-distinct-models",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "café", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}},
+        {"model": "café", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "idle", "model": null, "owners": 0},
+      "permits": [
+        {"target": "café", "allowed": true},
+        {"target": "café", "allowed": true}
+      ]
+    },
+    {
+      "id": "unicode-resident-conflict",
+      "coverage": "all_clients",
+      "source_coverage": "all_clients",
+      "totals": {"ingress": 0, "preparing": 0, "queued": 1, "active": 0, "responding": 0},
+      "unattributed": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0},
+      "models": [
+        {"model": "café", "resident": false, "phases": {"ingress": 0, "preparing": 0, "queued": 1, "active": 0, "responding": 0}},
+        {"model": "café", "resident": true, "phases": {"ingress": 0, "preparing": 0, "queued": 0, "active": 0, "responding": 0}}
+      ],
+      "transitioning": false,
+      "expected": {"coverage": "all_clients", "state": "unknown", "model": null, "owners": null},
+      "permits": [
+        {"target": "model-a", "allowed": false},
+        {"target": "model-b", "allowed": false}
+      ]
+    }
+  ]
+}

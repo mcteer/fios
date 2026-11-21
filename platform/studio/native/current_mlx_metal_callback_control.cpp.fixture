@@ -1,0 +1,54 @@
+// CPU metadata only. No Metal objects, backend, model, callback hardware fault or service.
+#include <memory>
+#include <string>
+#include <stdexcept>
+#include <cstdio>
+#include <cstring>
+#include <utility>
+static bool host_uncertain,cleanup_fenced,left_fenced,in_scope;
+static unsigned entered,left,cleaned,ended;
+struct Error {
+ std::shared_ptr<std::string> value;
+ bool valid() const {return bool(value);}
+ void set_message(std::shared_ptr<std::string> message) {value=std::move(message);}
+};
+struct FiosMetalCapture {bool failed=false;};
+struct Owners {};
+static std::shared_ptr<Owners> fios_take_metal_request_owners(const std::shared_ptr<FiosMetalCapture>&) {return std::make_shared<Owners>();}
+struct FiosRequestOwnerScope {
+ explicit FiosRequestOwnerScope(std::shared_ptr<Owners>) {in_scope=true;entered++;}
+ void fence() {host_uncertain=true;}
+ ~FiosRequestOwnerScope() {left_fenced=host_uncertain;in_scope=false;left++;}
+};
+static void fios_metal_capture_end(const std::shared_ptr<FiosMetalCapture>& capture,bool failed) {capture->failed=failed;ended++;}
+// FIOS_GENUINE_CALLBACK_HELPER
+int main(int argc,char **argv) {
+ if(argc!=2)return 1;
+ const bool healthy=std::strcmp(argv[1],"healthy")==0;
+ const bool combined=std::strcmp(argv[1],"work-and-cleanup-error")==0;
+ const bool work_error=combined||std::strcmp(argv[1],"work-error")==0;
+ const bool nonstd_error=std::strcmp(argv[1],"nonstd-error")==0;
+ const bool preexisting=std::strcmp(argv[1],"preexisting-error")==0;
+ const bool cleanup_error=combined||std::strcmp(argv[1],"cleanup-error")==0;
+ if(!healthy&&!work_error&&!nonstd_error&&!preexisting&&!cleanup_error)return 2;
+ auto capture=std::make_shared<FiosMetalCapture>();Error error;
+ if(preexisting)error.set_message(std::make_shared<std::string>("existing bounded CPU error"));
+ fios_owned_metal_callback(capture,error,[&] {
+  if(!in_scope)throw std::runtime_error("missing source scope");
+  if(work_error)throw std::runtime_error("bounded ordinary CPU callback error");
+  if(nonstd_error)throw 7;
+ },[&] {
+  cleaned++;cleanup_fenced=host_uncertain;
+  if(!in_scope)throw std::runtime_error("cleanup outside source scope");
+  if(cleanup_error)throw std::runtime_error("bounded ordinary CPU cleanup error");
+  fios_metal_capture_end(capture,error.valid());
+ });
+ if(entered!=1||left!=1||cleaned!=1||ended!=1||in_scope)return 3;
+ if(healthy)return !error.valid()&&!host_uncertain&&!capture->failed?0:4;
+ if(!error.valid()||!capture->failed)return 5;
+ const char *expected=preexisting?"existing bounded CPU error":work_error?"bounded ordinary CPU callback error":nonstd_error?"Native Metal callback failed":"bounded ordinary CPU cleanup error";
+ if(*error.value!=expected)return 8;
+ if(cleanup_error&&!left_fenced) {std::fputs("FIO_METAL_SCOPE_LEFT_BEFORE_CLEANUP_ERROR_FENCE\n",stderr);return 77;}
+ if((!cleanup_error||combined)&&!cleanup_fenced) {std::fputs("FIO_METAL_CALLBACK_INPUTS_CLEANED_BEFORE_OWNER_FENCE\n",stderr);return 77;}
+ return host_uncertain?0:6;
+}

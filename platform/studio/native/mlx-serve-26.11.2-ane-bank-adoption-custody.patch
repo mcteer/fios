@@ -1,0 +1,270 @@
+diff --git a/src/engines/mlx/ane_prefill.zig b/src/engines/mlx/ane_prefill.zig
+index d72f217..eb8a8a5 100644
+--- a/src/engines/mlx/ane_prefill.zig
++++ b/src/engines/mlx/ane_prefill.zig
+@@ -496,6 +496,7 @@ pub fn buildAnePrefill(
+     share: f32,
+     headroom_resolver: ?*const fn (*const model_mod.ModelConfig, u32) u64,
+ ) void {
++    if (source_guard.known()) return;
+     if (self.ane_prefill != null) return;
+     if (!ane_offload.available()) {
+         log.warn("[ane] unavailable: AppleNeuralEngine framework not present — --ane-prefill disabled\n", .{});
+@@ -619,7 +620,9 @@ pub fn buildAnePrefill(
+     // build otherwise stays partial for the whole serve.
+     var pass: usize = 0;
+     while (pass < 2) : (pass += 1) {
++        if (source_guard.known()) return;
+         for (layers, 0..) |*al, i| {
++            if (source_guard.known()) return;
+             if (al.mlp) |*dw| {
+                 if (eng.mlpReady(i)) continue;
+                 const gate = self.dequantToHostF32(self.allocator, dw.gate_w, dw.gate_s, dw.gate_b, hidden, ffn) catch |err| {
+@@ -662,6 +665,7 @@ pub fn buildAnePrefill(
+             }
+         }
+         if (gdn_on) for (layers, 0..) |*al, i| {
++            if (source_guard.known()) return;
+             if (al.gdn) |*la| {
+                 if (eng.gdnReady(i)) continue;
+                 const qkv = self.dequantToHostF32(self.allocator, la.qkv_w, la.qkv_s, la.qkv_b, hidden, gdn_qkv_out) catch |err| {
+@@ -695,6 +699,7 @@ pub fn buildAnePrefill(
+         // bank of ONE that still fails drops its layer to the GPU, and
+         // those are what the retry pass re-queues.
+         eng.finishPending();
++        if (source_guard.known()) return;
+         const failed = eng.droppedPrograms();
+         if (failed == 0) break;
+         eng.resetDropped();
+@@ -722,6 +727,7 @@ pub fn buildAnePrefill(
+     }
+     const int8_bytes: u64 = (@as(u64, built) * 3 * hidden * eng_ffn + @as(u64, gdn_built) * (@as(u64, eng_qkv) + eng_z) * hidden) * units;
+     const secs: f64 = @as(f64, @floatFromInt(@as(u64, @intCast(build_start.untilNow(io, .awake).nanoseconds)))) / 1e9;
++    if (source_guard.known()) return;
+     eng.publishLive(share, int8_bytes);
+     self.ane_prefill = eng;
+     log.info("[ane] prefill offload ready: units={d} {d}/{d} mlp + {d} gdn layers in {d} banks, rows={d}/{d} (share {d:.2}), int8 ~{d} MB, built in {d:.1}s\n", .{ units, built, layers.len, gdn_built, eng.compiledBanks(), rows, chunk_rows, share, int8_bytes / (1024 * 1024), secs });
+diff --git a/src/sdk/ane/offload.zig b/src/sdk/ane/offload.zig
+index a1ad4a8..68e0299 100644
+--- a/src/sdk/ane/offload.zig
++++ b/src/sdk/ane/offload.zig
+@@ -781,6 +781,7 @@ pub const Unit = struct {
+     /// Per-layer GDN input-projection refs (fused qkv+z).
+     gdn_layers: []?ProgramRef,
+     banks: std.ArrayList(*MsvAneMlp) = .empty,
++    fios_unpublished_bank: ?*MsvAneMlp = null,
+     plane_in: ?*MsvAnePlane = null,
+     plane_mlp_out: ?*MsvAnePlane = null,
+     plane_gdn_out: ?*MsvAnePlane = null,
+@@ -913,10 +914,12 @@ pub const Unit = struct {
+     /// [hidden, ffn] down f32 weights — already sliced to THIS unit's
+     /// channel range by the caller.
+     fn addMlp(self: *Unit, layer: usize, gate: []const f32, up: []const f32, down: []const f32) !void {
++        try source_guard.requireCertain();
+         const alloc = self.allocator();
+         const hidden = self.parent.hidden;
+         const ffn = self.parent.ffn;
+         if (self.pending.items.len > 0 and self.pending_gdn) self.flushPending();
++        try source_guard.requireCertain();
+         var p = Pending{ .layer = @intCast(layer), .gdn = false, .ffn = ffn, .a = undefined, .b = undefined };
+         p.a = try quantizeRowsInt8(alloc, gate, ffn, hidden);
+         errdefer p.a.deinit(alloc);
+@@ -929,12 +932,14 @@ pub const Unit = struct {
+ 
+     /// Queue one layer's GDN input projections (fused qkv+z).
+     fn addGdn(self: *Unit, layer: usize, qkv: []const f32, z: []const f32) !void {
++        try source_guard.requireCertain();
+         const alloc = self.allocator();
+         const hidden = self.parent.hidden;
+         const qkv_out = self.parent.gdn_qkv_out;
+         const z_out = self.parent.gdn_z_out;
+         if (qkv_out == 0 or z_out == 0) return error.AneGdnPlaneMismatch;
+         if (self.pending.items.len > 0 and !self.pending_gdn) self.flushPending();
++        try source_guard.requireCertain();
+         var p = Pending{ .layer = @intCast(layer), .gdn = true, .qkv_out = qkv_out, .z_out = z_out, .a = undefined, .b = undefined };
+         p.a = try quantizeRowsInt8(alloc, qkv, qkv_out, hidden);
+         errdefer p.a.deinit(alloc);
+@@ -947,11 +952,13 @@ pub const Unit = struct {
+     /// caller's errdefers to free the payloads (freeing here as well is the
+     /// double-free).
+     fn enqueue(self: *Unit, p: Pending) !void {
++        try source_guard.requireCertain();
+         // Bound the builder's transient host peak: the queue holds the
+         // quantized payloads and the flush assembles a blob of the same
+         // size beside them, so the cap governs both.
+         const cap = DEFAULT_BANK_MAX_BYTES;
+         if (self.pending.items.len > 0 and self.pending_bytes + p.bytes() > cap) self.flushPending();
++        try source_guard.requireCertain();
+         try self.pending.append(self.allocator(), p);
+         self.pending_gdn = p.gdn;
+         self.pending_bytes += p.bytes();
+@@ -960,6 +967,7 @@ pub const Unit = struct {
+     /// Assemble one bank from `pending[start..start+n)`. Returns false when
+     /// the compile or load was refused — the caller walks the split ladder.
+     fn buildBank(self: *Unit, start: usize, n: usize) bool {
++        if (source_guard.known() or (fios_ane_cleanup and self.fios_unpublished_bank != null)) return false;
+         const bank = msv_ane_bank_create() orelse return false;
+         var err: [512]u8 = @splat(0);
+         var ok = true;
+@@ -978,6 +986,12 @@ pub const Unit = struct {
+             msv_ane_bank_free(bank);
+             return false;
+         }
++        if (source_guard.known()) {
++            // This bank contains only private CPU assembly copies; no native
++            // finish effect has begun. Original pending inputs remain owned.
++            msv_ane_bank_free(bank);
++            return false;
++        }
+         const kind: []const u8 = if (self.pending.items[start].gdn) "gdn" else "mlp";
+         var name_buf: [96]u8 = undefined;
+         const name = std.fmt.bufPrintSentinel(&name_buf, "{s}_u{d}_b{d}_l{d}n{d}_r{d}", .{
+@@ -988,10 +1002,7 @@ pub const Unit = struct {
+             log.warn("[ane] unit {d} bank of {d} programs failed: {s}\n", .{ self.instance, n, std.mem.sliceTo(&err, 0) });
+             return false;
+         };
+-        self.banks.append(self.allocator(), compiled) catch {
+-            msv_ane_mlp_free(compiled);
+-            return false;
+-        };
++        if (!self.adoptBankWith(compiled, fios_ane_cleanup, source_guard.known, msv_ane_mlp_try_free)) return false;
+         for (self.pending.items[start..][0..n], 0..) |*p, i| {
+             const ref = ProgramRef{ .bank = compiled, .proc = @intCast(i) };
+             if (p.gdn) self.gdn_layers[p.layer] = ref else self.layers[p.layer] = ref;
+@@ -999,14 +1010,34 @@ pub const Unit = struct {
+         return true;
+     }
+ 
++    // Called by the sole builder with no outstanding unpublished bank.
++    fn adoptBankWith(self: *Unit, compiled: *MsvAneMlp, comptime enabled: bool, comptime negative: fn () bool, comptime close: anytype) bool {
++        if (enabled) {
++            std.debug.assert(self.fios_unpublished_bank == null);
++            self.fios_unpublished_bank = compiled;
++            if (negative()) return false;
++        }
++        self.banks.append(self.allocator(), compiled) catch {
++            const disposed = close(compiled);
++            if (enabled and disposed) self.fios_unpublished_bank = null;
++            return false;
++        };
++        // Array adoption transfers local custody; it grants no native proof.
++        if (enabled) self.fios_unpublished_bank = null;
++        return !enabled or !negative();
++    }
++
+     /// Compile everything queued, walking the split ladder: one bank for
+     /// the whole group, then halves, then progressively smaller, and only a
+     /// bank of ONE that still fails drops its layer to the GPU.
+     fn flushPending(self: *Unit) void {
++        if (source_guard.known() or (fios_ane_cleanup and self.fios_unpublished_bank != null)) return;
+         defer {
+-            for (self.pending.items) |*p| p.deinit(self.allocator());
+-            self.pending.clearRetainingCapacity();
+-            self.pending_bytes = 0;
++            if (!source_guard.known() and (!fios_ane_cleanup or self.fios_unpublished_bank == null)) {
++                for (self.pending.items) |*p| p.deinit(self.allocator());
++                self.pending.clearRetainingCapacity();
++                self.pending_bytes = 0;
++            }
+         }
+         if (self.pending.items.len == 0) return;
+         const alloc = self.allocator();
+@@ -1024,7 +1055,9 @@ pub const Unit = struct {
+         while (start < self.pending.items.len) {
+             const n = bankGroupLen(sizes, start, group, cap);
+             if (n == 0) break;
+-            if (self.buildBank(start, n)) {
++            const built = self.buildBank(start, n);
++            if (source_guard.known() or (fios_ane_cleanup and self.fios_unpublished_bank != null)) return;
++            if (built) {
+                 start += n;
+                 continue;
+             }
+@@ -1065,7 +1098,7 @@ pub const Unit = struct {
+         }
+         // Reaping the local waiter is not native completion. Retain every
+         // remaining owner when the independent fence or checked child refuses.
+-        if (enabled and negative()) return false;
++        if (enabled and (negative() or self.fios_unpublished_bank != null)) return false;
+         const alloc = self.allocator();
+         if (!enabled) {
+             for (self.pending.items) |*p| p.deinit(alloc);
+@@ -2110,3 +2143,78 @@ test "fios current SDK ANE cleanup accepts healthy local disposal" {
+ test "fios current SDK ANE cleanup retains earlier units when later child refuses" {
+     try fiosSdkCleanup(false, .second_refuse);
+ }
++
++// CPU-only append/close-result controls; no native allocation/model/API failure.
++const FiosBankAdoptionProbe = struct {
++    var blocked: bool = false;
++    var accepts: bool = true;
++    var closes: usize = 0;
++    fn negative() bool {
++        return blocked;
++    }
++    fn close(_: ?*MsvAneMlp) bool {
++        closes += 1;
++        return accepts;
++    }
++    const Trace = struct {
++        refuse_append: bool,
++        frees: usize = 0,
++        fn alloc(raw: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (self.refuse_append) return null;
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.frees += 1;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator {
++            return .{ .ptr = self, .vtable = &vtable };
++        }
++    };
++};
++fn fiosBankAdoption(refuse_append: bool, blocked: bool, accepts: bool) !void {
++    const P = FiosBankAdoptionProbe;
++    P.blocked = blocked;
++    P.accepts = accepts;
++    P.closes = 0;
++    var trace: P.Trace = .{ .refuse_append = refuse_append };
++    var eng: AnePrefill = .{ .allocator = trace.allocator(), .io = testing.io, .units = &.{}, .units_cap = 0, .hidden = 1, .ffn = 1, .rows = 1, .chunk_rows = 1 };
++    var unit: Unit = .{ .parent = &eng, .instance = 0, .layers = &.{}, .gdn_layers = &.{} };
++    const compiled: *MsvAneMlp = @ptrFromInt(32); // CPU identity only, never passed to native C.
++    const result = unit.adoptBankWith(compiled, true, P.negative, P.close);
++    const retained = blocked or (refuse_append and !accepts);
++    try testing.expectEqual(!blocked and !refuse_append, result);
++    if (retained and unit.fios_unpublished_bank != compiled) {
++        std.debug.print("FIO_ANE_SDK_UNPUBLISHED_BANK_LOST\n", .{});
++        try testing.expect(false);
++    }
++    try testing.expectEqual(@as(usize, if (!blocked and refuse_append) 1 else 0), P.closes);
++    if (retained) {
++        if (unit.prepareDeinitWith(true, P.negative, P.close)) {
++            std.debug.print("FIO_ANE_SDK_PENDING_BANK_DISPOSED\n", .{});
++            try testing.expect(false);
++        }
++        try testing.expectEqual(@as(usize, 0), trace.frees);
++        try testing.expect(unit.fios_unpublished_bank == compiled and unit.banks.items.len == 0);
++    } else {
++        try testing.expect(unit.fios_unpublished_bank == null);
++        try testing.expectEqual(@as(usize, if (refuse_append) 0 else 1), unit.banks.items.len);
++        if (!refuse_append) try testing.expect(unit.banks.items[0] == compiled);
++        unit.banks.deinit(eng.allocator);
++    }
++}
++test "fios current SDK ANE adoption retains compiled bank after rejected cleanup" {
++    try fiosBankAdoption(true, false, false);
++}
++test "fios current SDK ANE adoption retains compiled bank after known uncertainty" {
++    try fiosBankAdoption(false, true, true);
++}
++test "fios current SDK ANE adoption preserves healthy array publication" {
++    try fiosBankAdoption(false, false, true);
++}
++test "fios current SDK ANE adoption accepts local disposal after CPU append refusal" {
++    try fiosBankAdoption(true, false, true);
++}

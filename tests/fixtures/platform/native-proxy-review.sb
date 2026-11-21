@@ -1,0 +1,13 @@
+(version 1)
+; Model-free source correctness: one native endpoint and one owned mock provider.
+(allow default)
+(deny network*)
+(allow network-bind (local ip (param "FIOS_REVIEW_ENDPOINT")))
+(allow network-inbound (local ip (param "FIOS_REVIEW_ENDPOINT")))
+(allow network-outbound (remote ip (param "FIOS_REVIEW_PROVIDER")))
+(allow network-bind (local unix-socket (subpath (param "FIOS_REVIEW_STATE"))))
+(allow network-inbound (local unix-socket (subpath (param "FIOS_REVIEW_STATE"))))
+(deny file-write*)
+(allow file-write* (subpath (param "FIOS_REVIEW_STATE")) (literal "/dev/null"))
+(deny process-exec)
+(allow process-exec (literal (param "FIOS_REVIEW_BINARY")) (literal "/usr/bin/curl"))

@@ -1,0 +1,89 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const queue = @import("fios/current_queued_origins.zig");
+const Request = struct {
+    done: bool = false,
+    fios_origins: ?*const owners.Retained = null,
+    fios_queue_ticket: ?owners.QueueTicket = null,
+    fios_queue_started: bool = false,
+};
+fn init() !void {
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(std.testing.io, @splat(101));
+}
+test "fios current media queued actual pickup preserves merged original roots" {
+    try init();const io = std.testing.io;
+    const a = try owners.shared().enter(io);const b = try owners.shared().enter(io);
+    try owners.shared().bind(io, a, "fixture/media");try owners.shared().bind(io, b, "fixture/media");
+    var first = try owners.shared().retainTokens(io, &.{a});var second = try owners.shared().retainTokens(io, &.{b});
+    var r1: Request = .{ .fios_origins = &first };var r2: Request = .{ .fios_origins = &second };
+    // Native tickets created before publication, even on the old actor helper.
+    r1.fios_queue_ticket = try owners.shared().beginQueued(io, &first);
+    r2.fios_queue_ticket = try owners.shared().beginQueued(io, &second);
+    try owners.shared().leave(io, a);try owners.shared().leave(io, b);
+    try std.testing.expectEqual(@as(usize, 2), owners.shared().queuedSnapshot(io).queued);
+    var scope = (try queue.retain(io, @as([]const *Request, &.{ &r1, &r2 }))).?;
+    try scope.enter(io);
+    if (owners.shared().queuedSnapshot(io).active != 2) {
+        std.debug.print("FIO_MEDIA_QUEUE_NOT_ACTIVATED\n", .{});try std.testing.expect(false);
+    }
+    const group = owners.current_group().*.?;
+    try std.testing.expectEqual(@as(usize, 2), group.len);
+    try std.testing.expect(std.meta.eql(a, group[0]) and std.meta.eql(b, group[1]));
+    // Sender storage can disappear after ack; worker scope owns its own clone.
+    try owners.shared().retireQueued(io, r1.fios_queue_ticket.?);
+    try owners.shared().retireQueued(io, r2.fios_queue_ticket.?);
+    try std.testing.expect(first.releaseIfCertain(io));try std.testing.expect(second.releaseIfCertain(io));
+    first = undefined;second = undefined;r1 = undefined;r2 = undefined;
+    try std.testing.expectEqual(@as(usize, 2), owners.shared().queuedSnapshot(io).owned);
+    try std.testing.expect(scope.finish(io));
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().queuedSnapshot(io).owned);
+}
+test "fios current media queued capture validates exact model before publication" {
+    try init();const io = std.testing.io;
+    const root = try owners.shared().enter(io);try owners.shared().bind(io, root, "fixture/exact");
+    var held = try owners.shared().retainTokens(io, &.{root});var req: Request = .{ .fios_origins = &held };
+    if (queue.capture(io, &req, "fixture/wrong")) |_| return error.WrongModelAccepted else |_| {}
+    try std.testing.expect(req.fios_queue_ticket == null);
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().queuedSnapshot(io).queued);
+}
+test "fios current media queued unpublished failure retires original operation" {
+    try init();const io = std.testing.io;
+    const root = try owners.shared().enter(io);try owners.shared().bind(io, root, "fixture/exact");
+    var held = try owners.shared().retainTokens(io, &.{root});var req: Request = .{ .fios_origins = &held };
+    const ticket = try queue.capture(io, &req, "fixture/exact");
+    try std.testing.expectEqual(@as(usize, 1), owners.shared().queuedSnapshot(io).queued);
+    queue.retire(io, &req, ticket);
+    try std.testing.expect(req.fios_queue_ticket == null and !req.fios_queue_started);
+    try std.testing.expect(held.releaseIfCertain(io));try owners.shared().leave(io, root);
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().queuedSnapshot(io).owned);
+}
+test "fios current media queued acknowledgement preserves independent uncertainty" {
+    try init();const io = std.testing.io;
+    const root = try owners.shared().enter(io);try owners.shared().bind(io, root, "fixture/exact");
+    var held = try owners.shared().retainTokens(io, &.{root});var req: Request = .{ .fios_origins = &held };
+    const ticket = try queue.capture(io, &req, "fixture/exact");
+    var scope = (try queue.retain(io, @as([]const *Request, &.{&req}))).?;try scope.enter(io);
+    owners.shared().fence(io);queue.retire(io, &req, ticket);
+    try std.testing.expect(std.meta.eql(ticket, req.fios_queue_ticket));
+    try std.testing.expect(!scope.finish(io));
+    try std.testing.expect(owners.shared().queuedSnapshot(io).uncertain);
+    try std.testing.expectEqual(@as(usize, 1), owners.shared().queuedSnapshot(io).owned);
+}
+test "fios current media queued legacy untracked requests remain optional" {
+    try init();const io = std.testing.io;var req: Request = .{};
+    try std.testing.expect((try queue.capture(io, &req, "fixture/legacy")) == null);
+    try std.testing.expect((try queue.retain(io, @as([]const *Request, &.{&req}))) == null);
+    queue.retire(io, &req, null);
+    try std.testing.expect(!owners.shared().knownUncertain(io));
+}
+test "fios current media queued completed request cannot be republished" {
+    try init();const io = std.testing.io;
+    const root = try owners.shared().enter(io);try owners.shared().bind(io, root, "fixture/exact");
+    var held = try owners.shared().retainTokens(io, &.{root});var req: Request = .{ .fios_origins = &held, .done = true };
+    if (queue.capture(io, &req, "fixture/exact")) |_| {
+        std.debug.print("FIO_MEDIA_COMPLETED_REQUEST_REPUBLISHED\n", .{});try std.testing.expect(false);
+    } else |_| {}
+    try std.testing.expect(req.fios_queue_ticket == null);
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().queuedSnapshot(io).queued);
+}

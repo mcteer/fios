@@ -1,0 +1,67 @@
+import Foundation
+
+// Diagnostic only. Unknown gaps retain source continuity and sticky uncertainty;
+// counts never become resident/idle/all-client or native lifecycle authority.
+struct NativePrimaryActivityDiagnostics {
+    let configured:Bool
+    private var value:NativePrimaryActivitySample?,checkpoint:NativePrimaryActivitySample?
+    private var unavailable=false,fenced=false,seenUncertainty=false
+    private var previousNow:Int64=0
+    init(configured:Bool) {self.configured=configured}
+    private func fresh(_ time:Int64,now:Int64)->Bool {
+        (0...ActivityPolicy.maximumTimestamp).contains(time) && (0...ActivityPolicy.maximumTimestamp).contains(now) && (-1000...5000).contains(now-time)
+    }
+    mutating func failed() {value=nil;unavailable=true}
+    mutating func fenceClock() {if configured {fenced=true};failed()}
+    mutating func bind(instance:String) {
+        if let checkpoint,checkpoint.activity.instance != instance {fenced=true;failed()}
+    }
+    mutating func completed(_ sample:NativePrimaryActivitySample,expectedInstance:String,now:Int64) {
+        guard configured,!fenced else {failed();return}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now),now>=previousNow else {fenced=true;failed();return}
+        // Wall-clock continuity is independent of reply validity. A replay or
+        // malformed sample cannot hide a later local rollback.
+        previousNow=now
+        let activity=sample.activity
+        do {try activity.validate();if let registry=sample.registry {try registry.validate()}else if [3,4].contains(activity.phaseVersion) {throw NativeControlError.invalid}} catch {failed();return}
+        guard activity.instance==expectedInstance,(try? NativeControlWire.instanceBytes(activity.instance)) != nil,
+              activity.sampleSequence>0,activity.sampleSequence<=UInt64(ActivityPolicy.maximumTimestamp),
+              sample.peer.pid>1,sample.peer.start>0,let stamp=activity.sampledAt,
+              fresh(stamp,now:now),fresh(sample.receivedAt,now:now) else {failed();return}
+        if let old=checkpoint {
+            if let a=old.registry,let b=sample.registry,b.registryGeneration<a.registryGeneration {fenced=true;failed();return}
+
+            guard sample.peer.pid==old.peer.pid,sample.peer.start==old.peer.start,
+                  sample.peer.executable.path.utf8.elementsEqual(old.peer.executable.path.utf8),sample.peer.executable.sha256==old.peer.executable.sha256,
+                  activity.instance==old.activity.instance,activity.phaseVersion==old.activity.phaseVersion,stamp>=old.activity.sampledAt!,
+                  !(seenUncertainty && !activity.uncertain) else {fenced=true;failed();return}
+            guard activity.sampleSequence>old.activity.sampleSequence else {failed();return}
+        }
+        seenUncertainty = seenUncertainty || activity.uncertain
+        checkpoint=sample;value=sample;unavailable=false
+    }
+    func summary(now:Int64)->[String:Any] {
+        var result:[String:Any]=["version":1,"scope":"primary_request_ownership","coverage":"unknown","authority":false,
+            "state":configured ? (fenced ? "fenced":unavailable ? "unavailable":"waiting"):"unconfigured",
+            "source_instance":NSNull(),"source_sequence":NSNull(),"source_sampled_at":NSNull(),"source_age_ms":NSNull(),
+            "received_at":NSNull(),"receipt_age_ms":NSNull(),"reported_counts":NSNull(),"model_identities":NSNull(),"tracker_uncertain":NSNull(),"retained_uncertainty":seenUncertainty,"registry_claimable":NSNull(),"registry_generation":NSNull(),"registry_model_identities":NSNull(),"registry_ready_declared":NSNull(),"registry_transitioning":NSNull(),"coherent_activity":NSNull()]
+        guard configured,!fenced,let sample=value,let stamp=sample.activity.sampledAt else {return result}
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now) else {result["state"]="stale";return result}
+        result["source_sequence"]=sample.activity.sampleSequence;result["source_sampled_at"]=stamp;result["source_age_ms"]=now-stamp
+        result["received_at"]=sample.receivedAt;result["receipt_age_ms"]=now-sample.receivedAt
+        guard now>=previousNow,fresh(stamp,now:now),fresh(sample.receivedAt,now:now) else {result["state"]="stale";return result}
+        let activity=sample.activity
+        result["state"]="received";result["source_instance"]=activity.instance;result["phase_version"]=activity.phaseVersion
+        result["reported_counts"]=["owners":activity.owners,"ingress":activity.ingress,"preparing":activity.preparing,"queued":activity.phaseVersion != 1 ? activity.queued as Any:NSNull(),"active":activity.active,"responding":activity.responding]
+        result["model_identities"]=activity.models.count;result["tracker_uncertain"]=activity.uncertain
+        if let registry=sample.registry {
+            if registry.primary.phaseVersion==4 {result["registry_claimable"]=registry.models.filter{$0.claimable==true}.count}
+            result["registry_generation"]=registry.registryGeneration;result["registry_model_identities"]=registry.models.count
+            result["registry_ready_declared"]=registry.models.filter(\.readyDeclared).count;result["registry_transitioning"]=registry.transitioning
+            result["coherent_activity"]=registry.conservativeActivity().state.rawValue
+        }
+        // IDs stay in the typed observation. Exporting all64x1024 bytes would
+        // exceed the existing bounded status envelope; never truncate that set.
+        return result
+    }
+}

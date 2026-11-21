@@ -1,0 +1,186 @@
+diff --git a/src/sdk/ane/offload.zig b/src/sdk/ane/offload.zig
+--- a/src/sdk/ane/offload.zig
++++ b/src/sdk/ane/offload.zig
+@@ -33,6 +33,15 @@
+ const builtin = @import("builtin");
+ const build_options = @import("build_options");
+ pub const fios_ane_cleanup = @hasDecl(build_options, "fios_source_ane") and build_options.fios_source_ane;
++// Existing fixed private host custody ABI; never import the host tracker into
++// the SDK kit. These values are native-created and never come from wire input.
++const request_origins = struct {
++    extern "c" fn fios_native_request_owners_capture() ?*anyopaque;
++    extern "c" fn fios_native_request_owners_enter(?*anyopaque) u64;
++    extern "c" fn fios_native_request_owners_leave(u64) c_int;
++    extern "c" fn fios_native_request_owners_release(?*anyopaque) void;
++    extern "c" fn fios_native_request_owners_uncertain() void;
++};
+ const log = @import("../util/log.zig");
+ const mlx = @import("../../mlx/ffi.zig");
+ const status = @import("../util/system.zig");
+@@ -360,6 +369,19 @@
+ /// same rows, so each side is timed under the other's load (they share memory
+ /// bandwidth and the power budget). Best of three after a warm-up round.
+ fn timeOverlapped(io: std.Io, s: mlx.mlx_stream, eng: *AnePrefill, dt: mlx.mlx_dtype, calib: anytype) !struct { ane: f64, gpu: f64 } {
++    // Retain before any native preparation or helper publication. Every
++    // started helper is joined on both success and complement-error paths.
++    var original: ?*anyopaque = null;
++    if (comptime fios_ane_cleanup) {
++        try source_guard.requireCertain();
++        original = request_origins.fios_native_request_owners_capture() orelse {
++            request_origins.fios_native_request_owners_uncertain();
++            return error.InvalidRequestOrigins;
++        };
++    }
++    defer if (comptime fios_ane_cleanup) {
++        if (!source_guard.known()) if (original) |held| request_origins.fios_native_request_owners_release(held);
++    };
+     if (!eng.mlpReady(0)) return error.AneNoProgram;
+     for (eng.units) |*u| {
+         const plane = u.inputBase() orelse return error.AnePlaneMissing;
+@@ -375,7 +397,17 @@
+         io: std.Io,
+         ns: u64 = 0,
+         ok: bool = true,
++        origin: ?*anyopaque = null,
+         fn run(self: *@This()) void {
++            var sequence: u64 = 0;
++            if (comptime fios_ane_cleanup) {
++                if (source_guard.known()) { self.ok = false; return; }
++                sequence = request_origins.fios_native_request_owners_enter(self.origin);
++                if (sequence == 0) { self.ok = false; return; }
++            }
++            defer if (comptime fios_ane_cleanup) {
++                if (request_origins.fios_native_request_owners_leave(sequence) != 0 or source_guard.known()) self.ok = false;
++            };
+             const t0 = std.Io.Timestamp.now(self.io, .awake);
+             for (0..MEDIA_PROBE_ROWS / self.eng.rows) |_| {
+                 self.eng.kickMlp(0);
+@@ -387,7 +419,7 @@
+     var ane_ns: u64 = std.math.maxInt(u64);
+     var gpu_ns: u64 = std.math.maxInt(u64);
+     for (0..4) |i| {
+-        var loop: AneLoop = .{ .eng = eng, .io = io };
++        var loop: AneLoop = .{ .eng = eng, .io = io, .origin = original };
+         const th = try std.Thread.spawn(.{}, AneLoop.run, .{&loop});
+         const t0 = std.Io.Timestamp.now(io, .awake);
+         const y = calib.complement(x) catch |err| {
+@@ -800,6 +832,7 @@
+     /// Protected by mu: .idle → .requested → .done.
+     state: enum { idle, requested, done } = .idle,
+     pending_bank: ?*MsvAneMlp = null,
++    fios_origin: ?*anyopaque = null,
+     pending_proc: u32 = 0,
+     eval_ok: bool = true,
+     stop_flag: bool = false,
+@@ -853,7 +886,14 @@
+     /// unit; the caller must `wait()` before the next kick.
+     pub fn kick(self: *Unit, ref: ProgramRef) void {
+         self.mu.lockUncancelable(self.parent.io);
+-        std.debug.assert(self.state == .idle);
++        if (comptime fios_ane_cleanup) {
++            if (self.state != .idle) {
++                // Preserve the original pending job and its scope.
++                request_origins.fios_native_request_owners_uncertain();
++                self.mu.unlock(self.parent.io);
++                return;
++            }
++        } else std.debug.assert(self.state == .idle);
+         if (source_guard.known()) {
+             // A local refusal still acknowledges this kick so wait() cannot
+             // hang. It neither submits native work nor clears the fence.
+@@ -863,6 +903,24 @@
+             self.mu.unlock(self.parent.io);
+             return;
+         }
++        if (comptime fios_ane_cleanup) {
++            if (self.fios_origin != null) {
++                request_origins.fios_native_request_owners_uncertain();
++                self.eval_ok = false;
++                self.state = .done;
++                self.cond.broadcast(self.parent.io);
++                self.mu.unlock(self.parent.io);
++                return;
++            }
++            self.fios_origin = request_origins.fios_native_request_owners_capture() orelse {
++                request_origins.fios_native_request_owners_uncertain();
++                self.eval_ok = false;
++                self.state = .done;
++                self.cond.broadcast(self.parent.io);
++                self.mu.unlock(self.parent.io);
++                return;
++            };
++        }
+         self.pending_bank = ref.bank;
+         self.pending_proc = ref.proc;
+         self.state = .requested;
+@@ -875,7 +933,7 @@
+     pub fn wait(self: *Unit) bool {
+         self.mu.lockUncancelable(self.parent.io);
+         while (self.state != .done) self.cond.waitUncancelable(self.parent.io, &self.mu);
+-        const ok = self.eval_ok;
++        const ok = self.eval_ok and !source_guard.known();
+         self.state = .idle;
+         self.mu.unlock(self.parent.io);
+         return ok;
+@@ -887,15 +945,40 @@
+             while (self.state != .requested and !self.stop_flag)
+                 self.cond.waitUncancelable(self.parent.io, &self.mu);
+             if (self.stop_flag) {
++                // Stopping the waiter cannot retire an unpublished native
++                // ownership obligation. Keep its context/parent quarantined.
++                if (comptime fios_ane_cleanup) {
++                    if (self.fios_origin != null) request_origins.fios_native_request_owners_uncertain();
++                }
+                 self.mu.unlock(self.parent.io);
+                 return;
+             }
+             const bank = self.pending_bank;
+             const proc = self.pending_proc;
++            const origin = self.fios_origin;
+             self.mu.unlock(self.parent.io);
+ 
+-            const blocked = source_guard.known();
+-            const ok = !blocked and msv_ane_mlp_eval(bank, proc, &self.eval_err, self.eval_err.len) != 0;
++            var blocked = source_guard.known();
++            var sequence: u64 = 0;
++            if (comptime fios_ane_cleanup) {
++                if (!blocked) {
++                    sequence = request_origins.fios_native_request_owners_enter(origin);
++                    if (sequence == 0) blocked = true;
++                }
++            }
++            var ok = !blocked and msv_ane_mlp_eval(bank, proc, &self.eval_err, self.eval_err.len) != 0;
++            var released = false;
++            if (comptime fios_ane_cleanup) {
++                // Restore the worker's prior TLS before publishing .done.
++                if (sequence != 0 and request_origins.fios_native_request_owners_leave(sequence) != 0) ok = false;
++                if (!source_guard.known() and origin != null) {
++                    // The host's void release quarantines its descriptor if a
++                    // concurrent source fence wins; it never refunds doubt.
++                    request_origins.fios_native_request_owners_release(origin);
++                    released = true;
++                }
++                if (source_guard.known()) ok = false;
++            }
+             if (ok) {
+                 _ = self.evals_ok.fetchAdd(1, .monotonic);
+             } else {
+@@ -904,6 +987,7 @@
+             }
+ 
+             self.mu.lockUncancelable(self.parent.io);
++            if (released) self.fios_origin = null;
+             self.eval_ok = ok;
+             self.state = .done;
+             self.cond.broadcast(self.parent.io);
+diff --git a/src/fios/sdk_request_ownership.zig b/src/fios/sdk_request_ownership.zig
+--- a/src/fios/sdk_request_ownership.zig
++++ b/src/fios/sdk_request_ownership.zig
+@@ -145,6 +145,7 @@
+ // instead of importing the host-owned tracker and its cleanup enrollment graph.
+ // Missing source startup preserves legacy metadata behavior; false is no proof.
+ pub export fn fios_native_request_owners_known_uncertain() c_int {
++    if (failed.load(.acquire)) return 1;
+     const io = std.Io.Threaded.global_single_threaded.io();
+     const source = owners.shared();
+     source.mutex.lockUncancelable(io);

@@ -1,0 +1,114 @@
+import Foundation
+import CryptoKit
+import CSQLite
+
+// Only the follow-up readonly lookup is replaced. Registration comes from the
+// real private native peer; no worker permission or model POST is possible.
+private final class MissingLineageSource:NativeHandoffPreparing,@unchecked Sendable {
+    let client:NativeControlClient
+    var peer:NativeControlPeer {client.peer}
+    private let lock=NSLock()
+    private var saved:NativeHandoffSample?
+    private var calls=0
+    private var cancelCalls=0
+    private let allowCancellation:Bool
+    init(client:NativeControlClient,allowCancellation:Bool=false) {self.client=client;self.allowCancellation=allowCancellation}
+    var registration:NativeHandoffSample? {lock.lock();defer {lock.unlock()};return saved}
+    var registrationCalls:Int {lock.lock();defer {lock.unlock()};return calls}
+    var cancellations:Int {lock.lock();defer {lock.unlock()};return cancelCalls}
+    func registerHandoff(instance:String,correlationID:String)throws->NativeHandoffSample {
+        lock.lock();calls+=1;lock.unlock()
+        let value=try client.registerHandoff(instance:instance,correlationID:correlationID)
+        lock.lock();saved=value;lock.unlock();return value
+    }
+    func lineage(instance:String,correlationID:String)throws->NativeRequestLineageSample {throw NativeControlError.unavailable}
+    func cancelHandoff(instance:String,correlationID:String,rootSequence:UInt64)throws->NativeHandoffSample {
+        lock.lock();cancelCalls+=1;lock.unlock()
+        guard allowCancellation else {throw NativeControlError.unavailable}
+        return try client.cancelHandoff(instance:instance,correlationID:correlationID,rootSequence:rootSequence)
+    }
+}
+
+@main enum PreparationFailureClient {
+    static func main()throws {
+        let a=CommandLine.arguments
+        guard a.count==10,let pid=Int32(a[2]) else {throw RuntimeError.invalid}
+        let directory=URL(fileURLWithPath:a[1]),job=a[5],instance=a[6],step=a[7]
+        let executable=try VerifiedExecutable(path:a[3],sha256:SHA256.hash(data:Data(contentsOf:URL(fileURLWithPath:a[3]))).map {String(format:"%02x",$0)}.joined())
+        let peer=NativeControlPeer(pid:pid,start:try WorkerResources.startIdentifier(pid:pid),executable:executable)
+        let journal=try Journal(directory:directory),now=HostResources.nowMilliseconds()
+        if step=="fail" || step=="fail-storage" || step=="cancel" {
+            let storageFailure=step=="fail-storage"
+            let closeUnused=step=="cancel"
+            let base="http://127.0.0.1:1/v1",epoch="00000000-0000-4000-8000-000000000002"
+            let snapshot=NativeSnapshot(host:"fixture-host",endpointHash:PythonWorkerFactory.digest(base),nativeEpoch:instance,sequence:1,sampledAt:now,allClientLifecycleCoverage:true,residentModel:nil,outstandingOwners:0,loading:false)
+            // Synthetic advisory/capacity values exercise coordination only.
+            // They are never a source ceiling or native admission grant.
+            let binding=WorkerDispatchBinding(baseURL:base,guardPath:directory.appendingPathComponent("observe.sock").path,host:snapshot.host,profileHash:String(repeating:"b",count:64),managerEpoch:epoch,canonicalModel:"fixture/model",nativeModel:"fixture/model",nativeSnapshot:snapshot,nativeCompatibilityAccepted:true,apiKey:nil)
+            let scope=try binding.inferenceScope(),older=UUID().uuidString.lowercased(),owner=String(repeating:"a",count:64)
+            try journal.claim(job:older,attempt:0,model:scope.canonicalModel,scope:scope)
+            try journal.markDispatched(job:older,attempt:0);try journal.markUncertain(job:older,attempt:0)
+            _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:owner,requestHash:String(repeating:"c",count:64),created:now))
+            try journal.transitionJob(id:job,to:.running)
+            let python=URL(fileURLWithPath:a[8]).resolvingSymlinksInPath()
+            let factory=try PythonWorkerFactory(invocation:a[8],executableSHA256:SHA256.hash(data:Data(contentsOf:python)).map {String(format:"%02x",$0)}.joined(),policySHA256:a[9])
+            let client=NativeControlClient(path:a[4],peer:peer),source=MissingLineageSource(client:client,allowCancellation:closeUnused)
+            let broker=ModelBroker(journal:journal,factory:factory,handoffSource:source)
+            var admission=AdmissionPolicy()
+            let sample=ResourceSample(sampledAt:now,physical:128<<30,available:64<<30,vmAvailable:nil,diskFree:100<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:now)
+            try broker.submit(job:job,owner:owner,requestID:UUID().uuidString.lowercased(),context:[ModelText(role:"user",content:"fixture")],binding:binding,nativeCapacityProven:true,sample:sample,admission:&admission,now:now)
+            if closeUnused {try broker.cancel(job:job,uptime:Int64(ProcessInfo.processInfo.systemUptime*1000))}
+            var blocker:OpaquePointer?
+            defer {if blocker != nil {sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil);sqlite3_close(blocker)}}
+            if storageFailure {
+                guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&blocker,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK,
+                      sqlite3_exec(blocker,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+                var encounteredWrite=false
+                let deadline=ProcessInfo.processInfo.systemUptime+4
+                while !encounteredWrite && ProcessInfo.processInfo.systemUptime<deadline {
+                    let began=ProcessInfo.processInfo.systemUptime
+                    _=try? broker.poll(now:HostResources.nowMilliseconds(),uptime:Int64(began*1000),admission:&admission,source:{_ in binding})
+                    encounteredWrite=ProcessInfo.processInfo.systemUptime-began>=0.8
+                    if !encounteredWrite {Thread.sleep(forTimeInterval:0.001)}
+                }
+                guard encounteredWrite,broker.active(job:job),try journal.activeLaunchCount()==1,
+                      try journal.workerGrants().isEmpty else {throw JournalError.conflict}
+                guard sqlite3_exec(blocker,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+            }
+            let end=ProcessInfo.processInfo.systemUptime+3
+            while (broker.active(job:job) || (closeUnused && broker.nativeNonDispatchPending)) && ProcessInfo.processInfo.systemUptime<end {
+                _=try broker.poll(now:HostResources.nowMilliseconds()+(storageFailure ? 6000:0),uptime:Int64(ProcessInfo.processInfo.systemUptime*1000),admission:&admission,source:{_ in binding})
+                Thread.sleep(forTimeInterval:0.005)
+            }
+            guard !broker.active(job:job),source.registrationCalls==1,let registered=source.registration,
+                  try journal.activeLaunchCount()==0,try journal.workerGrants().isEmpty,
+                  try journal.inferenceScope(job:older,attempt:0)?.state == .uncertain else {throw JournalError.conflict}
+            if closeUnused {
+                guard !broker.nativeNonDispatchPending,source.cancellations==1,
+                      try journal.inferenceScope(job:job,attempt:0)?.state == .not_sent,
+                      try journal.handoffNonDispatchReceipt(job:job,attempt:0)?.localProducer=="never_spawned",
+                      try journal.jobs().first(where:{$0.id==job})?.state == .running else {throw JournalError.conflict}
+            }else {
+                guard try journal.originalNativeRoot(job:job,attempt:0,scope:scope,peer:peer)==registered.result.rootSequence else {throw JournalError.conflict}
+                let live=try client.lineage(instance:instance,correlationID:registered.result.correlationID)
+                guard live.lineage.found,live.lineage.rootSequence==registered.result.rootSequence else {throw NativeControlError.invalid}
+            }
+            // Do not persist this verification lookup: the checkpoint under
+            // test must come solely from the original registration reply.
+        }else {guard step=="check" || step=="check-closed" else {throw RuntimeError.invalid}}
+        let closed=step=="cancel" || step=="check-closed"
+        guard let record=try journal.inferenceScope(job:job,attempt:0),record.state == (closed ? .not_sent:.uncertain),
+              try journal.unresolvedCount()==(closed ? 1:2),try journal.uncertainCount()==(closed ? 1:2),
+              try journal.requestCount(job:job)==1,try journal.activeLaunchCount()==0,
+              try journal.workerGrants().isEmpty else {throw JournalError.conflict}
+        // The original root remains in its decision checkpoint. This is not
+        // a live-root query and is not used for another permission.
+        if closed {
+            guard let receipt=try journal.handoffNonDispatchReceipt(job:job,attempt:0),receipt.localProducer=="never_spawned" else {throw JournalError.conflict}
+            print("\(try record.scope.nativeRequestCorrelationID(job:job,attempt:0)) closed")
+            return
+        }
+        guard let root=try journal.originalNativeRoot(job:job,attempt:0,scope:record.scope,peer:peer) else {throw JournalError.conflict}
+        print("\(try record.scope.nativeRequestCorrelationID(job:job,attempt:0)) \(root)")
+    }
+}

@@ -1,0 +1,18 @@
+--- a/src/fios/current_sdk_owners.cpp
++++ b/src/fios/current_sdk_owners.cpp
+@@ -26,6 +26,15 @@
+         fios_native_request_owners_uncertain};
+     if (!mlx::core::fios_register_request_owner_hooks(&hooks) ||
+         !mlx::core::fios_enable_stream_custody_fixture()) std::_Exit(78);
++#ifdef FIOS_REQUIRE_BACKGROUND_PARTICIPANT_SEAL
++#ifdef MLX_FIOS_BACKGROUND_PARTICIPANT_SEAL
++    // Explicit private compile mode only. Preserve the ordinary refresh
++    // configuration; unavailable exclusion never silently downgrades.
++    if (!mlx::core::fios_seal_background_participants_fixture()) std::_Exit(78);
++#else
++    std::_Exit(78);
++#endif
++#endif
+ #ifdef MLX_FIOS_REQUEST_HOST_EVENTS_V1
+     static const mlx::core::FiosHostRequestEventHooksV1 events{
+         1,sizeof(mlx::core::FiosHostRequestEventHooksV1),

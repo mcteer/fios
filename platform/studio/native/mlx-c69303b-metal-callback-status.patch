@@ -1,0 +1,45 @@
+--- a/mlx/backend/metal/device.cpp
++++ b/mlx/backend/metal/device.cpp
+@@ -43,12 +43,14 @@
+ // captures are explicitly cleaned inside the scope before native release.
+ template <class Work, class Cleanup>
+ void fios_owned_metal_callback(const std::shared_ptr<FiosMetalCapture>& capture,
+-                               Error& error, Work&& work, Cleanup&& cleanup) {
++                               Error& error, Work&& work, Cleanup&& cleanup,
++                               bool command_failed = false) {
+   auto record = [&](const char* message) {
+     if (!error.valid()) error.set_message(std::make_shared<std::string>(message));
+   };
+   try {
+     FiosRequestOwnerScope scope(fios_take_metal_request_owners(capture));
++    if (command_failed) scope.fence();
+     try { work(); }
+     catch (const std::exception& failure) { record(failure.what()); }
+     catch (...) { record("Native Metal callback failed"); }
+@@ -492,7 +494,7 @@
+     fios_owned_metal_callback(capture, error_, [&] { if (function) function(cbuf); }, [&] {
+       function = nullptr;
+       fios_metal_capture_end(capture, error_.valid() || cbuf->status() == MTL::CommandBufferStatusError);
+-    });
++    }, cbuf->status() == MTL::CommandBufferStatusError);
+   });
+ }
+ 
+@@ -607,7 +609,7 @@
+       // Destroy actual payloads in the owner scope OUTSIDE metadata locks.
+       temporaries.clear();all_outputs.clear();waiting_on.clear();fence.reset();
+       fios_metal_capture_end(fios_capture, error_.valid() || cbuf->status() == MTL::CommandBufferStatusError);
+-    });
++    }, cbuf->status() == MTL::CommandBufferStatusError);
+   });
+ 
+   encoder_->endEncoding();
+@@ -705,7 +707,7 @@
+           fios_metal_capture_end(fios_completion_capture, has_error);
+           fios_metal_completed(fios_custody, has_error);
+           guard.done = true;
+-        });
++        }, cbuf->status() == MTL::CommandBufferStatusError);
+       });
+   buffer_->commit();
+   fios_buffer_.reset();

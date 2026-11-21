@@ -1,0 +1,21 @@
+--- a/src/sdk/util/streamed_warm_source_uncertainty.zig
++++ b/src/sdk/util/streamed_warm_source_uncertainty.zig
+@@ -3,7 +3,7 @@
+ //! terminality or admission. Local destroy/join and later epochs never reset it.
+ const std = @import("std");
+ const shared_util = @import("shared.zig");
+-const storage = shared_util.Shared(std.atomic.Value(bool), "fios_current_streamed_warm_source_uncertainty", .init(false));
++pub const storage = shared_util.Shared(std.atomic.Value(bool), "fios_current_streamed_warm_source_uncertainty", .init(false));
+ pub fn known() bool {
+     return storage.get().load(.acquire);
+ }
+--- a/src/shared_all.zig
++++ b/src/shared_all.zig
+@@ -7,6 +7,7 @@ comptime {
+     _ = @import("fios/request_ownership.zig").ledger_storage;
+     _ = @import("fios/request_ownership.zig").current_storage;
+     _ = @import("fios/request_ownership.zig").group_storage;
++    _ = @import("sdk/util/streamed_warm_source_uncertainty.zig").storage;
+     _ = @import("sdk/util/err_name.zig").last_tls;
+     if (@import("build_options").mlx_stream) _ = @import("mlx_stream").shared_state;
+     _ = @import("host/plugins/loader.zig").process;

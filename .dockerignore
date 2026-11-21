@@ -19,3 +19,6 @@ docs
 backups
 playwright-report
 test-results
+**/.build
+**/.swiftpm
+platform

@@ -1,0 +1,70 @@
+// Tiny healthy IOSurface + CPU request/parent bookkeeping; no ANE model/API.
+#ifndef FIOS_ANE_SOURCE
+#error "Private source fixture required"
+#endif
+static bool fio_request_parent_alive;
+static unsigned fio_request_destroyed, fio_parent_unloaded;
+@interface FiosRequestOwnerParent : NSObject
+@end
+@implementation FiosRequestOwnerParent
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error { (void)qos;*error=nil;fio_parent_unloaded+=1;return YES; }
+@end
+@interface FiosRequestOwnerChild : NSObject
+@property (weak) FiosRequestOwnerParent *model;
+@property void *parent;
+@property IOSurfaceRef surface;
+@property CFIndex expected_refs;
+@property BOOL fence;
+@end
+@implementation FiosRequestOwnerChild
+- (void)dealloc {
+    fio_request_destroyed+=1;
+    fio_request_parent_alive=self.model!=nil && ((msv_ane_program *)self.parent)->fios_children==1 && CFGetRetainCount(self.surface)==self.expected_refs;
+    if (self.fence) fios_ane_fence(FIOS_ANE_REQUEST);
+}
+@end
+int main(int argc,char **argv) {
+    if (argc!=2) return 2;
+    bool healthy=strcmp(argv[1],"healthy")==0,pending=strcmp(argv[1],"pending")==0;
+    if (!healthy && !pending && strcmp(argv[1],"destructor-fence")!=0) return 2;
+    IOSurfaceRef surface=msv_ane_bridge_surface(16);if (!surface || IOSurfaceGetAllocSize(surface)>32768) return 1;
+    CFIndex original=CFGetRetainCount(surface);
+    msv_ane_program *p=calloc(1,sizeof(*p));msv_ane_request *q=calloc(1,sizeof(*q));
+    __weak NSObject *input_seen;
+    __weak NSObject *output_seen;
+    __weak FiosRequestOwnerParent *model_seen;
+    @autoreleasepool {
+        FiosRequestOwnerParent *model=[FiosRequestOwnerParent new];model_seen=model;
+        NSMutableArray *models=[NSMutableArray new];[models addObject:model];p->models=(__bridge_retained void *)models;
+        p->options=(__bridge_retained void *)@[@{}];
+        if (!fios_ane_parent_acquire(p,q)) return 1;
+        IOSurfaceRef ins[]={surface},outs[]={surface};
+        if (!fios_ane_capture_surface_owners(&q->fios_surfaces,&q->fios_surface_count,ins,1,outs,1) ||
+            q->fios_surface_count!=2 || q->fios_surfaces[0]!=surface || q->fios_surfaces[1]!=surface || CFGetRetainCount(surface)!=original+2) return 1;
+        NSObject *input=[NSObject new],*output=[NSObject new];input_seen=input;output_seen=output;
+        NSMutableArray *inputs=[NSMutableArray new],*outputs=[NSMutableArray new];
+        fios_ane_request_capture_inputs(q,model,@{},inputs,outputs,@[@0],@[@0]);
+        fios_ane_request_adopt_binding(q,inputs,input);fios_ane_request_adopt_binding(q,outputs,output);
+        FiosRequestOwnerChild *child=[FiosRequestOwnerChild new];child.model=model;child.parent=p;
+        child.surface=surface;child.expected_refs=original+2;child.fence=!healthy && !pending;
+        if (pending) q->fios_pending_binding=(__bridge_retained void *)child;
+        else q->request=(__bridge_retained void *)child;
+    }
+    bool accepted=msv_ane_request_try_free(q);
+    if (accepted!=healthy) return 1;
+    if (healthy) {
+        if (input_seen || output_seen || !model_seen || !fio_request_parent_alive ||
+            fio_request_destroyed!=1 || p->fios_children || CFGetRetainCount(surface)!=original) {
+            fprintf(stderr,"healthy request parent boundary refused\n");return 1;
+        }
+        if (!msv_ane_program_try_free(p)) return 1;
+        if (model_seen || fio_parent_unloaded!=1) { fprintf(stderr,"healthy parent lifetime refused\n");return 1; }
+    } else {
+        if (!input_seen || !output_seen || !model_seen || !msv_ane_source_uncertainty() ||
+            p->fios_children!=1 || q->fios_parent!=p || q->fios_surface_count!=2 ||
+            CFGetRetainCount(surface)!=original+2 || fio_parent_unloaded || msv_ane_request_try_free(q) ||
+            msv_ane_program_try_free(p) || fio_request_destroyed!=(pending ? 0u : 1u) || (!pending && !fio_request_parent_alive)) return 1;
+    }
+    CFRelease(surface);
+    fprintf(stderr,"PASS: private ANE program request retains original surface and parent owners\n");return 0;
+}

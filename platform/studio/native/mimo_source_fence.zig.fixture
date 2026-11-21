@@ -1,0 +1,69 @@
+// Actual warm-engine control/thread lifecycle with an idle CPU-only backend.
+// No SDK objects or backend work, model, Metal, injected error/counter state.
+const std = @import("std");
+const warm = @import("warm");
+const architecture = @import("arch/mimo_v2/root.zig");
+var backend_calls = std.atomic.Value(u32).init(0);
+const Idle = struct {
+    pub const Chunk = u64;
+    pub fn eventValue(_: *const @This()) u64 { return 0; }
+    pub fn commit(_: *@This(), _: u32) !Chunk { _ = backend_calls.fetchAdd(1, .monotonic);return error.UnexpectedBackendDispatch; }
+    pub fn retire(_: *@This(), _: Chunk) !u64 { _ = backend_calls.fetchAdd(1, .monotonic);return error.UnexpectedBackendDispatch; }
+};
+const E = warm.Engine(Idle);
+fn acknowledged(engine: *E, ticket: warm.FiosPauseTicket) !void {
+    const began = warm.nowNs();
+    while (warm.nowNs() - began < std.time.ns_per_s) {
+        switch (engine.fixturePauseState(ticket)) {
+            .retired => return,
+            .pending => {
+                const delay: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
+                _ = std.c.nanosleep(&delay, null);
+            },
+            else => return error.UnexpectedPauseState,
+        }
+    }
+    return error.PauseDeadline;
+}
+pub fn main() !void {
+    try std.testing.expect(!warm.fiosSourceUncertain());
+    try std.testing.expect(!architecture.fiosWarmSourceUncertain());
+    {
+        const engine = try E.create(std.heap.page_allocator, .{}, .{ .fios_fixture_control = true });
+        defer engine.destroy();
+        const pause = try engine.fixturePause();
+        try acknowledged(engine, pause);
+        try std.testing.expect(engine.fixtureResume(pause));
+        try std.testing.expect(!warm.fiosSourceUncertain());
+    }
+    const engine = try E.create(std.heap.page_allocator, .{}, .{ .fios_fixture_control = true });
+    var alive = true;
+    var lease: ?warm.FiosLifetimeTicket = null;
+    defer if (alive) {
+        if (lease) |held| _ = engine.fixtureReleaseLifetime(held);
+        engine.destroy();
+    };
+    lease = try engine.fixtureRetainLifetime();
+    const pause = try engine.fixturePause();
+    try acknowledged(engine, pause);
+    // Ordinary conflicting owner cleanup is refused by the real lease API.
+    // Do not initialize or inject any private uncertainty/backend state.
+    if (engine.tryDestroy()) {alive = false;return error.OwnedLeaseLost;}
+    try std.testing.expectEqual(warm.FiosPauseState.unknown, engine.fixturePauseState(pause));
+    try std.testing.expect(warm.fiosSourceUncertain());
+    try std.testing.expect(engine.fixtureReleaseLifetime(lease.?));lease = null;
+    alive = !engine.tryDestroy();try std.testing.expect(!alive);
+    try std.testing.expect(warm.fiosSourceUncertain());
+    {
+        const newer = try E.create(std.heap.page_allocator, .{}, .{ .fios_fixture_control = true });
+        defer newer.destroy();
+        const next = try newer.fixturePause();
+        try acknowledged(newer, next);
+        try std.testing.expect(newer.fixtureResume(next));
+        try std.testing.expect(warm.fiosSourceUncertain());
+    }
+    try std.testing.expect(warm.fiosSourceUncertain());
+    try std.testing.expect(architecture.fiosWarmSourceUncertain());
+    try std.testing.expectEqual(@as(u32, 0), backend_calls.load(.acquire));
+    std.debug.print("PASS: actual idle warm control retains process source uncertainty across cleanup and a newer healthy engine; no backend/model work\n", .{});
+}

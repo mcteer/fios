@@ -1,0 +1,50 @@
+--- a/src/plugins/deepseek_v41/engram.zig
++++ b/src/plugins/deepseek_v41/engram.zig
+@@ -2,6 +2,7 @@
+ //! the on-disk tables it indexes, and the gated add into the residual stream.
+ //! The tables (~100 GB a layer) are read from disk per lookup, never loaded.
+ const std = @import("std");
++const fios_unproven_prefetch = @import("../../sdk/util/shared.zig").Shared(std.atomic.Value(bool), "fios_current_engram_prefetch_uncertainty", .init(false));
+ const builtin = @import("builtin");
+ const crt = @import("../../sdk/util/crt.zig");
+ const mlx = @import("../../mlx/ffi.zig");
+@@ -675,6 +676,9 @@
+             made += 1;
+         }
+         self.* = .{ .gpa = gpa, .tables = own_tables, .grids = grids, .span = span, .nc = nc, .across = across };
++        // Read-ahead may outlive the originating chunk; custody is unported.
++        // Record negative source evidence before this worker is published.
++        fios_unproven_prefetch.get().store(true, .release);
+         self.thread = try std.Thread.spawn(.{}, run, .{self});
+         return self;
+     }
+--- /dev/null
++++ b/src/sdk/util/engram_prefetch_uncertainty.zig
+@@ -0,0 +1,6 @@
++//! Negative evidence for existing Engram read-ahead without original request
++//! custody. Local stop/join and metadata completion cannot reset this latch.
++const std = @import("std");
++const shared_util = @import("shared.zig");
++pub const storage = shared_util.Shared(std.atomic.Value(bool), "fios_current_engram_prefetch_uncertainty", .init(false));
++pub fn known() bool { return storage.get().load(.acquire); }
+--- a/src/shared_all.zig
++++ b/src/shared_all.zig
+@@ -9,6 +9,7 @@
+     _ = @import("fios/request_ownership.zig").group_storage;
+     _ = @import("sdk/util/streamed_warm_source_uncertainty.zig").storage;
+     _ = @import("sdk/util/qwen_ngram_warm_uncertainty.zig").storage;
++    _ = @import("sdk/util/engram_prefetch_uncertainty.zig").storage;
+     _ = @import("sdk/util/err_name.zig").last_tls;
+     if (@import("build_options").mlx_stream) _ = @import("mlx_stream").shared_state;
+     _ = @import("host/plugins/loader.zig").process;
+--- a/src/fios/current_backend_uncertainty.zig
++++ b/src/fios/current_backend_uncertainty.zig
+@@ -6,6 +6,7 @@
+     };
+     const sdk = if (sdk_enabled) Source.fios_current_sdk_known_uncertain() != 0 else false;
+     const llama = if (llama_enabled) Source.mlx_llama_source_uncertainty() != 0 else false;
+-    return @import("../sdk/util/qwen_ngram_warm_uncertainty.zig").known() or
++    return @import("../sdk/util/engram_prefetch_uncertainty.zig").known() or
++        @import("../sdk/util/qwen_ngram_warm_uncertainty.zig").known() or
+         @import("current_streamed_pool_uncertainty.zig").known() or sdk or llama;
+ }

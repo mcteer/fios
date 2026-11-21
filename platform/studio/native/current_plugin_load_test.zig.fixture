@@ -1,0 +1,187 @@
+
+test "fios current plugin load refuses uncertainty and retains its input map" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const owners = @import("../../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(239));
+    const Trace = struct {
+        key: usize = 0,
+        key_freed: bool = false,
+        allocations: usize = 0,
+        fn alloc(raw: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.allocations += 1;
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.key) self.key_freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    const Probe = struct {
+        var current: ?*@This() = null;
+        io: std.Io,
+        unknown: bool,
+        loads: usize = 0,
+        unloads: usize = 0,
+        saw_input: bool = false,
+        directory: ?std.Io.Dir = null,
+        fn load(ctx: *const abi.LoadCtx, _: *abi.Verdict) callconv(.c) ?*anyopaque {
+            const self = current.?;
+            self.loads += 1;
+            const source = ctx.weights.?;
+            self.saw_input = source.get(source.ctx, .of("fixture.weight")).ctx != null;
+            const fs: *FsPackDir = @ptrCast(@alignCast(ctx.dir.ctx.?));
+            self.directory = fs.root;
+            if (self.unknown) owners.shared().fence(self.io);
+            return self;
+        }
+        fn unload(raw: *anyopaque) callconv(.c) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.unloads += 1;
+        }
+    };
+    const cache = try page.create(abi.CacheHooks);
+    cache.* = .{};
+    const weights = try page.create(abi.WeightHooks);
+    weights.* = .{};
+    const table = try page.create(abi.ModelTable);
+    table.* = undefined;
+    table.name = .of("fixture-plugin-metadata");
+    table.load = Probe.load;
+    table.unload = Probe.unload;
+    table.cache = cache;
+    table.weights = weights;
+    table.spec = null;
+    const binding = try page.create(plugin_config.Binding);
+    binding.* = .{ .table = table };
+    for ([_]bool{ false, true }) |unknown| {
+        const temp = try page.create(std.testing.TmpDir);
+        temp.* = std.testing.tmpDir(.{});
+        const path = try temp.dir.realPathFileAlloc(io, ".", page);
+        const trace = try page.create(Trace);
+        trace.* = .{};
+        const allocator = trace.allocator();
+        var map = model.Weights.init(allocator);
+        const key = try allocator.dupe(u8, "fixture.weight");
+        trace.key = @intFromPtr(key.ptr);
+        try map.map.put(key, mlx.mlx_array_new_float(1));
+        const probe = try page.create(Probe);
+        probe.* = .{ .io = io, .unknown = unknown };
+        Probe.current = probe;
+        var config = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0, .lm_head_mxfp8_override = false, .plugin = binding });
+        const result = loadTensors(io, allocator, &config, path, mlx.gpuStream(), map, true);
+        try std.testing.expect(probe.saw_input);
+        if (unknown) {
+            if (trace.key_freed) std.debug.print("FIO_CURRENT_PLUGIN_LOAD_DROPPED_INPUT_MAP\n", .{});
+            if (result) |_| {
+                std.debug.print("FIO_CURRENT_PLUGIN_PUBLISHED_UNCERTAIN_LOAD\n", .{});
+                return error.TestExpectedError;
+            } else |err| try std.testing.expectEqual(error.NativeCleanupUncertain, err);
+            try std.testing.expect(!trace.key_freed);
+            _ = try probe.directory.?.stat(io);
+            try std.testing.expect(probe.loads == 1 and probe.unloads == 0);
+            const before = trace.allocations;
+            config.plugin = null;
+            try std.testing.expectError(error.NativeCleanupUncertain, loadMap(io, allocator, &config, path, mlx.gpuStream(), model.Weights.init(allocator)));
+            try std.testing.expectError(error.NativeCleanupUncertain, load(io, allocator, &config, path, mlx.gpuStream()));
+            try std.testing.expectEqual(before, trace.allocations);
+            try std.testing.expect(probe.loads == 1 and probe.unloads == 0);
+            // Retain the unknown inputs/descriptor; borrowed ABI views were
+            // consumed only inside load, not retained past their contract.
+        } else {
+            var xfm = try result;
+            try std.testing.expect(trace.key_freed);
+            try std.testing.expect(xfm.tryDeinit());
+            try std.testing.expect(probe.loads == 1 and probe.unloads == 1);
+            page.free(path);
+            temp.cleanup();
+            page.destroy(temp);
+            page.destroy(probe);
+            page.destroy(trace);
+        }
+    }
+}
+
+test "fios current plugin failed-load cleanup closes native parent before shell and inputs" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const owners = @import("../../../fios/request_ownership.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(241));
+    const Trace = struct {
+        key: usize = 0,
+        key_freed: bool = false,
+        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.key) self.key_freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    const Probe = struct {
+        io: std.Io,
+        unknown: bool,
+        shell: *Transformer,
+        closes: usize = 0,
+        shell_was_retired_first: bool = false,
+        fn unload(raw: *anyopaque) callconv(.c) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.closes += 1;
+            self.shell_was_retired_first = self.shell.fios_deinit_attempted.load(.acquire);
+            if (self.unknown) owners.shared().fence(self.io);
+        }
+    };
+    const table = try page.create(abi.ModelTable);
+    table.* = undefined;
+    table.unload = Probe.unload;
+    for ([_]bool{ false, true }) |unknown| {
+        const temp = try page.create(std.testing.TmpDir);
+        temp.* = std.testing.tmpDir(.{});
+        const path = try temp.dir.realPathFileAlloc(io, ".", page);
+        const fs = try page.create(FsPackDir);
+        fs.* = try FsPackDir.open(io, path);
+        const trace = try page.create(Trace);
+        trace.* = .{};
+        const allocator = trace.allocator();
+        var map = model.Weights.init(allocator);
+        const key = try allocator.dupe(u8, "fixture.rollback-weight");
+        trace.key = @intFromPtr(key.ptr);
+        try map.map.put(key, mlx.mlx_array_new_float(1));
+        const res = try page.create(Resident);
+        res.* = Resident.adopt(map);
+        const xfm = try page.create(Transformer);
+        xfm.* = try moduleShell(allocator, std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 }), mlx.gpuStream());
+        const probe = try page.create(Probe);
+        probe.* = .{ .io = io, .unknown = unknown, .shell = xfm };
+        const bound = try allocator.create(Bound);
+        bound.* = .{ .table = table, .model = probe };
+        fiosFinishLoad(io, allocator, bound, probe, xfm, res, fs, false);
+        try std.testing.expect(probe.closes == 1 and !probe.shell_was_retired_first);
+        if (unknown) {
+            try std.testing.expect(!xfm.fios_deinit_attempted.load(.acquire) and !trace.key_freed);
+            _ = try fs.root.stat(io);
+            fiosFinishLoad(io, allocator, bound, probe, xfm, res, fs, false);
+            try std.testing.expect(probe.closes == 1 and !trace.key_freed);
+            try std.testing.expect(owners.shared().knownUncertain(io));
+        } else {
+            try std.testing.expect(xfm.fios_deinit_attempted.load(.acquire) and trace.key_freed);
+            page.free(path);
+            temp.cleanup();
+            page.destroy(temp);
+            page.destroy(fs);
+            page.destroy(res);
+            page.destroy(xfm);
+            page.destroy(probe);
+            page.destroy(trace);
+        }
+    }
+}

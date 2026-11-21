@@ -1,0 +1,135 @@
+diff --git a/app/Sources/MLXServe/Services/ServerManager.swift b/app/Sources/MLXServe/Services/ServerManager.swift
+--- a/app/Sources/MLXServe/Services/ServerManager.swift
++++ b/app/Sources/MLXServe/Services/ServerManager.swift
+@@ -213,6 +213,11 @@
+     /// carries `--model`/`--model-dir`; this wires the env, stderr capture,
+     /// termination handler, and health polling.
+     private func launch(args: [String], options: ServerOptions) {
++        if let refusal = FiosServerLaunchPreflight.refusal(on: options.port) {
++            lastError = refusal
++            status = .error(refusal)
++            return
++        }
+         do { try GenerationDefaultsFile.migrate(options) }
+         catch {
+             lastError = "Could not save generation defaults: \(error.localizedDescription)"
+@@ -225,12 +230,8 @@
+         lastError = ""
+         clearServerLog()
+ 
+-        // Reap orphaned mlx-serve processes still bound to our port (e.g. left
+-        // behind after a crash). We only target processes whose command name is
+-        // `mlx-serve` so we never kill an unrelated app that happens to be on
+-        // the port.
+-        killOrphanedServers(on: port)
+-
++        // A conflicting server is never ours to reap by port or name.
++        // The preflight above refuses before configuration writes or spawn.
+         let binaryPath = Self.resolveBinaryPath()
+         guard FileManager.default.fileExists(atPath: binaryPath) else {
+             status = .error("Binary not found at: \(binaryPath)")
+@@ -916,44 +917,6 @@
+         return dir
+     }
+ 
+-    private func killOrphanedServers(on port: UInt16) {
+-        let pids = pidsListening(on: port)
+-        let myPid = ProcessInfo.processInfo.processIdentifier
+-        for pid in pids where pid != myPid {
+-            guard processName(pid: pid).hasPrefix("mlx-serve") else { continue }
+-            kill(pid, SIGTERM)
+-            if !waitForExit(pid) {
+-                // A large resident model can take seconds to tear down after SIGKILL too;
+-                // launching before it is gone fails the new server's port check.
+-                kill(pid, SIGKILL)
+-                _ = waitForExit(pid)
+-            }
+-        }
+-    }
+-
+-    private func waitForExit(_ pid: pid_t, seconds: Double = 2) -> Bool {
+-        for _ in 0..<Int(seconds * 10) {
+-            if kill(pid, 0) != 0 { return true }
+-            Thread.sleep(forTimeInterval: 0.1)
+-        }
+-        return kill(pid, 0) != 0
+-    }
+-
+-    /// Was `/usr/sbin/lsof -nP -iTCP:<port> -sTCP:LISTEN -t`; now libproc, which
+-    /// is what lsof itself reads. `lsof` is not reachable from inside the App
+-    /// Sandbox container. See `SystemMetrics`.
+-    private func pidsListening(on port: UInt16) -> [pid_t] {
+-        SystemMetrics.pidsListening(onTCPPort: port)
+-    }
+-
+-    /// Was `/bin/ps -p <pid> -o comm=` plus `lastPathComponent`; now
+-    /// `proc_pidpath`. Note the two can report different *paths* for the same
+-    /// process (ps reports the launch path, proc_pidpath resolves symlinks) —
+-    /// the last component, which is all this compares, agrees.
+-    private func processName(pid: pid_t) -> String {
+-        SystemMetrics.processName(pid: pid)
+-    }
+-
+     /// Resolve the `mlx-serve` binary the app runs — bundled beside the Swift
+     /// executable, else the dev `zig-out/bin/mlx-serve`, else the bare name.
+     /// `nonisolated static` so version probing (`EngineVersions.probe`) can find
+diff --git a/app/Sources/MLXServe/Services/FiosServerLaunchPreflight.swift b/app/Sources/MLXServe/Services/FiosServerLaunchPreflight.swift
+--- /dev/null
++++ b/app/Sources/MLXServe/Services/FiosServerLaunchPreflight.swift
+@@ -0,0 +1,56 @@
++import Foundation
++import Darwin
++
++// GUI launch refusal only. No ownership/admission/absence or native-terminal
++// authority. Installed handover still requires reviewed immutable artifacts,
++// the native startup guard and separately approved stopped-state acceptance.
++enum FiosServerLaunchPreflight {
++    static let reservationPath = "/Library/Application Support/Fios/Studio/native/startup.lock"
++    static let reserved = "Server startup is reserved for Fios on this Mac."
++    static let unavailable = "Server startup checks are unavailable."
++    static let occupied = "Port is already in use. Choose another port or stop its owner."
++
++    static func refusal(on port: UInt16) -> String? {
++        refusal(on: port, reservationPath: reservationPath)
++    }
++    // Internal filesystem seam for finite private fixtures. The GUI always
++    // uses the fixed installed startup namespace through the overload above.
++    static func refusal(on port: UInt16, reservationPath: String) -> String? {
++        var metadata = stat()
++        if lstat(reservationPath, &metadata) == 0 { return reserved }
++        guard errno == ENOENT else { return unavailable }
++        guard port != 0 else { return unavailable }
++        let ipv4 = socket(AF_INET, SOCK_STREAM, 0)
++        guard ipv4 >= 0 else { return unavailable }
++        defer { close(ipv4) }
++        var address4 = sockaddr_in()
++        address4.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
++        address4.sin_family = sa_family_t(AF_INET)
++        address4.sin_port = port.bigEndian
++        let bound4 = withUnsafePointer(to: &address4) {
++            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
++                Darwin.bind(ipv4, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
++            }
++        }
++        guard bound4 == 0 else { return errno == EADDRINUSE ? occupied : unavailable }
++        let ipv6 = socket(AF_INET6, SOCK_STREAM, 0)
++        guard ipv6 >= 0 else { return unavailable }
++        defer { close(ipv6) }
++        var onlyIPv6: Int32 = 1
++        guard setsockopt(ipv6, IPPROTO_IPV6, IPV6_V6ONLY, &onlyIPv6, socklen_t(MemoryLayout<Int32>.size)) == 0 else { return unavailable }
++        var address6 = sockaddr_in6()
++        address6.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
++        address6.sin6_family = sa_family_t(AF_INET6)
++        address6.sin6_port = port.bigEndian
++        let bound6 = withUnsafePointer(to: &address6) {
++            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
++                Darwin.bind(ipv6, $0, socklen_t(MemoryLayout<sockaddr_in6>.size))
++            }
++        }
++        guard bound6 == 0 else { return errno == EADDRINUSE ? occupied : unavailable }
++        // Both descriptors close before return. This is a transient port
++        // preflight, never a retained native startup reservation. No listen,
++        // connection, signal, process lookup or retry occurs here.
++        return nil
++    }
++}

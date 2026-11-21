@@ -1,0 +1,97 @@
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -30,6 +30,8 @@
+ // Live request lineage only. Missing entries NEVER mean not-sent, completed
+ // or device-terminal. Root sequence remains attached to retained descendants.
+ pub const CorrelationSnapshot = struct {
++    queued_operations: usize = 0,
++    active_operations: usize = 0,
+     instance: [16]u8,
+     sample_sequence: u64,
+     root_sequence: u64 = 0,
+@@ -500,6 +502,26 @@
+                 .vacant => unreachable,
+             }
+         }
++        // Queue tickets retain slot sequences, not correlation-root aliases.
++        // Count each operation once for this original request under this same lock.
++        if (result.found) for (self.queue_operations) |operation| {
++            if (operation.phase == .none) continue;
++            var associated = false;
++            for (operation.roots, 0..) |sequence, index| {
++                if (sequence == 0) continue;
++                const slot = self.slots[index];
++                if (slot.sequence != sequence or slot.phase == .vacant or slot.references == 0) {
++                    self.uncertain = true;
++                    continue;
++                }
++                if (slot.correlation_root == result.root_sequence) associated = true;
++            }
++            if (associated) switch (operation.phase) {
++                .queued => result.queued_operations += 1,
++                .active => result.active_operations += 1,
++                .none => unreachable,
++            };
++        };
+         result.uncertain = result.uncertain or self.uncertain or !result.found;
+         return result;
+     }
+--- a/src/fios/control_protocol.zig
++++ b/src/fios/control_protocol.zig
+@@ -290,19 +290,26 @@
+ // Separate readonly frame namespace: never reinterpret lineage bytes as an
+ // ingress action. A missing live lineage is unknown, not terminal/not-sent.
+ pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const [lineage_request_size]u8) [lineage_response_size]u8 {
+-    var response: [lineage_response_size]u8 = @splat(0);
+-    @memcpy(response[0..4], "FIP9"); response[4] = if (request[4] == 2) 2 else 1; response[7] = 1;
++    return dispatchLineageFrame(lineage_response_size, tracker, io, request);
++}
++pub const queued_lineage_response_size = 128;
++pub fn dispatchQueuedLineage(tracker: *ownership.Tracker, io: std.Io, request: *const [lineage_request_size]u8) [queued_lineage_response_size]u8 {
++    return dispatchLineageFrame(queued_lineage_response_size, tracker, io, request);
++}
++fn dispatchLineageFrame(comptime size: usize, tracker: *ownership.Tracker, io: std.Io, request: *const [lineage_request_size]u8) [size]u8 {
++    var response: [size]u8 = @splat(0);
++    @memcpy(response[0..4], "FIP9"); response[4] = if (request[4] == 3 and size == queued_lineage_response_size) 3 else if (request[4] == 2) 2 else 1; response[7] = 1;
+     @memcpy(response[24..56], request[24..56]);
+-    if (!std.mem.eql(u8, request[0..4], "FIQ9") or (request[4] != 1 and request[4] != 2) or request[5] != 0 or
++    if (!std.mem.eql(u8, request[0..4], "FIQ9") or (request[4] != 1 and request[4] != 2 and !(size == queued_lineage_response_size and request[4] == 3)) or request[5] != 0 or
+         request[6] != 0 or request[7] != 0 or !std.mem.allEqual(u8, request[56..64], 0)) {
+         response[5] = @intFromEnum(Status.invalid);
+         return response;
+     }
+     _ = tracker.backendKnownUncertain(io);
+     // Source capture time remains distinct from a client's query/receipt clock.
+-    const captured_at = if (request[4] == 2) std.Io.Clock.real.now(io).toMilliseconds() else 0;
++    const captured_at = if (request[4] >= 2) std.Io.Clock.real.now(io).toMilliseconds() else 0;
+     const snapshot = tracker.correlationSnapshot(io, request[24..56].*);
+-    if (request[4] == 2) {
++    if (request[4] >= 2) {
+         const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence) @intCast(captured_at) else std.math.maxInt(u64);
+         std.mem.writeInt(u64, response[100..108], stamp, .big);
+     }
+@@ -318,6 +325,10 @@
+     std.mem.writeInt(u64, response[72..80], snapshot.references, .big);
+     inline for (.{snapshot.owners,snapshot.ingress,snapshot.preparing,snapshot.active,snapshot.responding}, 0..) |value,index| {
+         std.mem.writeInt(u32, response[80 + index * 4 ..][0..4], @intCast(value), .big);
++    }
++    if (size == queued_lineage_response_size) {
++        std.mem.writeInt(u32, response[112..116], @intCast(snapshot.queued_operations), .big);
++        std.mem.writeInt(u32, response[116..120], @intCast(snapshot.active_operations), .big);
+     }
+     return response;
+ }
+--- a/src/fios/control_transport.zig
++++ b/src/fios/control_transport.zig
+@@ -208,6 +208,11 @@
+             @memcpy(storage[0..protocol.retirement_response_size], &value);
+             break :retirement storage[0..protocol.retirement_response_size];
+         } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIQ9")) lineage: {
++            if (input[4] == 3) {
++                const value = protocol.dispatchQueuedLineage(ownership.shared(), self.io, input[0..protocol.lineage_request_size]);
++                @memcpy(storage[0..protocol.queued_lineage_response_size], &value);
++                break :lineage storage[0..protocol.queued_lineage_response_size];
++            }
+             const value = protocol.dispatchLineage(ownership.shared(), self.io, input[0..protocol.lineage_request_size]);
+             @memcpy(storage[0..protocol.lineage_response_size], &value);
+             break :lineage storage[0..protocol.lineage_response_size];

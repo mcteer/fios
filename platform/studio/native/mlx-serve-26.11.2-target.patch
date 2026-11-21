@@ -1,0 +1,95 @@
+diff --git a/src/host/http/router.zig b/src/host/http/router.zig
+index da8e8e9..3952ab9 100644
+--- a/src/host/http/router.zig
++++ b/src/host/http/router.zig
+@@ -268,6 +268,7 @@ pub fn handleConnection(
+         }
+     }
+ 
++    var fios_process_bound = false;
+     // Expected process identity precedes model resolution/proxying. It does
+     // not grant admission, enroll backend lifetimes or clear old ownership.
+     if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/v1/chat/completions")) {
+@@ -276,6 +277,7 @@ pub fn handleConnection(
+             return;
+         };
+         if (expected_instance) |expected| {
++            fios_process_bound = true;
+             const actual = fios_ownership.shared.snapshot(stream.io);
+             if (!http_server.fios_connection_tracking.load(.acquire) or !actual.initialized) {
+                 try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_tracking_unavailable", "Native instance identity is unavailable", 503);
+@@ -469,6 +471,35 @@ pub fn handleConnection(
+         &model_id_buf,
+         body_model orelse queryModel(&query_model_buf, raw_path) orelse "",
+     );
++    // Bound transport selects the decoded top-level JSON field. The legacy
++    // fast scanner may find a nested field and only decodes slash escapes.
++    // Retain the parser allocation until dispatch/response handling returns.
++    var fios_target_json: ?std.json.Parsed(std.json.Value) = null;
++    defer if (fios_target_json) |parsed| parsed.deinit();
++    if (fios_process_bound) {
++        fios_target_json = std.json.parseFromSlice(std.json.Value, allocator, request_body, .{ .allocate = .alloc_always }) catch {
++            try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "Bound native request requires a JSON object", 400);
++            return;
++        };
++        const target_root = fios_target_json.?.value;
++        if (target_root != .object) {
++            try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "Bound native request requires a JSON object", 400);
++            return;
++        }
++        const target_value = target_root.object.get("model") orelse {
++            try sendErrorResponse(allocator, stream, "404 Not Found", "native_target_not_found", "Bound native target is not registered on this process", 404);
++            return;
++        };
++        if (target_value != .string) {
++            try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_error", "Bound native model must be a JSON string", 400);
++            return;
++        }
++        requested_model_id = target_value.string;
++        if (requested_model_id.len > fios_ownership.model_limit or !std.unicode.utf8ValidateSlice(requested_model_id) or std.mem.indexOfScalar(u8, requested_model_id, 0) != null) {
++            try sendErrorResponse(allocator, stream, "404 Not Found", "native_target_not_found", "Bound native target is not registered on this process", 404);
++            return;
++        }
++    }
+     // ── LAN-discovered remote model (`<id>@<peer>`) → proxy the request to
+     //    its host byte-for-byte, model field rewritten to the bare id.
+     //    Any DIRECT client may initiate the hop (loopback app, the
+@@ -483,6 +514,10 @@ pub fn handleConnection(
+     if (http_server.g_providers) |prov| if (lan_mod.splitRemoteId(requested_model_id)) |rid| if (prov.isProvider(rid.peer) and
+         !isTunneledRequest(request[0..header_end_pos]) and registry.peek(requested_model_id) == null)
+     {
++        if (fios_process_bound) {
++            try sendErrorResponse(allocator, stream, "409 Conflict", "native_target_not_local", "Bound native requests cannot proxy to another process", 409);
++            return;
++        }
+         if (try refuseProxiedAblation(allocator, stream, request_body)) return;
+         try handleProviderProxy(allocator, stream, prov, path, request_body, body_model, requested_model_id);
+         return;
+@@ -490,6 +525,10 @@ pub fn handleConnection(
+     if (http_server.g_lan != null and lan_mod.splitRemoteId(requested_model_id) != null and
+         !isTunneledRequest(request[0..header_end_pos]) and registry.peek(requested_model_id) == null)
+     {
++        if (fios_process_bound) {
++            try sendErrorResponse(allocator, stream, "409 Conflict", "native_target_not_local", "Bound native requests cannot proxy to another process", 409);
++            return;
++        }
+         if (try refuseProxiedAblation(allocator, stream, request_body)) return;
+         try handleLanProxy(allocator, stream, http_server.g_lan.?, method, raw_path, request_body, body_model, requested_model_id);
+         return;
+@@ -501,7 +540,15 @@ pub fn handleConnection(
+     defer if (text_gen) {
+         _ = request_options.text_gen_live.fetchSub(1, .monotonic);
+     };
+-    switch (resolveRequestModelId(registry, &request_model.g_model_aliases, requested_model_id, path)) {
++    if (fios_process_bound) {
++        // Exact registered identifiers only, including unloaded entries. The
++        // default/marketing name and mutable settings aliases cannot select a
++        // different model after the independent guard observed this process.
++        if (requested_model_id.len == 0 or std.mem.eql(u8, requested_model_id, "mlx-serve") or registry.peek(requested_model_id) == null) {
++            try sendErrorResponse(allocator, stream, "404 Not Found", "native_target_not_found", "Bound native target is not registered on this process", 404);
++            return;
++        }
++    } else switch (resolveRequestModelId(registry, &request_model.g_model_aliases, requested_model_id, path)) {
+         .id => |id| requested_model_id = id,
+         .unknown_path => {
+             try sendErrorResponse(allocator, stream, "404 Not Found", "model_not_found", "No model is registered at that path; load it first with POST /v1/load-model", 404);

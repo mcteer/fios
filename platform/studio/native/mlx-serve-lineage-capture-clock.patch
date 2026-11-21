@@ -1,0 +1,27 @@
+diff --git a/src/fios/control_protocol.zig b/src/fios/control_protocol.zig
+--- a/src/fios/control_protocol.zig
++++ b/src/fios/control_protocol.zig
+@@ -291,15 +291,21 @@
+ // ingress action. A missing live lineage is unknown, not terminal/not-sent.
+ pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const [lineage_request_size]u8) [lineage_response_size]u8 {
+     var response: [lineage_response_size]u8 = @splat(0);
+-    @memcpy(response[0..4], "FIP9"); response[4] = 1; response[7] = 1;
++    @memcpy(response[0..4], "FIP9"); response[4] = if (request[4] == 2) 2 else 1; response[7] = 1;
+     @memcpy(response[24..56], request[24..56]);
+-    if (!std.mem.eql(u8, request[0..4], "FIQ9") or request[4] != 1 or request[5] != 0 or
++    if (!std.mem.eql(u8, request[0..4], "FIQ9") or (request[4] != 1 and request[4] != 2) or request[5] != 0 or
+         request[6] != 0 or request[7] != 0 or !std.mem.allEqual(u8, request[56..64], 0)) {
+         response[5] = @intFromEnum(Status.invalid);
+         return response;
+     }
+     _ = tracker.backendKnownUncertain(io);
++    // Source capture time remains distinct from a client's query/receipt clock.
++    const captured_at = if (request[4] == 2) std.Io.Clock.real.now(io).toMilliseconds() else 0;
+     const snapshot = tracker.correlationSnapshot(io, request[24..56].*);
++    if (request[4] == 2) {
++        const stamp: u64 = if (captured_at > 0 and captured_at <= ownership.maximum_sample_sequence) @intCast(captured_at) else std.math.maxInt(u64);
++        std.mem.writeInt(u64, response[100..108], stamp, .big);
++    }
+     @memcpy(response[8..24], &snapshot.instance);
+     std.mem.writeInt(u64, response[56..64], snapshot.sample_sequence, .big);
+     if (!std.mem.eql(u8, request[8..24], &snapshot.instance)) {

@@ -1,0 +1,76 @@
+// Actual host companion helper; registry/loader are CPU substitutes.
+const std = @import("std");
+const fios_ownership = @import("fios/request_ownership.zig");
+const scenario = @import("build_options").scenario;
+const LoadedModel = struct { id: []const u8 = "fixture/exact-companion", fios_owner_guard: bool = true };
+var fixture_entry: LoadedModel = .{};
+var calls: usize = 0;
+const Registry = struct {
+    fn resolveEntry(_: *@This(), id: []const u8) !*LoadedModel {
+        if (!std.mem.eql(u8, id, fixture_entry.id)) return error.UnknownModelId;
+        return &fixture_entry;
+    }
+};
+const Scheduler = struct {
+    io: std.Io, registry: *Registry,
+    fn ensureLoaded(_: *@This(), id: []const u8) !*LoadedModel {
+        if (!std.mem.eql(u8, id, fixture_entry.id)) return error.WrongExactID;
+        if (fixture_entry.fios_owner_guard) {
+            const snap = fios_ownership.shared().snapshot(fixture_scheduler.io);
+            var found = false;
+            for (snap.models[0..snap.model_count]) |model| {
+                if (std.mem.eql(u8, model.id[0..model.len], id)) found = true;
+            }
+            if (!found) {
+                std.debug.print("FIO_COMPANION_UNASSOCIATED_BEFORE_LOAD\n", .{});
+                return error.UnassociatedCompanion;
+            }
+        }
+        calls += 1;
+        return &fixture_entry;
+    }
+};
+var registry: Registry = .{};
+var fixture_scheduler: Scheduler = undefined;
+const Launch = struct { global_scheduler: ?*Scheduler };
+const http_server = struct { fn launch() Launch { return .{ .global_scheduler = &fixture_scheduler }; } };
+// ACTUAL_HELPER
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    fixture_scheduler = .{ .io = io, .registry = &registry };
+    try fios_ownership.shared().initialize(io, @splat(71));
+    const root = try fios_ownership.shared().enter(io);
+    const cid: fios_ownership.CorrelationID = @splat(33);
+    try fios_ownership.shared().associate(io, root, cid);
+    try fios_ownership.shared().bind(io, root, "fixture/exact-asr");
+    try fios_ownership.shared().active(io, root);
+    fios_ownership.current().* = if (scenario == 4) null else root;
+    defer fios_ownership.current().* = null;
+    if (scenario == 1) fixture_entry.id = "fixture/exact-diarizer";
+    if (scenario == 5) fixture_entry.fios_owner_guard = false;
+    const ticket: ?fios_ownership.ModelMutation = if (scenario == 2) try fios_ownership.shared().beginModelMutation(io, fixture_entry.id) else null;
+    if (scenario == 3) fios_ownership.shared().fence(io);
+    const result = ensureCompanionLoaded(fixture_entry.id);
+    if (scenario == 2 or scenario == 3 or scenario == 4) {
+        if (result) |_| return error.InvalidLoadAccepted else |_| {}
+        if (calls != 0) return error.RefusedLoadExecuted;
+        if (ticket) |t| try fios_ownership.shared().endModelMutation(io, t);
+        if (scenario == 3 and !fios_ownership.shared().snapshot(io).uncertain) return error.UncertaintyCleared;
+    } else {
+        _ = try result;
+        _ = try ensureCompanionLoaded(fixture_entry.id); // idempotent same companion
+        if (scenario == 6) {
+            fixture_entry.id = "fixture/second-companion";
+            _ = try ensureCompanionLoaded(fixture_entry.id);
+        }
+        if (calls != (if (scenario == 6) @as(usize,3) else 2)) return error.WrongLoadCount;
+        const snap = fios_ownership.shared().snapshot(io);
+        if (snap.owned != 1 or snap.model_count != (if (scenario == 5) @as(usize,1) else if (scenario == 6) 3 else 2)) return error.RootReplaced;
+        const held = (try fios_ownership.retainCurrent(io)).?;
+        try fios_ownership.shared().leave(io, root);
+        const lineage = fios_ownership.shared().correlationSnapshot(io, cid);
+        if (!lineage.found or lineage.root_sequence != root.sequence) return error.LostLineage;
+        if (!held.releaseIfCertain(io)) return error.ReleaseFailed;
+    }
+    std.debug.print("PASS: actual companion helper retains original root before load\n", .{});
+}

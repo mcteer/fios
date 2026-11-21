@@ -16,6 +16,10 @@ const child = spawn(
     cwd: root,
     stdio: "inherit",
     shell: false,
+    timeout: 120_000,
+    killSignal: "SIGTERM",
+    // No platform grant/native guard, provider credential or service endpoint
+    // is inherited. Private platform entry tests use installed mocks only.
     env: { PATH: process.env.PATH || "", HOME: process.env.HOME || "" },
   },
 );

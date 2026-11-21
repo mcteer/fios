@@ -1,0 +1,54 @@
+
+test "fios current unload worker restores original requester" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    const owners = @import("../../../fios/request_ownership.zig");
+    const served = @import("../../../host/engines/served.zig");
+    const abi = @import("../../../abi/engine.zig");
+    const fake = @import("../../../testing/fake_engine.zig");
+    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 2, 0, null);
+    defer registry.deinit();
+    const model = try registry.registerStub("fixture/unload-metadata", "/fixture/never-loaded", null);
+    try owners.shared().initialize(io, @splat(79));
+    const root = try owners.shared().enter(io);
+    defer owners.shared().leave(io, root) catch {};
+    try owners.shared().bind(io, root, model.id);
+    owners.current().* = root;
+    defer owners.current().* = null;
+    const original = (try owners.retainCurrent(io)).?;
+    defer _ = original.releaseIfCertain(io);
+    const Probe = struct {
+        var expected: owners.Token = undefined;
+        var attributed: bool = false;
+        fn close(raw: *anyopaque) callconv(.c) void {
+            if (owners.current_group().*) |group| attributed = group.len == 1 and std.meta.eql(group[0], expected);
+            @import("../../../testing/fake_engine.zig").own_thread.close(raw);
+        }
+        fn log(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
+        fn wake(_: *anyopaque) callconv(.c) void {}
+    };
+    Probe.expected = root;
+    Probe.attributed = false;
+    var table = fake.own_thread;
+    table.close = Probe.close;
+    var progress: @import("../../../host/registry/load_progress.zig").Progress = .{};
+    var gauges: served.Gauges = .{};
+    const engine = try a.create(served.Served);
+    engine.* = .{ .gpa = a, .kind = .llama, .table = &table, .handle = undefined, .info = undefined, .host = undefined, .progress = &progress, .gauges = &gauges, .metrics = null };
+    engine.host = .{ .ctx = engine, .log = Probe.log, .wake = Probe.wake };
+    const options: abi.Open = .{ .model_dir = .{}, .model_type = .{}, .config_json = .{}, .context = 0, .max_concurrent = 1, .memory_budget = 0, .settings_json = .{}, .options_json = .{}, .host = &engine.host };
+    var verdict: abi.Verdict = .{};
+    engine.handle = fake.own_thread.open(&options, &engine.info, &verdict) orelse return error.Open;
+    model.engine = engine;
+    model.state = .evicting;
+    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
+    var request: UnloadRequest = .{ .entry = model };
+    if (@hasField(UnloadRequest, "fios_origins")) request.fios_origins = &original;
+    owners.current().* = null;
+    runUnloadRequest(&scheduler, &request);
+    try std.testing.expect(request.done);
+    try std.testing.expect(model.engine == null and model.state == .unloaded);
+    try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
+    if (!Probe.attributed) std.debug.print("FIO_CURRENT_UNLOAD_LOST_ORIGINS\n", .{});
+    try std.testing.expect(Probe.attributed);
+}

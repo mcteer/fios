@@ -1,0 +1,141 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const leases = @import("fios/preparation_leases.zig");
+const io = std.testing.io;
+const Entry = struct { id: []const u8, state: enum { unloaded, loading, ready, error_state, evicting }, fios_load_uncertain: std.atomic.Value(bool) = .init(false) };
+const Registry = struct { mutex: std.Io.Mutex = .init, entries: std.StringHashMap(*Entry), generation: std.atomic.Value(u64) = .init(7) };
+fn close(table: *leases.Leases, tracker: *owners.Tracker, handle: leases.Handle, model: []const u8) !void {
+    if (comptime @hasDecl(leases.Leases, "closePristine")) return table.closePristine(io, tracker, handle, model);
+    std.debug.print("PRISTINE_PREPARATION_INTERFACE_ABSENT\n", .{});
+    return error.MissingPristinePreparationInterface;
+}
+fn setup(tracker: *owners.Tracker, registry: *Registry, entry: *Entry) !void {
+    tracker.primary_guard = true;
+    try tracker.initialize(io, @splat(171));
+    registry.* = .{ .entries = std.StringHashMap(*Entry).init(std.testing.allocator) };
+    entry.* = .{ .id = "fixture/a", .state = .unloaded };
+    try registry.entries.put(entry.id, entry);
+}
+test "pristine preparation closes only untouched original and rejects replay" {
+    var t: owners.Tracker = .{};var r: Registry = undefined;var a: Entry = undefined;
+    try setup(&t,&r,&a);defer r.entries.deinit();var table: leases.Leases = .{};
+    const h=try table.reserve(io,&t,&r,a.id,@splat(1),100,5000);
+    const unrelated=try t.enter(io);
+    try close(&table,&t,h,a.id);
+    try std.testing.expectEqual(@as(usize,1),t.snapshot(io).owned);
+    try std.testing.expectError(error.UnknownLease,close(&table,&t,h,a.id));
+    try t.leave(io,unrelated);
+}
+test "pristine preparation remembers scalar retain after reference release" {
+    var t: owners.Tracker = .{};var r: Registry = undefined;var a: Entry = undefined;
+    try setup(&t,&r,&a);defer r.entries.deinit();var table: leases.Leases = .{};
+    const h=try table.reserve(io,&t,&r,a.id,@splat(1),100,5000);const token=table.entries[0].?.token;
+    try t.retain(io,token);try t.leave(io,token);
+    try std.testing.expectError(error.PreparationPreviouslyRetained,close(&table,&t,h,a.id));
+    try std.testing.expectEqual(@as(usize,1),t.snapshot(io).owned);
+    // The existing weaker cleanup remains available; it is not a proof.
+    try table.withdraw(io,&t,h,a.id);
+}
+test "pristine preparation remembers union retain after reference release" {
+    var t: owners.Tracker = .{};var r: Registry = undefined;var a: Entry = undefined;
+    try setup(&t,&r,&a);defer r.entries.deinit();var table: leases.Leases = .{};
+    const h=try table.reserve(io,&t,&r,a.id,@splat(1),100,5000);const token=table.entries[0].?.token;
+    const retained=try t.retainTokens(io,&.{token,token});retained.release(io);
+    try std.testing.expectError(error.PreparationPreviouslyRetained,close(&table,&t,h,a.id));
+    try table.withdraw(io,&t,h,a.id);
+}
+test "pristine preparation remembers queued reference after metadata retirement" {
+    var t: owners.Tracker = .{};var r: Registry = undefined;var a: Entry = undefined;
+    try setup(&t,&r,&a);defer r.entries.deinit();var table: leases.Leases = .{};
+    const h=try table.reserve(io,&t,&r,a.id,@splat(1),100,5000);
+    var borrowed: owners.Retained = .{ .tracker=&t,.count=1 };borrowed.tokens[0]=table.entries[0].?.token;
+    const ticket=try t.beginQueuedKnown(io,&borrowed);try t.retireQueuedKnown(io,ticket);
+    try std.testing.expectError(error.PreparationPreviouslyRetained,close(&table,&t,h,a.id));
+    try table.withdraw(io,&t,h,a.id);
+}
+test "pristine preparation cannot erase consumed failed attachment" {
+    var t: owners.Tracker = .{};var r: Registry = undefined;var a: Entry = undefined;
+    try setup(&t,&r,&a);defer r.entries.deinit();var table: leases.Leases = .{};
+    const h=try table.reserve(io,&t,&r,a.id,@splat(1),100,5000);const incoming=try t.enter(io);
+    r.generation.store(8,.release);
+    if(table.attach(io,&t,&r,h,incoming,a.id,101)) |_| return error.TestUnexpectedResult else |_| {}
+    try std.testing.expectError(error.LeaseConsumed,close(&table,&t,h,a.id));
+    try std.testing.expectEqual(@as(usize,2),t.snapshot(io).owned);
+}
+test "pristine preparation preserves uncertainty and exact identity refusals" {
+    var t: owners.Tracker = .{};var r: Registry = undefined;var a: Entry = undefined;
+    try setup(&t,&r,&a);defer r.entries.deinit();var table: leases.Leases = .{};
+    const h=try table.reserve(io,&t,&r,a.id,@splat(1),100,5000);
+    try std.testing.expectError(error.ModelMismatch,close(&table,&t,h,"fixture/other"));
+    var wrong=h;wrong.root+=1;try std.testing.expectError(error.UnknownLease,close(&table,&t,wrong,a.id));
+    t.fence(io);try std.testing.expectError(error.CoverageUncertain,close(&table,&t,h,a.id));
+    try std.testing.expect(t.snapshot(io).uncertain);try std.testing.expectEqual(@as(usize,1),t.snapshot(io).owned);
+}
+test "pristine preparation metadata closure preserves maintenance admission" {
+    var t: owners.Tracker = .{};var r: Registry = undefined;var a: Entry = undefined;
+    try setup(&t,&r,&a);defer r.entries.deinit();var table: leases.Leases = .{};
+    const h=try table.reserve(io,&t,&r,a.id,@splat(1),100,5000);const pause=try t.pauseAdmissions(io);
+    try close(&table,&t,h,a.id);try std.testing.expect(t.snapshot(io).admissions_closed);
+    try t.resumeAdmissions(io,pause);
+}
+test "pristine preparation close and attachment have exactly one winner" {
+    var t: owners.Tracker = .{};var r: Registry = undefined;var a: Entry = undefined;
+    try setup(&t,&r,&a);defer r.entries.deinit();var table: leases.Leases = .{};
+    const h=try table.reserve(io,&t,&r,a.id,@splat(1),100,5000);const incoming=try t.enter(io);
+    const Work=struct {
+        table:*leases.Leases,tracker:*owners.Tracker,registry:*Registry,handle:leases.Handle,incoming:owners.Token,
+        closed:bool=false,attached:bool=false,
+        fn remove(self:*@This())void {close(self.table,self.tracker,self.handle,"fixture/a") catch return;self.closed=true;}
+        fn attach(self:*@This())void {self.table.attach(io,self.tracker,self.registry,self.handle,self.incoming,"fixture/a",101) catch return;self.attached=true;}
+    };
+    var work=Work{.table=&table,.tracker=&t,.registry=&r,.handle=h,.incoming=incoming};
+    const x=try std.Thread.spawn(.{},Work.remove,.{&work});const y=try std.Thread.spawn(.{},Work.attach,.{&work});x.join();y.join();
+    try std.testing.expect(work.closed!=work.attached);
+    try std.testing.expectEqual(@as(usize,1),t.snapshot(io).owned);try t.leave(io,incoming);
+}
+
+test "pristine preparation wire requires distinct version and enabled callback" {
+    const protocol = @import("fios/preparation_protocol.zig");
+    const control = @import("fios/control_protocol.zig");
+    var t: owners.Tracker = .{};var r: Registry = undefined;var a: Entry = undefined;
+    try setup(&t,&r,&a);defer r.entries.deinit();var table: leases.Leases = .{};
+    const h=try table.reserve(io,&t,&r,a.id,@splat(1),100,5000);
+    const Context=struct {
+        table: *leases.Leases, tracker: *owners.Tracker, calls: usize=0,
+        fn reserve(_: *anyopaque, _: []const u8, _: owners.CorrelationID, _: u32) !leases.Handle {return error.Disabled;}
+        fn withdraw(_: *anyopaque, _: leases.Handle, _: []const u8) !void {return error.Disabled;}
+        fn pristine(raw: *anyopaque, handle: leases.Handle, model: []const u8) !void {
+            const self: *@This()=@ptrCast(@alignCast(raw));self.calls+=1;
+            return self.table.closePristine(io,self.tracker,handle,model);
+        }
+    };
+    var context: Context=.{.table=&table,.tracker=&t};
+    var source: protocol.Source=.{.context=&context,.reserve=Context.reserve,.withdraw=Context.withdraw};
+    var bytes: [protocol.request_size]u8=@splat(0);
+    @memcpy(bytes[0..4],"FIP9");bytes[4]=2;bytes[5]=3;
+    @memcpy(bytes[8..24],&h.instance);@memcpy(bytes[24..56],&h.correlation);
+    std.mem.writeInt(u64,bytes[56..64],h.root,.big);
+    std.mem.writeInt(u16,bytes[64..66],9,.big);@memcpy(bytes[80..89],a.id);
+    for ([_][2]u8{.{1,3},.{2,1},.{2,2}}) |pair| {
+        var bad=bytes;bad[4]=pair[0];bad[5]=pair[1];
+        const refused=protocol.dispatch(&t,io,&bad,source);
+        try std.testing.expectEqual(@intFromEnum(control.Status.invalid),refused[5]);
+    }
+    const disabled=protocol.dispatch(&t,io,&bytes,source);
+    try std.testing.expectEqual(@intFromEnum(control.Status.maintenance),disabled[5]);
+    try std.testing.expectEqual(@as(usize,0),context.calls);
+    try std.testing.expectEqual(@as(usize,1),t.snapshot(io).owned);
+    source.close_pristine=Context.pristine;
+    const reply=protocol.dispatch(&t,io,&bytes,source);
+    try std.testing.expectEqual(@intFromEnum(control.Status.ok),reply[5]);
+    try std.testing.expectEqual(@as(u8,2),reply[4]);
+    try std.testing.expectEqual(@as(u8,3),reply[6]);
+    try std.testing.expectEqualSlices(u8,&h.instance,reply[8..24]);
+    try std.testing.expectEqual(h.root,std.mem.readInt(u64,reply[40..48],.big));
+    try std.testing.expectEqualSlices(u8,&h.correlation,reply[48..80]);
+    try std.testing.expectEqual(@as(usize,1),context.calls);
+    try std.testing.expectEqual(@as(usize,0),t.snapshot(io).owned);
+    try std.Io.Dir.cwd().writeFile(io,.{.sub_path="pristine-native-close.bin",.data=&reply});
+    const replay=protocol.dispatch(&t,io,&bytes,source);
+    try std.testing.expectEqual(@intFromEnum(control.Status.maintenance),replay[5]);
+}

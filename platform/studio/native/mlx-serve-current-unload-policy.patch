@@ -1,0 +1,72 @@
+diff --git a/src/engines/mlx/runtime/load_requests.zig b/src/engines/mlx/runtime/load_requests.zig
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -299,27 +299,18 @@ pub fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+         @as(f64, @floatFromInt(bytes)) / 1_073_741_824.0,
+     });
+     if (model_registry_mod.cleanupUncertain(sch.io)) {
+-        req.fios_failed = true;
+-        req.fios_cleanup_refused = true;
+-        finishUnloadRequest(sch, req);
+-        return;
++        return refuseUnloadCleanup(sch, req);
+     }
+     moveHotCacheViewOff(sch, entry);
+     if (!entry.tryUnloadResident()) {
+-        req.fios_failed = true;
+-        req.fios_cleanup_refused = true;
+-        finishUnloadRequest(sch, req);
+-        return;
++        return refuseUnloadCleanup(sch, req);
+     }
+     // unloadResident freed the arrays into MLX's allocator cache — clear it
+     // so the unload actually returns the memory to the OS (the whole point
+     // of the load→generate→unload flow).
+     _ = mlx.mlx_clear_cache();
+     if (model_registry_mod.cleanupUncertain(sch.io)) {
+-        req.fios_failed = true;
+-        req.fios_cleanup_refused = true;
+-        finishUnloadRequest(sch, req);
+-        return;
++        return refuseUnloadCleanup(sch, req);
+     }
+     // Drop any borrowed views that pointed at this entry so post-unload reads
+     // don't dangle (gen entries leave xfm null already, but an LLM unload
+@@ -333,17 +324,36 @@ pub fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+         sch.dflash = null;
+         if (scheduler_mod.hot_cache_budget_invalidate) |f| f();
+     }
++    if (model_registry_mod.cleanupUncertain(sch.io)) return refuseUnloadCleanup(sch, req);
+     publishHotCacheResidency(sch);
++    if (model_registry_mod.cleanupUncertain(sch.io)) return refuseUnloadCleanup(sch, req);
+     sch.registry.mutex.lockUncancelable(sch.io);
++    if (model_registry_mod.cleanupUncertainLocked(sch.io)) {
++        sch.registry.mutex.unlock(sch.io);
++        return refuseUnloadCleanup(sch, req);
++    }
+     sch.registry.accountEvictedLocked(bytes);
++    if (model_registry_mod.cleanupUncertainLocked(sch.io)) {
++        sch.registry.mutex.unlock(sch.io);
++        return refuseUnloadCleanup(sch, req);
++    }
+     sch.registry.finalizeEvictionLocked(entry);
+     sch.registry.mutex.unlock(sch.io);
+ 
+     // Shrink `fit` capacity back to the surviving live set — leaving the
+     // freed model's headroom in place is exactly the per-transient-commit
+     // configuration the policy exists to avoid.
+-    logWiredPolicy(mlx.applyWiredPolicy());
++    if (model_registry_mod.cleanupUncertain(sch.io)) return refuseUnloadCleanup(sch, req);
++    const wired_policy = mlx.applyWiredPolicy();
++    if (model_registry_mod.cleanupUncertain(sch.io)) return refuseUnloadCleanup(sch, req);
++    logWiredPolicy(wired_policy);
++
++    finishUnloadRequest(sch, req);
++}
+ 
++fn refuseUnloadCleanup(sch: *Scheduler, req: *UnloadRequest) void {
++    req.fios_failed = true;
++    req.fios_cleanup_refused = true;
+     finishUnloadRequest(sch, req);
+ }
+ 

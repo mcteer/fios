@@ -1,0 +1,5 @@
+{
+  "src/engines/mlx/scheduler.zig": "835e4f7267074df81e9fc30163efff10de124491f255b0ed59e0dc640d17eccb",
+  "src/host/media/encode.zig": "9df7676940c855804b1158240300e538fc7e1850ed9039fae90c64a52d362600",
+  "src/plugins/gemma4/config.zig": "7a5e1896d907809b0e7fd90919d443b9160df6403d14014783d0b600aeb6c013"
+}

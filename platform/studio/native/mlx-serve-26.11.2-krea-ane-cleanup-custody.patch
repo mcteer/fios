@@ -1,0 +1,541 @@
+diff --git a/src/fios/media_cleanup_host.zig b/src/fios/media_cleanup_host.zig
+new file mode 100644
+index 0000000..1d2f827
+--- /dev/null
++++ b/src/fios/media_cleanup_host.zig
+@@ -0,0 +1,56 @@
++//! Host-only negative composition for the portable media SDK callback surface.
++const std = @import("std");
++const options = @import("build_options");
++const owners = @import("request_ownership.zig");
++const cleanup = @import("current_ane_native_cleanup_uncertainty.zig");
++const guard = @import("../sdk/ane/cleanup_guard.zig");
++const sdk = @hasDecl(options, "fios_source_sdk") and options.fios_source_sdk;
++const llama = @hasDecl(options, "llama_engine") and options.llama_engine;
++fn known() callconv(.c) bool {
++    const io = std.Io.Threaded.global_single_threaded.io();
++    return cleanup.known(io, sdk, llama) or owners.shared().knownUncertain(io);
++}
++fn retain() callconv(.c) void {
++    owners.shared().fence(std.Io.Threaded.global_single_threaded.io());
++}
++const hooks: guard.Hooks = .{ .known = known, .retain = retain };
++pub fn install() bool {
++    return guard.install(&hooks);
++}
++pub fn latched() bool {
++    return guard.latched();
++}
++
++// Root metadata only; no model, GPU or ANE operation.
++test "fios current media cleanup guard retains independent source uncertainty" {
++    const io = std.testing.io;
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(231));
++    try std.testing.expect(install());
++    const root = try owners.shared().enter(io);
++    try owners.shared().bind(io, root, "fixture/media-cleanup-source");
++    owners.current().* = root;
++    const held = (try owners.retainCurrent(io)).?;
++    owners.shared().fence(io);
++    if (!guard.knownWith(true, guard.hostKnown)) {
++        std.debug.print("FIO_MEDIA_CLEANUP_ERASED_SOURCE_UNCERTAINTY\n", .{});
++        try std.testing.expect(false);
++    }
++    try std.testing.expectError(error.NativeCleanupUncertain, guard.requireCertainWith(true, guard.hostKnown));
++    owners.current().* = null;
++    try owners.shared().leave(io, root);
++    try std.testing.expect(!held.releaseIfCertain(io));
++    try std.testing.expect(owners.shared().snapshot(io).uncertain);
++}
++test "fios current media cleanup guard preserves healthy and disabled metadata behavior" {
++    const io = std.testing.io;
++    owners.shared().primary_guard = false;
++    try std.testing.expect(guard.knownWith(true, guard.hostKnown));
++    try owners.shared().initialize(io, @splat(232));
++    try std.testing.expect(install());
++    try std.testing.expect(!guard.knownWith(true, guard.hostKnown));
++    try guard.requireCertainWith(true, guard.hostKnown);
++    guard.retainUncertainWith(true);
++    try std.testing.expect(!guard.knownWith(false, guard.hostKnown));
++    try std.testing.expect(owners.shared().snapshot(io).uncertain);
++}
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+index 8e72580..e8670e6 100644
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -178,6 +178,16 @@ pub const Tracker = struct {
+         }
+         self.instance = instance;
+         self.initialized = true;
++        // Publish only the trusted host's immutable negative callback pair.
++        // Installation never calls a callback while this mutex is held.
++        if (@import("../sdk/ane/cleanup_guard.zig").enabled and self == shared()) {
++            const media = @import("media_cleanup_host.zig");
++            if (!media.install()) {
++                self.uncertain = true;
++                return error.InvalidProbeEnrollment;
++            }
++            if (media.latched()) self.uncertain = true;
++        }
+     }
+     // Trusted startup-only, fixed nonblocking readonly backend getter. This
+     // is negative evidence only, never a coverage/admission capability.
+@@ -721,3 +731,6 @@ pub const Tracker = struct {
+         return result;
+     }
+ };
++
++// Include host-only metadata controls in filtered test builds.
++test { _ = @import("media_cleanup_host.zig"); }
+diff --git a/src/plugins/krea/krea.zig b/src/plugins/krea/krea.zig
+index dfcea25..9bd20e8 100644
+--- a/src/plugins/krea/krea.zig
++++ b/src/plugins/krea/krea.zig
+@@ -986,31 +986,84 @@ pub const Dit = struct {
+     ane_tried: bool,
+ 
+     pub fn deinit(self: *Dit) void {
++        _ = self.tryDeinit();
++    }
++    pub fn tryDeinit(self: *Dit) bool {
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        if (ane.fios_ane_cleanup and !self.aneTryDeinit()) return false;
+         w8a8.dropMemo();
+-        self.aneDeinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        if (!ane.fios_ane_cleanup) self.aneDeinit();
+         self.first.deinit();
+-        for (self.blocks) |*b| b.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        for (self.blocks) |*b| {
++            b.deinit();
++            if (ane.cleanup_guard.retainIfKnown()) return false;
++        }
+         self.allocator.free(self.blocks);
+         self.tmlp0.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.tmlp2.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.tproj1.deinit();
+-        for (&self.layerwise) |*b| b.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        for (&self.layerwise) |*b| {
++            b.deinit();
++            if (ane.cleanup_guard.retainIfKnown()) return false;
++        }
+         self.projector.deinit();
+-        for (&self.refiner) |*b| b.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        for (&self.refiner) |*b| {
++            b.deinit();
++            if (ane.cleanup_guard.retainIfKnown()) return false;
++        }
+         _ = mlx.mlx_array_free(self.txtmlp0);
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.txtmlp1.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.txtmlp3.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         _ = mlx.mlx_array_free(self.last_norm);
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.last_lin.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         _ = mlx.mlx_array_free(self.last_mod);
++        return !ane.cleanup_guard.retainIfKnown();
+     }
+ 
+     fn aneDeinit(self: *Dit) void {
+-        if (self.ane_eng) |e| e.deinit();
+-        self.ane_eng = null;
+-        for (self.ane_rest) |*r| r.deinit();
++        _ = self.aneTryDeinit();
++    }
++    fn aneTryDeinit(self: *Dit) bool {
++        return self.aneTryDeinitWith(ane.fios_ane_cleanup, ane.cleanup_guard.known, ane.AnePrefill.tryDeinit);
++    }
++    fn aneTryDeinitWith(self: *Dit, comptime enabled: bool, comptime negative: fn () bool, comptime close: anytype) bool {
++        if (enabled and negative()) {
++            ane.cleanup_guard.retainUncertain();
++            return false;
++        }
++        if (self.ane_eng) |e| {
++            const accepted = close(e);
++            if (enabled and !accepted) {
++                ane.cleanup_guard.retainUncertain();
++                return false;
++            }
++            self.ane_eng = null;
++            if (enabled and negative()) {
++                ane.cleanup_guard.retainUncertain();
++                return false;
++            }
++        }
++        for (self.ane_rest) |*r| {
++            r.deinit();
++            if (enabled and negative()) {
++                ane.cleanup_guard.retainUncertain();
++                return false;
++            }
++        }
+         if (self.ane_rest.len > 0) self.allocator.free(self.ane_rest);
+         self.ane_rest = &.{};
++        return true;
+     }
+ 
+     /// timestep embed (B=1): [cos(args), sin(args)] of dim tdim, period 1e4,
+@@ -1045,12 +1098,14 @@ pub const Dit = struct {
+     /// `fused` is `textFusion`'s output, which does not depend on `t`: `generate`
+     /// builds it, the rope and the mask once per request. A null mask = every row valid.
+     pub fn forwardPrebuilt(self: *Dit, parent: *Graph, img: Array, fused: Array, t: f32, cos: Array, sin: Array, full_mask: ?Array) !Array {
++        try ane.cleanup_guard.requireCertain();
+         var g = parent.scope();
+         defer g.deinit();
+         const txtlen: c_int = ops.shape(fused)[1];
+         const img_len: c_int = ops.shape(img)[1];
+         const tv = try self.timeVecs(&g, t);
+         self.aneEnsure(@intCast(txtlen + img_len), g.s);
++        try ane.cleanup_guard.requireCertain();
+         const feat: c_int = @intCast(self.cfg.features);
+         const mods = try self.allocator.alloc(dit_base.Mods, self.blocks.len);
+         defer self.allocator.free(mods);
+@@ -1093,6 +1148,7 @@ pub const Dit = struct {
+     /// Never fails the request: every refusal is a NAMED `[ane]` line and the
+     /// DiT runs GPU-only.
+     fn aneEnsure(self: *Dit, seq: u32, s: S) void {
++        if (ane.cleanup_guard.retainIfKnown()) return;
+         if (self.ane_tried) return;
+         if (!ane.aneState().media_offload.image) return;
+         if (!ane.available()) {
+@@ -1114,7 +1170,9 @@ pub const Dit = struct {
+         const mlpdim = self.cfg.mlpdim;
+         const probe: ane.QuantWeight = .{ .w = b0.gate.w, .scales = b0.gate.scales, .biases = b0.gate.biases, .bits = b0.gate.bits, .group_size = b0.gate.group_size, .in_dim = feat, .out_dim = mlpdim };
+         const plan = ane.planMediaOffload(self.io, s, "image", self.blocks.len, feat, mlpdim, rows, probe, AneCalib{ .d = self, .rows = rows, .feat = feat, .mlpdim = mlpdim, .s = s }) orelse return;
++        if (ane.cleanup_guard.retainIfKnown()) return;
+         self.aneBuild(rows, plan.k, plan.units, feat, mlpdim, plan.share, s, self.blocks.len) catch |err| {
++            if (ane.cleanup_guard.retainIfKnown()) return;
+             log.warn("[ane] image offload build failed ({s}) — GPU only\n", .{@errorName(err)});
+             self.aneDeinit();
+         };
+@@ -1122,13 +1180,46 @@ pub const Dit = struct {
+ 
+     /// Builds blocks [0, n); fewer than all is the calibration build.
+     fn aneBuild(self: *Dit, rows: u32, k: u32, units: u32, feat: u32, mlpdim: u32, share: f32, s: S, n: usize) !void {
++        try ane.cleanup_guard.requireCertain();
+         const a = self.allocator;
+         const eng = try ane.AnePrefill.init(a, self.io, self.blocks.len, feat, k, rows, rows, 0, 0, units);
+-        errdefer eng.deinit();
+-        const rests = try a.alloc(SwiGLU, n);
+-        errdefer a.free(rests);
++        if (ane.fios_ane_cleanup) self.ane_eng = eng;
++        var rest_allocation: ?[]SwiGLU = null;
+         var built_rests: usize = 0;
+-        errdefer for (rests[0..built_rests]) |*r| r.deinit();
++        // Private unwind closes native ownership first. A refused close or
++        // later independent fence retains the original allocation/container.
++        errdefer {
++            if (ane.fios_ane_cleanup) {
++                if (!ane.cleanup_guard.known() and eng.tryDeinit()) {
++                    self.ane_eng = null;
++                    if (!ane.cleanup_guard.retainIfKnown()) {
++                        if (rest_allocation) |rs| {
++                            var disposed = true;
++                            for (rs[0..built_rests]) |*r| {
++                                r.deinit();
++                                if (ane.cleanup_guard.retainIfKnown()) {
++                                    disposed = false;
++                                    break;
++                                }
++                            }
++                            if (disposed) {
++                                a.free(rs);
++                                self.ane_rest = &.{};
++                            }
++                        }
++                    }
++                } else ane.cleanup_guard.retainUncertain();
++            } else {
++                if (rest_allocation) |rs| {
++                    for (rs[0..built_rests]) |*r| r.deinit();
++                    a.free(rs);
++                }
++                eng.deinit();
++            }
++        }
++        const rests = try a.alloc(SwiGLU, n);
++        rest_allocation = rests;
++        if (ane.fios_ane_cleanup) self.ane_rest = rests;
+ 
+         const start = std.Io.Timestamp.now(self.io, .awake);
+         const kh: usize = @as(usize, k) * feat;
+@@ -1137,6 +1228,7 @@ pub const Dit = struct {
+         const up_slice = try a.alloc(f32, kh);
+         defer a.free(up_slice);
+         for (self.blocks[0..n], 0..) |*b, i| {
++            try ane.cleanup_guard.requireCertain();
+             rests[i] = try aneBuildMlpRest(&b.mlp, k * units, s);
+             built_rests = i + 1;
+             const gate = try aneDequantHostF32(a, &b.mlp.gate, feat, mlpdim, s);
+@@ -1157,10 +1249,12 @@ pub const Dit = struct {
+             }
+         }
+         eng.finishPending();
++        try ane.cleanup_guard.requireCertain();
+         const built = eng.coveredLayers();
+         if (built == 0) return error.AneNoProgram;
+         const secs: f64 = @as(f64, @floatFromInt(@as(u64, @intCast(start.untilNow(self.io, .awake).nanoseconds)))) / 1e9;
+         const int8_bytes: u64 = @as(u64, built) * 3 * feat * k * units;
++        try ane.cleanup_guard.requireCertain();
+         eng.publishLive(share, int8_bytes);
+         self.ane_eng = eng;
+         self.ane_rest = rests;
+@@ -1168,7 +1262,7 @@ pub const Dit = struct {
+     }
+ 
+     fn mlpMaybeAne(self: *const Dit, g: *Graph, x: Array, b: *const Block, idx: usize) !Array {
+-        try ane.source_guard.requireCertain();
++        try ane.cleanup_guard.requireCertain();
+         const eng = self.ane_eng orelse return b.mlp.forward(g, x);
+         if (!eng.mlpReady(idx) or idx >= self.ane_rest.len) return b.mlp.forward(g, x);
+         if (mlpLoraCount(&b.mlp) > 0) return b.mlp.forward(g, x);
+@@ -1176,7 +1270,7 @@ pub const Dit = struct {
+         if (sh.len != 3 or sh[0] != 1 or sh[2] != @as(c_int, @intCast(eng.hidden))) return b.mlp.forward(g, x);
+         const out = ane.mediaMlp(g.s, eng, idx, "image", x, AneSeam{ .mlp = &b.mlp, .rest = &self.ane_rest[idx], .s = g.s }) catch |err| {
+             // Known uncertainty cannot authorize a fresh GPU fallback.
+-            try ane.source_guard.requireCertain();
++            try ane.cleanup_guard.requireCertain();
+             log.warn("[ane] image block {d} split failed ({s}) — GPU fallback\n", .{ idx, @errorName(err) });
+             return b.mlp.forward(g, x);
+         };
+@@ -1912,21 +2006,25 @@ pub const Engine = struct {
+ 
+     /// Every array of the engine lives and runs on `s`.
+     pub fn loadOn(io: std.Io, allocator: std.mem.Allocator, model_dir: []const u8, s: S) !*Engine {
++        try ane.cleanup_guard.requireCertain();
+         const self = try allocator.create(Engine);
+-        errdefer allocator.destroy(self);
++        errdefer if (!ane.cleanup_guard.known()) allocator.destroy(self);
+         self.allocator = allocator;
+         self.s = s;
+         self.te = try loadConditioner(io, allocator, self.s, model_dir);
+-        errdefer self.te.deinit();
++        errdefer if (!ane.cleanup_guard.known()) self.te.deinit();
+         self.dit = try loadDit(io, allocator, self.s, model_dir);
+-        errdefer self.dit.deinit();
++        errdefer if (!ane.cleanup_guard.known()) self.dit.deinit();
+         self.vae = try loadVae(io, allocator, self.s, model_dir);
+-        errdefer self.vae.deinit();
++        errdefer if (!ane.cleanup_guard.known()) self.vae.deinit();
+         self.vae_enc = loadVaeEncoder(io, allocator, self.s, model_dir) catch |e| blk: {
+             log.warn("[image] krea VAE encoder load failed ({}) — image-to-image disabled\n", .{e});
+             break :blk null;
+         };
+-        errdefer if (self.vae_enc) |*e| e.deinit();
++        errdefer if (!ane.cleanup_guard.known()) {
++            if (self.vae_enc) |*e| e.deinit();
++        };
++        try ane.cleanup_guard.requireCertain();
+         const tok_dir = try std.fmt.allocPrint(allocator, "{s}/tokenizer", .{model_dir});
+         defer allocator.free(tok_dir);
+         self.tok = try tok_mod.loadTokenizerAny(io, allocator, tok_dir);
+@@ -1934,13 +2032,34 @@ pub const Engine = struct {
+         return self;
+     }
+ 
++    // Native-first preflight for the plugin's LoRA/payload retirement too.
++    pub fn prepareAneClose(self: *Engine) bool {
++        if (!ane.fios_ane_cleanup) return true;
++        return self.dit.aneTryDeinit();
++    }
+     pub fn deinit(self: *Engine) void {
++        _ = self.tryDeinit();
++    }
++    pub fn tryDeinit(self: *Engine) bool {
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        if (!self.prepareAneClose()) {
++            ane.cleanup_guard.retainUncertain();
++            return false;
++        }
+         self.te.deinit();
+-        self.dit.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
++        if (!self.dit.tryDeinit()) {
++            ane.cleanup_guard.retainUncertain();
++            return false;
++        }
+         self.vae.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         if (self.vae_enc) |*e| e.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.tok.deinit();
++        if (ane.cleanup_guard.retainIfKnown()) return false;
+         self.allocator.destroy(self);
++        return true;
+     }
+ 
+     /// Build the templated ids/mask (PREFIX+prompt padded to 541 + SUFFIX 5 →
+@@ -2742,3 +2861,50 @@ test "keptRows keeps the valid text rows in order, none for an all-pad prompt" {
+     defer a.free(none);
+     try testing.expectEqual(@as(usize, 0), none.len);
+ }
++
++// Actual Dit cleanup method with CPU-only callbacks and empty rest metadata.
++// The fake child identity is never dereferenced or passed to native C.
++const FiosKreaAneCloseProbe = struct {
++    var calls: usize = 0;
++    var blocked: bool = false;
++    var mode: enum { preexisting, refused, after, healthy } = .healthy;
++    fn negative() bool {
++        return blocked;
++    }
++    fn close(_: *ane.AnePrefill) bool {
++        calls += 1;
++        if (mode == .after) blocked = true;
++        return mode == .after or mode == .healthy;
++    }
++};
++fn fiosKreaAneClose(mode: @TypeOf(FiosKreaAneCloseProbe.mode)) !void {
++    const P = FiosKreaAneCloseProbe;
++    P.mode = mode;
++    P.calls = 0;
++    P.blocked = mode == .preexisting;
++    var d: Dit = undefined;
++    d.allocator = std.heap.page_allocator;
++    d.ane_rest = &.{};
++    const original: *ane.AnePrefill = @ptrFromInt(64);
++    d.ane_eng = original;
++    const accepted = d.aneTryDeinitWith(true, P.negative, P.close);
++    if (accepted != (mode == .healthy)) {
++        std.debug.print("FIO_KREA_ANE_CLOSE_DROPPED_UNCERTAIN_PARENT\n", .{});
++        try std.testing.expect(false);
++    }
++    try std.testing.expectEqual(@as(usize, if (mode == .preexisting) 0 else 1), P.calls);
++    try std.testing.expect(d.ane_eng == (if (mode == .preexisting or mode == .refused) original else null));
++    try std.testing.expect(d.ane_rest.len == 0);
++}
++test "fios current Krea ANE close retains preexisting uncertainty" {
++    try fiosKreaAneClose(.preexisting);
++}
++test "fios current Krea ANE close retains rejected child" {
++    try fiosKreaAneClose(.refused);
++}
++test "fios current Krea ANE close retains parent after later uncertainty" {
++    try fiosKreaAneClose(.after);
++}
++test "fios current Krea ANE close accepts healthy local disposal" {
++    try fiosKreaAneClose(.healthy);
++}
+diff --git a/src/plugins/krea/plugin.zig b/src/plugins/krea/plugin.zig
+index 6a72134..a480588 100644
+--- a/src/plugins/krea/plugin.zig
++++ b/src/plugins/krea/plugin.zig
+@@ -2,6 +2,7 @@
+ //! encoder (12 tapped layers), single-stream DiT and the Qwen-Image VAE. A job is one prompt; the result is a PNG.
+ 
+ const std = @import("std");
++const ane_cleanup = @import("../../sdk/ane/cleanup_guard.zig");
+ const abi = @import("../../abi/media.zig");
+ const sdk = @import("../../sdk/root.zig");
+ const job = @import("../../sdk/media/job.zig");
+@@ -71,8 +72,17 @@ fn load(ctx: *const abi.LoadCtx, out: *Verdict) callconv(.c) ?*anyopaque {
+ 
+ fn unload(ep: *anyopaque) callconv(.c) void {
+     const e: *Engine = @ptrCast(@alignCast(ep));
++    if (ane_cleanup.retainIfKnown()) return;
++    if (!e.k.prepareAneClose()) {
++        ane_cleanup.retainUncertain();
++        return;
++    }
+     e.loras.clear(e.dit());
+-    e.k.deinit();
++    if (ane_cleanup.retainIfKnown()) return;
++    if (!e.k.tryDeinit()) {
++        ane_cleanup.retainUncertain();
++        return;
++    }
+     gpa.free(e.png);
+     gpa.destroy(e);
+ }
+diff --git a/src/sdk/ane/cleanup_guard.zig b/src/sdk/ane/cleanup_guard.zig
+new file mode 100644
+index 0000000..9466227
+--- /dev/null
++++ b/src/sdk/ane/cleanup_guard.zig
+@@ -0,0 +1,65 @@
++//! Fixed negative-only host callbacks. No host imports or native authority.
++const std = @import("std");
++const options = @import("build_options");
++const shared = @import("../util/shared.zig");
++pub const enabled = @hasDecl(options, "fios_source_ane") and options.fios_source_ane;
++pub const Hooks = extern struct {
++    known: *const fn () callconv(.c) bool,
++    retain: *const fn () callconv(.c) void,
++};
++const State = struct {
++    hooks: std.atomic.Value(?*const Hooks) = .init(null),
++    retained: std.atomic.Value(bool) = .init(false),
++};
++const storage = shared.Shared(State, "fios_media_cleanup_hooks", .{});
++// Trusted host startup only. A unit cannot replace the immutable callback pair.
++pub fn install(hooks: *const Hooks) bool {
++    const state = storage.get();
++    if (comptime shared.in_unit) {
++        state.retained.store(true, .release);
++        return false;
++    }
++    if (state.hooks.cmpxchgStrong(null, hooks, .acq_rel, .acquire)) |old| {
++        if (old != hooks) {
++            state.retained.store(true, .release);
++            return false;
++        }
++    }
++    return true;
++}
++pub fn latched() bool {
++    return storage.get().retained.load(.acquire);
++}
++pub fn hostKnown() bool {
++    const state = storage.get();
++    if (state.retained.load(.acquire)) return true;
++    const hooks = state.hooks.load(.acquire) orelse return true;
++    return hooks.known();
++}
++pub fn known() bool {
++    return knownWith(enabled, hostKnown);
++}
++pub fn knownWith(comptime active: bool, comptime read: anytype) bool {
++    if (!active) return false;
++    return read();
++}
++pub fn retainUncertain() void {
++    retainUncertainWith(enabled);
++}
++pub fn retainUncertainWith(comptime active: bool) void {
++    if (!active) return;
++    const state = storage.get();
++    state.retained.store(true, .release);
++    if (state.hooks.load(.acquire)) |hooks| hooks.retain();
++}
++pub fn retainIfKnown() bool {
++    if (!known()) return false;
++    retainUncertain();
++    return true;
++}
++pub fn requireCertain() error{NativeCleanupUncertain}!void {
++    return requireCertainWith(enabled, hostKnown);
++}
++pub fn requireCertainWith(comptime active: bool, comptime read: anytype) error{NativeCleanupUncertain}!void {
++    if (knownWith(active, read)) return error.NativeCleanupUncertain;
++}
+diff --git a/src/sdk/ane/offload.zig b/src/sdk/ane/offload.zig
+index 68e0299..4a46cba 100644
+--- a/src/sdk/ane/offload.zig
++++ b/src/sdk/ane/offload.zig
+@@ -28,6 +28,7 @@
+ 
+ const std = @import("std");
+ pub const source_guard = @import("source_guard.zig");
++pub const cleanup_guard = @import("cleanup_guard.zig");
+ const env = @import("../../env.zig");
+ const builtin = @import("builtin");
+ const build_options = @import("build_options");

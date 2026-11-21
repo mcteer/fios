@@ -1,0 +1,102 @@
+
+test "fios current media queue retains both sender origins" {
+    const io = std.testing.io;
+    const a = std.testing.allocator;
+    const registry = try ModelRegistry.init(a, io, null, 2, 0, null);
+    defer registry.deinit();
+    const model = try registry.registerStub("fixture/media-origins", "/fixture/never-loaded", null);
+    var scheduler = std.mem.zeroInit(Scheduler, .{
+        .allocator = a, .io = io, .registry = registry,
+    });
+    defer scheduler.gen_queue.deinit(a);
+    try fios_ownership.shared().initialize(io, @splat(43));
+    const first = try fios_ownership.shared().enter(io);
+    const second = try fios_ownership.shared().enter(io);
+    var roots_live = true;
+    defer if (roots_live) {
+        fios_ownership.shared().leave(io, first) catch {};
+        fios_ownership.shared().leave(io, second) catch {};
+    };
+    try fios_ownership.shared().bind(io, first, model.id);
+    try fios_ownership.shared().bind(io, second, model.id);
+    const Probe = struct {
+        roots: [2]fios_ownership.Token,
+        called: bool = false,
+        attributed: bool = false,
+        fn one(raw: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.called = true;self.attributed = false;
+        }
+        fn many(ctxs: []const *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctxs[0]));
+            self.called = true;
+            const group = fios_ownership.current_group().* orelse return;
+            if (group.len != 2 or ctxs.len != 2) return;
+            for (self.roots) |root| {
+                var found = false;
+                for (group) |token| if (std.meta.eql(token, root)) { found = true;break; };
+                if (!found) return;
+            }
+            self.attributed = fios_ownership.shared().snapshot(std.testing.io).owned == 2;
+        }
+    };
+    const Sender = struct {
+        sch: *Scheduler,
+        root: fios_ownership.Token,
+        req: GenRequest,
+        failed: std.atomic.Value(bool) = .init(false),
+        fn run(self: *@This()) void {
+            fios_ownership.current().* = self.root;
+            defer fios_ownership.current().* = null;
+            runGeneration(self.sch, &self.req) catch { self.failed.store(true, .release); };
+        }
+        fn wake(self: *@This()) void {
+            // Disposable fixture teardown only. No native request/body is
+            // running after the synchronous runner above has returned.
+            self.req.done_mu.lockUncancelable(self.sch.io);
+            self.req.done = true;
+            self.req.done_cond.broadcast(self.sch.io);
+            self.req.done_mu.unlock(self.sch.io);
+        }
+    };
+    var probe: Probe = .{ .roots = .{ first, second } };
+    var senders = [_]Sender{
+        .{ .sch = &scheduler, .root = first, .req = .{ .ctx = &probe, .run = Probe.one, .model = model,
+            .peak_bytes = 1, .merge = .{ .run_many = Probe.many, .weight = 1 } } },
+        .{ .sch = &scheduler, .root = second, .req = .{ .ctx = &probe, .run = Probe.one, .model = model,
+            .peak_bytes = 1, .merge = .{ .run_many = Probe.many, .weight = 1 } } },
+    };
+    const one = try std.Thread.spawn(.{}, Sender.run, .{&senders[0]});
+    var one_joined = false;
+    defer if (!one_joined) { senders[0].wake();one.join(); };
+    const two = try std.Thread.spawn(.{}, Sender.run, .{&senders[1]});
+    var two_joined = false;
+    defer if (!two_joined) { senders[1].wake();two.join(); };
+    var ready = false;
+    for (0..2000) |_| {
+        scheduler.queue_mu.lockUncancelable(io);
+        ready = scheduler.gen_queue.items.len == 2;
+        scheduler.queue_mu.unlock(io);
+        if (ready) break;
+        try std.Io.sleep(io, .fromMilliseconds(1), .real);
+    }
+    try std.testing.expect(ready);
+    // The actual sender must have acquired custody before queue publication.
+    try fios_ownership.shared().leave(io, first);
+    try fios_ownership.shared().leave(io, second);
+    roots_live = false;
+    var batch: [2]*GenRequest = undefined;
+    scheduler.queue_mu.lockUncancelable(io);
+    @memcpy(&batch, scheduler.gen_queue.items[0..2]);
+    scheduler.gen_queue.clearRetainingCapacity();
+    scheduler.queue_mu.unlock(io);
+    @import("runtime/media_runner.zig").runGenRequests(&scheduler, &batch);
+    one.join();one_joined = true;
+    two.join();two_joined = true;
+    try std.testing.expect(!senders[0].failed.load(.acquire) and !senders[1].failed.load(.acquire));
+    try std.testing.expect(probe.called);
+    if (!probe.attributed) std.debug.print("FIO_CURRENT_MEDIA_LOST_ORIGINS\n", .{});
+    try std.testing.expect(probe.attributed);
+    try std.testing.expect(fios_ownership.current().* == null and fios_ownership.current_group().* == null);
+    try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared().snapshot(io).owned);
+}

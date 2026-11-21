@@ -1,0 +1,34 @@
+--- a/lib/ane/ane_bridge.m
++++ b/lib/ane/ane_bridge.m
+@@ -572,12 +572,14 @@
+ 
+ /* Compile (or restore from the compile cache) and load the program in `descriptor` as `model`;
+  * the staging directory it serves from is returned in `staging` (the framework's contract: it
+- * stays for the model's life). Returns false with `error` set and nothing left on disk. */
++ * stays for the model's life). Legacy failures remove staging. Source-mode failures
++ * retain uncertain owners and any staging; they do not authorize rollback. */
+ static bool bridge_compile_load(const char *name, id descriptor, id model, NSData *program,
+                                 NSData *weights, NSDictionary *compile_options,
+                                 NSDictionary *options, NSString **staging, bool *cache_hit,
+                                 char *error, size_t error_size) {
+ #ifdef FIOS_ANE_SOURCE
++    @try {
+     NSArray *constructor_owners=@[descriptor,model,program,weights,compile_options,options];
+     fios_ane_keep_compile_graph(constructor_owners);
+     if (msv_ane_source_uncertainty()) return false;
+@@ -720,6 +722,15 @@
+     fios_ane_release_compile_reservation(constructor_owners);
+ #endif
+     return true;
++#ifdef FIOS_ANE_SOURCE
++    } @catch (NSException *exception) {
++        (void)exception;
++        // Keep original graph/staging reservations; no retry or rollback.
++        fios_ane_fence(FIOS_ANE_CONSTRUCTOR | FIOS_ANE_COMPILE);
++        bridge_fail(error, error_size, "ANE constructor exception; ownership uncertain");
++        return false;
++    }
++#endif
+ }
+ 
+ static id bridge_descriptor(NSData *program, NSData *weights) {

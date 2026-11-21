@@ -1,0 +1,50 @@
+@@CUSTODY_SETUP@@
+const engram=@This();
+var cleanup_effects:usize=0;
+const Resource=struct{fn deinit(_: *@This())void{cleanup_effects+=1;}};
+const GpaPort=struct{fn destroy(_: @This(),_:*Model)void{cleanup_effects+=1;}};
+const Parked=struct{
+ item:Resource=.{},
+ const Iterator=struct{item:?*Resource,fn next(self:*@This())?*Resource{const value=self.item;self.item=null;return value;}};
+ fn valueIterator(self:*@This())Iterator{return .{.item=&self.item};}
+ fn deinit(_: *@This(),_:GpaPort)void{cleanup_effects+=1;}
+};
+const Dsv41Model=struct{
+ ahead:?*Prefetch,
+ @@MODEL_PREFLIGHT@@
+ fn deinit(self:*@This())void{
+  if(!self.fiosPreparePrefetchRelease())return;
+  cleanup_effects+=1;if(self.ahead)|p|p.finish();self.ahead=null;
+ }
+};
+const Model=struct{tower:?Resource=Resource{},parked:Parked=.{},idle:?Resource=Resource{},mdl:Dsv41Model,weights:Resource=.{}};
+fn prepareBankRelease(_: *Model)bool{return true;}
+fn closeBank(_: *Model)void{cleanup_effects+=1;}
+const Plugin=struct{const gpa=GpaPort{};
+@@UNLOAD@@
+};
+const blocked_case=@@BLOCKED@@;
+const negative_parent=@@NEGATIVE@@;
+test "native Engram parent unload retention" {
+ const p=try begin();
+ if(!blocked_case){unblock.store(true,.release);try wait(&observed);}
+ const model=try std.heap.c_allocator.create(Model);model.*=.{.mdl=.{.ahead=p}};
+ Plugin.unload(@ptrCast(model));
+ if(blocked_case){
+  unblock.store(true,.release);try wait(&observed);try wait(&p.fios_joined);
+  if(negative_parent){
+   if(cleanup_effects>0){std.debug.print("ENGRAM_PARENT_PREFLIGHT_NOT_USED\n",.{});return error.TestUnexpectedResult;}
+   return error.NegativeControlNotReached;
+  }
+  try std.testing.expectEqual(@as(usize,0),cleanup_effects);
+  try std.testing.expect(model.mdl.ahead==p and model.tower!=null and p.grids.len==1);
+  Plugin.unload(@ptrCast(model));try std.testing.expectEqual(@as(usize,0),cleanup_effects);
+  try std.testing.expectEqual(@as(usize,2),owners.shared().snapshot(std.testing.io).owned);
+  try std.testing.expect(sdk.diagnostic().uncertain and sdk.diagnostic().active_contexts==1);
+ }else{
+  try std.testing.expectEqual(@as(usize,8),cleanup_effects);try std.testing.expect(model.mdl.ahead==null);
+  try std.testing.expectEqual(@as(usize,0),owners.shared().snapshot(std.testing.io).owned);
+  try std.testing.expectEqual(@as(u32,0),sdk.diagnostic().active_contexts);
+ }
+}
+@@PREFETCH@@

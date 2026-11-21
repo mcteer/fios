@@ -1,0 +1,147 @@
+diff --git a/src/engines/mlx/runtime/load_requests.zig b/src/engines/mlx/runtime/load_requests.zig
+index 3d78547..589774b 100644
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -1,6 +1,7 @@
+ //! Load, eviction and unload requests serviced on the inference thread.
+ 
+ const std = @import("std");
++const fios_queued = @import("../../../fios/queued_request_ownership.zig");
+ const mlx = @import("../../../mlx/ffi.zig");
+ const model_registry_mod = @import("../../../host/registry/registry.zig");
+ const log = @import("../../../sdk/util/log.zig");
+@@ -81,6 +82,13 @@ pub fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) void {
+ }
+ 
+ pub fn runLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
++    // Own a separate origin copy before effects or sender acknowledgement.
++    // This attributes existing work; it supplies no native admission policy.
++    var fios_scope = if (req.fios_origins) |origin| fios_queued.Scope.retain(sch.io, origin) catch |err| {
++        return failLoadRequest(sch, req, err);
++    } else null;
++    if (fios_scope) |*scope| scope.enter(sch.io) catch |err| { return failLoadRequest(sch, req, err); };
++    defer if (fios_scope) |*scope| { _ = scope.finish(sch.io); };
+     // Step 1: evict victims (if any) BEFORE the load, so peak GPU residency
+     // never holds the old + new model at once. unloadResident() drops
+     // mlx_arrays — same thread-stream invariant as cleanup_queue drain.
+@@ -118,6 +126,13 @@ pub fn runLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
+ /// for the GPU when the build declines. Never calls MLX.
+ fn aneBuildThread(sch: *Scheduler, req: *LoadRequest) void {
+     defer _ = sch.ane_builds.fetchSub(1, .acq_rel);
++    // Own a separate origin copy before effects or sender acknowledgement.
++    // This attributes existing work; it supplies no native admission policy.
++    var fios_scope = if (req.fios_origins) |origin| fios_queued.Scope.retain(sch.io, origin) catch |err| {
++        return failLoadRequest(sch, req, err);
++    } else null;
++    if (fios_scope) |*scope| scope.enter(sch.io) catch |err| { return failLoadRequest(sch, req, err); };
++    defer if (fios_scope) |*scope| { _ = scope.finish(sch.io); };
+     const built = engines_load.aneOpen(sch, req) catch |err| return failLoadRequest(sch, req, err);
+     if (built) return readyLoadRequest(sch, req);
+     req.ane_declined = true;
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index 3dca619..4b299ab 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -32,6 +32,7 @@
+ //! plus a cv broadcast.
+ 
+ const std = @import("std");
++const fios_ownership = @import("../../fios/request_ownership.zig");
+ const env = @import("../../env.zig");
+ const depth_bounds = @import("spec/mtp_depth_bounds.zig");
+ const mlx = @import("../../mlx/ffi.zig");
+@@ -746,6 +747,12 @@ fn loadAfterUnloadingIdle(comptime T: type, ctx: anytype, load: fn (@TypeOf(ctx)
+ }
+ 
+ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
++    // Sender custody survives CPU preparation, queueing and the original
++    // uncancelable done wait. Local completion cannot refund known uncertainty.
++    const fios_origins = try fios_ownership.retainCurrent(self.io);
++    defer if (fios_origins) |held| {
++        if (!held.tracker.backendKnownUncertain(self.io)) { _ = held.releaseIfCertain(self.io); }
++    };
+     // A lost GPU context fails every MLX call: nothing is loaded or served until a restart.
+     if (mlx.gpuContextLost()) return error.GpuContextLost;
+     // Fast path: ready entries. registry.ensureLoaded handles waiting
+@@ -910,6 +917,7 @@ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
+ 
+     // ── Stage 2: build + post LoadRequest, wait for completion.
+     var req = LoadRequest{
++        .fios_origins = if (fios_origins) |*held| held else null,
+         .entry = entry,
+         .config = owned.config,
+         .tok = owned.tok,
+diff --git a/src/fios/queued_request_ownership.zig b/src/fios/queued_request_ownership.zig
+new file mode 100644
+index 0000000..119933a
+--- /dev/null
++++ b/src/fios/queued_request_ownership.zig
+@@ -0,0 +1,46 @@
++//! Trusted in-process queue custody only. No admission or terminal authority.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++
++pub const Scope = struct {
++    retained: owners.Retained,
++    previous: ?owners.Token = null,
++    previous_group: ?[]const owners.Token = null,
++    state: enum { captured, entered, closed, uncertain } = .captured,
++
++    // Clone before the sender can finish its uncancelable handoff. Never
++    // borrow its token-array storage across acknowledgement or cleanup.
++    pub fn retain(io: std.Io, origin: *const owners.Retained) !Scope {
++        if (origin.tracker != &owners.shared or origin.count == 0 or origin.count > owners.capacity) {
++            owners.shared.fence(io);
++            return error.InvalidQueuedOrigins;
++        }
++        return .{ .retained = try owners.shared.retainTokens(io, origin.tokens[0..origin.count]) };
++    }
++    // Called only after this object has stable storage on its original worker.
++    pub fn enter(self: *Scope, io: std.Io) !void {
++        if (self.state != .captured) {
++            owners.shared.fence(io);
++            self.state = .uncertain;
++            return error.InvalidQueuedScope;
++        }
++        self.previous = owners.current;
++        self.previous_group = owners.current_group;
++        owners.current = null;
++        owners.current_group = self.retained.tokens[0..self.retained.count];
++        self.state = .entered;
++    }
++    pub fn finish(self: *Scope, io: std.Io) bool {
++        if (self.state != .entered) {
++            owners.shared.fence(io);
++            self.state = .uncertain;
++            return false;
++        }
++        owners.current = self.previous;
++        owners.current_group = self.previous_group;
++        // Local completion cannot clear an independently known source fence.
++        const released = !self.retained.tracker.backendKnownUncertain(io) and self.retained.releaseIfCertain(io);
++        self.state = if (released) .closed else .uncertain;
++        return released;
++    }
++};
+diff --git a/src/host/gpu_thread/requests.zig b/src/host/gpu_thread/requests.zig
+index 954b02f..4463c36 100644
+--- a/src/host/gpu_thread/requests.zig
++++ b/src/host/gpu_thread/requests.zig
+@@ -1,6 +1,7 @@
+ //! Load, media-gen and unload work items posted to the inference thread, and media-job merging.
+ 
+ const std = @import("std");
++const fios_ownership = @import("../../fios/request_ownership.zig");
+ const mlx = @import("../../mlx/ffi.zig");
+ const kv_quant = @import("../../sdk/blocks/attention/kv_quant.zig");
+ const tokenizer_mod = @import("../../sdk/tokenizer/tokenizer.zig");
+@@ -29,6 +30,9 @@ const GgufRoute = @import("../../sdk/quant/gguf/engine_pick.zig").Route;
+ /// victim `.evicting` and waited for refcount == 0, so freeing GPU memory
+ /// is safe.
+ pub const LoadRequest = struct {
++    // Trusted sender metadata remains alive until the uncancelable done wait.
++    // Workers clone references before entering; no model/admission capability.
++    fios_origins: ?*const fios_ownership.Retained = null,
+     /// Target entry to populate. Already transitioned to `.loading` by
+     /// the conn thread before posting; the inference thread completes the
+     /// load and calls `registry.markReadyLocked(entry, bytes)` or

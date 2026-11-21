@@ -1,0 +1,159 @@
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -1127,6 +1127,11 @@
+     // and is not necessary to call it explicitly in most cases
+     LLAMA_API void llama_synchronize(struct llama_context * ctx);
+ 
++    // Private source status only, never all-client/device admission authority.
++    // Known CPU/Metal synchronization returns1; failure/unsupported is sticky0.
++#define LLAMA_FIOS_CHECKED_SYNC_V1 1
++    LLAMA_API int32_t llama_fios_synchronize_checked_v1(struct llama_context * ctx);
++
+     // Token logits obtained from the last call to llama_decode()
+     // The logits for which llama_batch.logits[i] != 0 are stored contiguously
+     // in the order they have appeared in the batch.
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -57,6 +57,7 @@
+     void sched_reserve();
+ 
+     void synchronize();
++    int32_t fios_synchronize_checked();
+ 
+     const llama_model   & get_model()   const;
+     const llama_cparams & get_cparams() const;
+@@ -358,6 +359,7 @@
+ 
+     ggml_backend_t backend_cpu = nullptr;
+     std::vector<ggml_backend_ptr> backends;
++    bool fios_sync_uncertain = false; // No reset after failure/unsupported.
+ 
+     // training
+     ggml_opt_context_t opt_ctx = nullptr;
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -1,6 +1,7 @@
+ #include "llama-context.h"
+ 
+ #include "ggml.h"
++#include "ggml-cpu.h"
+ #include "llama-arch.h"
+ #include "llama-graph.h"
+ #include "llama-impl.h"
+@@ -766,6 +767,38 @@
+ 
+     LLAMA_LOG_INFO("%s: reserve took %.2f ms, sched copies = %d\n",
+             __func__, (t_end_us - t_start_us)/1000.0, ggml_backend_sched_get_n_copies(sched.get()));
++}
++
++// Caller owns the context exclusively, as required by the vendor API.
++// This reports this context's known synchronization status, not all clients.
++int32_t llama_context::fios_synchronize_checked() {
++    if (fios_sync_uncertain) return 0;
++    using checked_fn = int32_t (*)(ggml_backend_t);
++    std::vector<std::pair<ggml_backend_t, checked_fn>> checked;
++    try {
++        if (backends.empty() || backends.size() > 64) {
++            fios_sync_uncertain = true; return 0;
++        }
++        // Classify every backend before invoking synchronization. Unknown or
++        // unsupported backends cannot silently use the old void-only result.
++        for (auto & backend : backends) {
++            if (!backend) { fios_sync_uncertain = true; return 0; }
++            if (ggml_backend_is_cpu(backend.get())) continue;
++            const auto dev = ggml_backend_get_device(backend.get());
++            const auto reg = dev ? ggml_backend_dev_backend_reg(dev) : nullptr;
++            const auto status = reg ? reinterpret_cast<checked_fn>(ggml_backend_reg_get_proc_address(
++                reg, "ggml_backend_fios_synchronize_checked_v1")) : nullptr;
++            if (!status) { fios_sync_uncertain = true; return 0; }
++            checked.emplace_back(backend.get(), status);
++        }
++        synchronize();
++        for (const auto & item : checked) {
++            if (item.second(item.first) != 1) {
++                fios_sync_uncertain = true; return 0;
++            }
++        }
++        return 1;
++    } catch (...) { fios_sync_uncertain = true; return 0; }
+ }
+ 
+ void llama_context::synchronize() {
+@@ -3991,6 +4024,10 @@
+     ctx->set_warmup(warmup);
+ }
+ 
++int32_t llama_fios_synchronize_checked_v1(llama_context * ctx) {
++    return ctx ? ctx->fios_synchronize_checked() : 0;
++}
++
+ void llama_synchronize(llama_context * ctx) {
+     ctx->synchronize();
+ }
+--- a/ggml/src/ggml-metal/ggml-metal-context.h
++++ b/ggml/src/ggml-metal/ggml-metal-context.h
+@@ -18,6 +18,8 @@
+ const char * ggml_metal_get_name(ggml_metal_t ctx);
+ 
+ void ggml_metal_synchronize(ggml_metal_t ctx);
++// Local reported synchronization status; not a device/all-client proof.
++int32_t ggml_metal_fios_synchronize_checked_v1(ggml_metal_t ctx);
+ 
+ void ggml_metal_set_tensor_async(ggml_metal_t ctx, struct ggml_tensor * tensor, const void * data, size_t offset, size_t size);
+ void ggml_metal_get_tensor_async(ggml_metal_t ctx, const struct ggml_tensor * tensor, void * data, size_t offset, size_t size);
+--- a/ggml/src/ggml-metal/ggml-metal-context.m
++++ b/ggml/src/ggml-metal/ggml-metal-context.m
+@@ -249,6 +249,12 @@
+ 
+ const char * ggml_metal_get_name(ggml_metal_t ctx) {
+     return ctx->name;
++}
++
++int32_t ggml_metal_fios_synchronize_checked_v1(ggml_metal_t ctx) {
++    if (!ctx || ctx->has_error) return 0;
++    ggml_metal_synchronize(ctx);
++    return ctx->has_error ? 0 : 1;
+ }
+ 
+ void ggml_metal_synchronize(ggml_metal_t ctx) {
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -942,7 +942,14 @@
+     ggml_metal_fusion_info_set_enabled((struct ggml_metal_fusion_info *) finfo, enabled);
+ }
+ 
++static int32_t ggml_backend_metal_fios_synchronize_checked_v1(ggml_backend_t backend) {
++    return backend ? ggml_metal_fios_synchronize_checked_v1((ggml_metal_t)backend->context) : 0;
++}
++
+ static void * ggml_backend_metal_get_proc_address(ggml_backend_reg_t reg, const char * name) {
++    if (strcmp(name, "ggml_backend_fios_synchronize_checked_v1") == 0) {
++        return (void *)ggml_backend_metal_fios_synchronize_checked_v1;
++    }
+     if (strcmp(name, "ggml_backend_get_features") == 0) {
+         return (void *)ggml_backend_metal_get_features;
+     }
+--- a/ggml/src/ggml-blas/ggml-blas.cpp
++++ b/ggml/src/ggml-blas/ggml-blas.cpp
+@@ -502,7 +502,21 @@
+     GGML_UNUSED(index);
+ }
+ 
++// BLAS graph execution is synchronous; futures must also have been joined.
++// This is local backend status, not all-client/device terminal authority.
++static int32_t ggml_backend_blas_fios_synchronize_checked_v1(ggml_backend_t backend) {
++    if (!ggml_backend_is_blas(backend)) return 0;
++#ifndef GGML_USE_OPENMP
++    const auto ctx = (ggml_backend_blas_context *)backend->context;
++    if (!ctx->tasks.empty()) return 0;
++#endif
++    return 1;
++}
++
+ static void * ggml_backend_blas_get_proc_address(ggml_backend_reg_t reg, const char * name) {
++    if (std::strcmp(name, "ggml_backend_fios_synchronize_checked_v1") == 0) {
++        return (void *)ggml_backend_blas_fios_synchronize_checked_v1;
++    }
+     if (std::strcmp(name, "ggml_backend_set_n_threads") == 0) {
+         return (void *)ggml_backend_blas_set_n_threads;
+     }

@@ -1,0 +1,85 @@
+
+test "fios current served open refuses uncertainty before publishing its wrapper" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const owners = @import("../../fios/request_ownership.zig");
+    const fake = @import("../../testing/fake_engine.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(207));
+    const Trace = struct {
+        wrapper: usize = 0,
+        wrapper_freed: bool = false,
+        allocations: usize = 0,
+        fn alloc(raw: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.allocations += 1;
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.wrapper) self.wrapper_freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    const Probe = struct {
+        var current: ?*@This() = null;
+        io: std.Io,
+        trace: *Trace,
+        unknown: bool,
+        opens: usize = 0,
+        closes: usize = 0,
+        host: ?*const abi.Host = null,
+        fn open(o: *const abi.Open, info: *abi.Info, _: *abi.Verdict) callconv(.c) ?*anyopaque {
+            const self = current.?;
+            self.opens += 1;
+            self.host = o.host;
+            self.trace.wrapper = @intFromPtr(o.host.ctx);
+            info.* = std.mem.zeroes(abi.Info);
+            if (self.unknown) owners.shared().fence(self.io);
+            return self;
+        }
+        fn close(raw: *anyopaque) callconv(.c) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.closes += 1;
+        }
+    };
+    const engine_table = try page.create(abi.Engine);
+    engine_table.* = fake.own_thread;
+    engine_table.open = Probe.open;
+    engine_table.close = Probe.close;
+    for ([_]bool{ false, true }) |unknown| {
+        const trace = try page.create(Trace);
+        trace.* = .{};
+        const probe = try page.create(Probe);
+        probe.* = .{ .io = io, .trace = trace, .unknown = unknown };
+        Probe.current = probe;
+        const progress = try page.create(load_progress.Progress);
+        progress.* = .{};
+        const gauges = try page.create(Gauges);
+        gauges.* = .{};
+        const result = Served.openWithTable(trace.allocator(), .llama, engine_table, .{ .model_dir = "/fixture/no-model", .model_type = "fixture", .settings_json = "{}" }, progress, gauges, null);
+        if (unknown) {
+            if (result) |_| {
+                std.debug.print("FIO_CURRENT_SERVED_PUBLISHED_UNCERTAIN_OPEN\n", .{});
+                return error.TestExpectedError;
+            } else |err| try std.testing.expectEqual(error.NativeCleanupUncertain, err);
+            try std.testing.expect(!trace.wrapper_freed and probe.opens == 1 and probe.closes == 0);
+            const host_wrapper: *Served = @ptrCast(@alignCast(probe.host.?.ctx));
+            try std.testing.expect(host_wrapper.handle == @as(*anyopaque, @ptrCast(probe)));
+            const before = trace.allocations;
+            try std.testing.expectError(error.NativeCleanupUncertain, Served.openWithTable(trace.allocator(), .llama, engine_table, .{ .model_dir = "/fixture/no-model" }, progress, gauges, null));
+            try std.testing.expectEqual(before, trace.allocations);
+            try std.testing.expectEqual(@as(usize, 1), probe.opens);
+        } else {
+            const engine = try result;
+            try std.testing.expect(engine.tryClose());
+            try std.testing.expect(trace.wrapper_freed and probe.opens == 1 and probe.closes == 1);
+            page.destroy(probe);
+            page.destroy(progress);
+            page.destroy(gauges);
+            page.destroy(trace);
+        }
+    }
+}

@@ -1,0 +1,52 @@
+
+// Pure bookkeeping graph: refusal callbacks touch no backend or native API.
+fn fiosPoolCloseOrdering(scenario: u8) !void {
+    const owners = @import("../../fios/request_ownership.zig");
+    try owners.shared().initialize(testing.io, @splat(118));
+    const Trace = struct {
+        scenario: u8,
+        events: [16]u8 = @splat(0),
+        count: usize = 0,
+        fn add(t: *@This(), event: u8) void { t.events[t.count] = event;t.count += 1; }
+    };
+    const MetaEngine = struct {
+        graph_trace: *Trace,
+        id: u8,
+        fn tryReleaseRequests(e: *@This()) bool {
+            e.graph_trace.add(e.id);
+            if (e.graph_trace.scenario == 0 and e.id == 1) { owners.shared().fence(testing.io);return false; }
+            return true;
+        }
+        fn deinit(e: *@This()) void { e.graph_trace.add(10 + e.id); }
+    };
+    const MetaModel = struct {
+        graph_trace: *Trace,
+        fn tryReleasePrograms(m: *@This()) bool {
+            m.graph_trace.add(2);
+            if (m.graph_trace.scenario == 1) { owners.shared().fence(testing.io);return false; }
+            return true;
+        }
+        fn deinit(m: *@This()) void { m.graph_trace.add(12); }
+    };
+    const MetaCache = struct { fn deinit(_: *@This()) void {} };
+    var graph_trace: Trace = .{ .scenario = scenario };
+    var e0: MetaEngine = .{ .graph_trace = &graph_trace, .id = 0 };
+    var e1: MetaEngine = .{ .graph_trace = &graph_trace, .id = 1 };
+    var model: MetaModel = .{ .graph_trace = &graph_trace };
+    const engines = try std.heap.smp_allocator.alloc(*MetaEngine, 2);
+    engines[0] = &e0;engines[1] = &e1;
+    const pool = .{ .engines = engines, .model = &model, .cache = @as(?*MetaCache, null) };
+    closePoolGraph(pool, std.heap.smp_allocator);
+    const expected: []const u8 = switch (scenario) { 0 => &.{ 0, 1 }, 1 => &.{ 0, 1, 2 }, else => &.{ 0, 1, 2, 11, 10, 12 } };
+    if (!std.mem.eql(u8, expected, graph_trace.events[0..graph_trace.count])) std.debug.print("FIO_CURRENT_ANE_POOL_CPU_BEFORE_NATIVE_CUSTODY\n", .{});
+    try testing.expectEqualSlices(u8, expected, graph_trace.events[0..graph_trace.count]);
+    if (scenario < 2) {
+        const count = graph_trace.count;
+        closePoolGraph(pool, std.heap.smp_allocator);
+        try testing.expectEqual(count, graph_trace.count);
+        try testing.expect(owners.shared().knownUncertain(testing.io));
+    }
+}
+test "fios current ane pool retains CPU parents after request refusal" { try fiosPoolCloseOrdering(0); }
+test "fios current ane pool retains CPU parents after program refusal" { try fiosPoolCloseOrdering(1); }
+test "fios current ane pool closes native graph before CPU parents" { try fiosPoolCloseOrdering(2); }

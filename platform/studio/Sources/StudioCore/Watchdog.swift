@@ -1,0 +1,62 @@
+enum WatchdogAction: Equatable, Sendable {
+    case observe, start, terminate, kill, degraded
+}
+
+// Decision state only: the supervisor must durably write startHistory before
+// spawning, and managerAlive=false means verified reaped/absent, not timeout.
+struct WatchdogPolicy: Sendable {
+    private(set) var startHistory: [Int64] = []
+    private var previousTick: Int64?
+    // Budget aging must not erase the current launch's watchdog baseline.
+    private var lastStart: Int64?
+    private var terminateAt: Int64?
+    private var killIssued = false
+
+    init() {}
+
+    init(restoringStarts: [Int64]) throws {
+        guard restoringStarts.count <= 3,
+              restoringStarts.allSatisfy({ (0...ActivityPolicy.maximumTimestamp).contains($0) }),
+              zip(restoringStarts, restoringStarts.dropFirst()).allSatisfy({ $1 - $0 >= 10_000 })
+        else { throw PolicyError.invalidObservation }
+        startHistory = restoringStarts
+        previousTick = restoringStarts.last
+        lastStart = restoringStarts.last
+    }
+
+    mutating func tick(now: Int64, managerAlive: Bool, lastProgress: Int64?) throws -> WatchdogAction {
+        guard (0...ActivityPolicy.maximumTimestamp).contains(now),
+              previousTick.map({ now >= $0 }) ?? true
+        else { throw PolicyError.invalidObservation }
+        if let lastProgress {
+            guard lastProgress >= 0, lastProgress <= now else { throw PolicyError.invalidObservation }
+        }
+        previousTick = now
+        startHistory.removeAll { now - $0 >= 600_000 }
+        if !managerAlive {
+            terminateAt = nil
+            killIssued = false
+            guard startHistory.count < 3 else { return .degraded }
+            guard startHistory.last.map({ now - $0 >= 10_000 }) ?? true else { return .observe }
+            startHistory.append(now)
+            lastStart = now
+            return .start
+        }
+        if let terminateAt {
+            if !killIssued && now - terminateAt >= 1_000 {
+                killIssued = true
+                return .kill
+            }
+            return .observe // Await verified reap. Never spawn alongside old process.
+        }
+        // A recycled PID can match a leftover progress record. Progress
+        // sampled before the current launch is not evidence for that child.
+        let progress = lastProgress.flatMap { value in
+            guard lastStart.map({value >= $0}) ?? true else {return nil}
+            return value
+        } ?? lastStart
+        guard let progress, now - progress >= 6_000 else { return .observe }
+        terminateAt = now
+        return .terminate
+    }
+}

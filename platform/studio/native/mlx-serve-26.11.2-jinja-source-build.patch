@@ -1,0 +1,77 @@
+diff --git a/build/fios_jinja.zig b/build/fios_jinja.zig
+new file mode 100644
+index 0000000..dbd3858
+--- /dev/null
++++ b/build/fios_jinja.zig
+@@ -0,0 +1,28 @@
++const std = @import("std");
++const config = @import("config.zig");
++
++// Build the existing renderer from declared CPP inputs. One archive is shared
++// by the graph; this adds no model, runtime operation or native permission.
++pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, host: config.Host, sources: std.Build.LazyPath) *std.Build.Step.Compile {
++    const frameworks = host.frameworks orelse @panic("Jinja source build needs an explicit Apple SDK");
++    const suffix = "/System/Library/Frameworks";
++    if (!std.mem.endsWith(u8, frameworks, suffix) or frameworks.len <= suffix.len)
++        @panic("Jinja source SDK framework path is invalid");
++    const sdk = frameworks[0 .. frameworks.len - suffix.len];
++    if (!std.fs.path.isAbsolute(sdk)) @panic("Jinja source SDK must be absolute");
++    const module = b.createModule(.{
++        .target = target,
++        .optimize = optimize,
++        .link_libc = true,
++        .link_libcpp = false,
++    });
++    module.addIncludePath(sources);
++    module.addIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/c++/v1", .{sdk}) });
++    for ([_][]const u8{ "jinja_wrapper.cpp", "caps.cpp", "lexer.cpp", "parser.cpp", "runtime.cpp", "jinja_string.cpp", "value.cpp" }) |name| {
++        module.addCSourceFile(.{
++            .file = sources.path(b, name),
++            .flags = &.{ "-std=c++17", "-DNDEBUG", "-isysroot", sdk },
++        });
++    }
++    return b.addLibrary(.{ .name = "fios-jinja-source", .linkage = .static, .root_module = module });
++}
+diff --git a/build/macos.zig b/build/macos.zig
+index 1dc2374..0bc87de 100644
+--- a/build/macos.zig
++++ b/build/macos.zig
+@@ -6,6 +6,7 @@ const std = @import("std");
+ const config = @import("config.zig");
+ const libs = @import("libs.zig");
+ const plugins = @import("plugins.zig");
++const fios_jinja = @import("fios_jinja.zig");
+ 
+ pub const Graph = struct {
+     b: *std.Build,
+@@ -94,6 +95,7 @@ pub const Graph = struct {
+         build_options.addOption(bool, "slow_tests", b.option(bool, "slow-tests", "Also run the slow corpus-replay and benchmark tests") orelse false);
+ 
+         const shared: Shared = .{
++            .source_jinja = if (fios_source_sdk) fios_jinja.create(b, target, optimize, host, b.path("lib/jinja_cpp")) else null,
+             .fios_source_sdk = fios_source_sdk,
+             .fios_ds4_root = fios_ds4_root,
+             .fios_source_ane = fios_source_ane,
+@@ -132,6 +134,7 @@ pub const Graph = struct {
+ 
+ /// What the server's and the unit tests' modules import alike.
+ const Shared = struct {
++    source_jinja: ?*std.Build.Step.Compile,
+     fios_source_sdk: bool,
+     fios_ds4_root: ?[]const u8,
+     fios_source_ane: bool,
+@@ -159,10 +162,10 @@ const Shared = struct {
+             },
+         });
+ 
+-        // Jinja2 template engine (from llama.cpp's common/jinja + nlohmann/json).
+-        // Pre-compiled as a static library with system clang++ (C++17 requires system libc++).
+-        // Rebuild with: cd lib/jinja_cpp && for f in jinja_wrapper caps lexer parser runtime jinja_string value; do clang++ -std=c++17 -O2 -DNDEBUG -I . -c $f.cpp -o obj/$f.o; done && ar rcs libjinja.a obj/*.o
+-        mod.addObjectFile(b.path("lib/jinja_cpp/libjinja.a"));
++        // Existing WangZhaode Jinja renderer; source-SDK composition compiles
++        // its reviewed CPP inputs against the same Apple headers/runtime.
++        if (s.source_jinja) |archive| mod.linkLibrary(archive)
++        else mod.addObjectFile(b.path("lib/jinja_cpp/libjinja.a"));
+         mod.addIncludePath(b.path("lib/jinja_cpp"));
+         libs.addVendoredSources(b, mod);
+ 

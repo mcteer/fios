@@ -1,0 +1,29 @@
+//! Actual empty C bookkeeping operation refusal -> fixed negative getter -> original lineage.
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const outcome = @import("fios/current_ane_run_uncertainty.zig");
+const locked = @import("fios/current_ane_native_locked_cleanup_uncertainty.zig");
+extern fn fios_fixture_ane_operations_refusal() c_int;
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    if (outcome.known()) return error.InitialFence;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(119));
+    const root = try owners.shared().enter(io);
+    const correlation: owners.CorrelationID = @splat(120);
+    try owners.shared().associate(io, root, correlation);
+    try owners.shared().bind(io, root, "fixture/ane-reported-outcome");
+    owners.current().* = root;
+    const retained = (try owners.retainCurrent(io)).?;
+    if (fios_fixture_ane_operations_refusal() != 1) return error.COperationsRefusalMissing;
+    if (!locked.known(io, false, false)) return error.COperationsNegativeNotComposed;
+    owners.current().* = null;
+    try owners.shared().leave(io, root);
+    if (retained.releaseIfCertain(io)) return error.OriginalMetadataReleased;
+    if (outcome.known()) return error.RunLatchIncorrectlySubstituted;
+    const snapshot = owners.shared().snapshot(io);
+    const lineage = owners.shared().correlationSnapshot(io, correlation);
+    if (!snapshot.uncertain or snapshot.owned != 1 or !lineage.found or !lineage.uncertain or lineage.references != 1)
+        return error.OriginalLineageLost;
+    std.debug.print("PASS: actual ANE C bookkeeping operation refusal preserves original lineage, models0\n", .{});
+}

@@ -1,0 +1,58 @@
+
+test "fios current actor finish restores original slot attribution" {
+    const io = std.testing.io;
+    const a = std.testing.allocator;
+    const registry = try ModelRegistry.init(a, io, null, 2, 0, null);
+    defer registry.deinit();
+    const model = try registry.registerStub("fixture/actor-finish", "/fixture/never-loaded", null);
+    var config = std.mem.zeroInit(ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
+    model.config = &config;
+    defer model.config = null;
+    model.state = .ready;
+    model.refcount.store(1, .release);
+    defer registry.releaseStatus(model);
+    var scheduler = std.mem.zeroInit(Scheduler, .{
+        .allocator = a, .io = io, .registry = registry, .queue_cap = 2,
+        .kv_quant_config = transformer_mod.KVQuantConfig.dense,
+    });
+    defer {
+        for (scheduler.pending.items) |pending| pending.deinit();
+        for (scheduler.cleanup_queue.items) |pending| pending.deinit();
+        scheduler.pending.deinit(a);
+        scheduler.cleanup_queue.deinit(a);
+    }
+    try fios_ownership.shared().initialize(io, @splat(41));
+    const root = try fios_ownership.shared().enter(io);
+    defer fios_ownership.shared().leave(io, root) catch {};
+    try fios_ownership.shared().bind(io, root, model.id);
+    fios_ownership.current().* = root;
+    defer fios_ownership.current().* = null;
+    const slot = try submit(&scheduler, .{
+        .prompt_ids = &.{1}, .sampling = .{}, .eos_token_ids = &.{},
+        .max_tokens = 1, .model = model,
+    });
+    const Probe = struct {
+        root: fios_ownership.Token,
+        finished: bool = false,
+        attributed: bool = false,
+        fn event(raw: *anyopaque, _: u64, value: *const @import("../../abi/engine.zig").Event) callconv(.c) @import("../../abi/engine.zig").Action {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (value.kind == .finished) {
+                self.finished = true;
+                if (fios_ownership.current_group().*) |group| {
+                    self.attributed = group.len == 1 and std.meta.eql(group[0], self.root);
+                }
+            }
+            return .go;
+        }
+    };
+    var probe: Probe = .{ .root = root };
+    slot.sink = .{ .ctx = &probe, .event = Probe.event };
+    fios_ownership.current().* = null; // The worker must use the slot's original ownership.
+    @import("finish.zig").finishSlot(&scheduler, slot, "stop");
+    complete(&scheduler, slot);
+    try std.testing.expect(probe.finished);
+    if (!probe.attributed) std.debug.print("FIO_CURRENT_FINISH_LOST_ORIGINS\n", .{});
+    try std.testing.expect(probe.attributed);
+    try std.testing.expect(fios_ownership.current().* == null and fios_ownership.current_group().* == null);
+}

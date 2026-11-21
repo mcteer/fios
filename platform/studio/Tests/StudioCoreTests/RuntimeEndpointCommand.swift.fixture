@@ -1,0 +1,22 @@
+import Foundation
+import Darwin
+
+// Finite runner-owned fake CLI. Only mutates its generated endpoint fixture;
+// no listener, subprocess, daemon API, application or model operation.
+@main struct EndpointCommand {
+    static func main() {
+        let args=CommandLine.arguments
+        let suffix="/.orbstack/run/docker.sock",prefix="/private/tmp/fios009-endpoint-"
+        guard getuid()>0,getuid()==geteuid(),args.count==4,args[1]=="--host",args[2].hasPrefix("unix://") else {exit(2)}
+        let path=String(args[2].dropFirst(7))
+        guard path.hasPrefix(prefix),path.hasSuffix(suffix) else {exit(2)}
+        let home=String(path.dropLast(suffix.count)),identifier=String(home.dropFirst(prefix.count))
+        guard UUID(uuidString:identifier)?.uuidString.lowercased()==identifier else {exit(2)}
+        var directory=stat(),socket=stat(),previous=stat()
+        guard lstat(home,&directory)==0,directory.st_uid==geteuid(),directory.st_mode&S_IFMT==S_IFDIR,
+              directory.st_mode&0o7777==0o700,lstat(path,&socket)==0,socket.st_uid==geteuid(),socket.st_mode&S_IFMT==S_IFSOCK else {exit(2)}
+        if args[3]=="fixture-safe" {return}
+        guard args[3]=="fixture-mutate",lstat(path+".fixture-held",&previous) != 0,errno==ENOENT,
+              rename(path,path+".fixture-held")==0,symlink(path+".fixture-held",path)==0 else {exit(2)}
+    }
+}

@@ -1,0 +1,138 @@
+const std=@import("std");
+const fios_origins=host.fios_warm_request_owners;
+const fios_unproven_warm=host.fio_qwen_uncertainty.storage;
+const host=@import("mlx_host");
+const owners=host.fio_tracker;
+const sdk=host.fio_sdk;
+var reads=std.atomic.Value(u32).init(0);
+var entered=std.atomic.Value(bool).init(false);
+var release=std.atomic.Value(bool).init(false);
+var observed=std.atomic.Value(u64).init(0);
+var enabled=true;
+const posix=struct {
+ extern "c" fn open([*:0]const u8,c_int,...)c_int;
+ extern "c" fn close(c_int)c_int;
+ extern "c" fn ftruncate(c_int,i64)c_int;
+ extern "c" fn pread(c_int,[*]u8,usize,i64)isize;
+};
+fn tick()void {const ts:std.c.timespec=.{.sec=0,.nsec=std.time.ns_per_ms};_=std.c.nanosleep(&ts,null);}
+fn warmEnabled()bool{return enabled;}
+const log=struct {fn info(comptime _:[]const u8,_:anytype)void{}};
+fn asGb(x:u64)f64{return @as(f64,@floatFromInt(x))/1e9;}
+const Warm=struct {live_warm_bytes:std.atomic.Value(u64)=.init(0),live_warm_total:std.atomic.Value(u64)=.init(0)};var live=Warm{};
+fn warmBytes()*Warm{return &live;}
+const WarmProgress=struct {fn should(_: *@This(),_:u64,_:u64)bool{return false;}};
+const Pool=struct {warm_finished:std.atomic.Value(bool)=.init(false),fn destroy(_: *@This())void{}};
+const embedded_ple=struct {const Region=struct{fd:c_int,off:u64,len:u64};};
+const Embedded=struct{fn region(_: *@This(),_:usize)?embedded_ple.Region{return null;}fn close(_: *@This())void{}};
+const crt=struct {
+ fn close(fd:c_int)void{_=posix.close(fd);}
+ fn pread(fd:c_int,bytes:[*]u8,want:usize,off:i64)isize {
+  if(owners.current().*)|root|observed.store(root.sequence,.release);
+  entered.store(true,.release);
+  while(!release.load(.acquire))tick();
+  _=reads.fetchAdd(1,.acq_rel);
+  return posix.pread(fd,bytes,want,off);
+ }
+};
+const NgramTable=struct {
+ map:[]align(std.heap.page_size_min) const u8,fd:c_int=17,pool:?*Pool=null,gpu_owns_map:bool=true,embedded:?*Embedded=null,
+ fmt:enum{affine,ggml}=.affine,w_off:usize=0,rows:u64=16,row_bytes:u32=1,
+@@WARM_FIELDS@@
+@@WARM_CHUNK@@
+@@METHODS@@
+};
+
+var effects: usize = 0;
+const gpa = std.heap.c_allocator;
+const State = struct { table: NgramTable };
+const Trunk = struct {
+ qwen4: ?*State,
+ fn deinit(self: *@This())void {effects+=1;if(self.qwen4)|state|{state.table.close();gpa.destroy(state);}self.qwen4=null;}
+};
+const Record = struct {pending: ?u8=null};
+const Records = struct {
+ const Entry=struct {value_ptr:*Record};
+ const Iterator=struct {fn next(_: *@This())?Entry{return null;}};
+ fn iterator(_: *@This())Iterator{return .{};}
+ fn deinit(_: *@This(),_: std.mem.Allocator)void{effects+=1;}
+};
+const OwnSlot=struct {fn deinit(_: *@This(),_: *Trunk)void{effects+=1;}};
+const Own=struct {items:[]OwnSlot=&.{},fn deinit(_: *@This(),_:std.mem.Allocator)void{effects+=1;}};
+const Resource=struct {fn deinit(_: *@This())void{effects+=1;}};
+const ConfigResource=struct {fn deinit(_: *@This(),_:std.mem.Allocator)void{effects+=1;}};
+const Model=struct {recs:Records=.{},own:Own=.{},trunk:Trunk,scratch:Resource=.{},weights:Resource=.{},cfg:ConfigResource=.{}};
+const ple=struct {fn releasePlePending(_:u8)void{effects+=1;}};
+@@UNLOAD@@
+
+const blocked=false;
+const no_warm=false;
+const force_join_spawn_failure=false;
+const independent_uncertainty=false;
+const during_join_uncertainty=false;
+fn joinSpawn(table:*NgramTable,thread:std.Thread)anyerror!std.Thread {
+ if(force_join_spawn_failure)return error.ThreadQuotaExceeded;
+ return std.Thread.spawn(.{},NgramTable.joinWarm,.{table,thread});
+}
+fn delayedRelease()void {
+ const ts:std.c.timespec=.{.sec=if(blocked) 3 else 0,.nsec=if(blocked) 0 else 100*std.time.ns_per_ms};
+ _=std.c.nanosleep(&ts,null);
+ if(during_join_uncertainty)sdk.fios_native_request_owners_uncertain();
+ release.store(true,.release);
+}
+test "fios qwen bounded unload retains complete model on held actual IO" {
+ const io=std.testing.io;owners.shared().primary_guard=true;try owners.shared().initialize(io,@splat(172));try sdk.initialize(io);
+ const fd=posix.open("@@FILE@@",@as(c_int,@bitCast(std.c.O{.ACCMODE=.RDWR,.CREAT=true,.EXCL=true})),@as(c_int,0o600));
+ try std.testing.expect(fd>=0);try std.testing.expectEqual(@as(c_int,0),posix.ftruncate(fd,16<<20));
+ const map=try std.heap.page_allocator.alignedAlloc(u8,.fromByteUnits(std.heap.page_size_min),16<<20);defer std.heap.page_allocator.free(map);
+ const state=try gpa.create(State);state.*=.{.table=.{.map=map,.fd=fd}};
+ const model=try gpa.create(Model);model.*=.{.trunk=.{.qwen4=state}};
+ var model_retained=true;
+ defer if(model_retained){
+  release.store(true,.release);
+  if(state.table.fios_warm_join_pending){var tries:usize=0;while(!state.table.fios_warm_joined.load(.acquire) and tries<1000):(tries+=1)tick();}
+  if(!state.table.fios_warm_join_pending or state.table.fios_warm_joined.load(.acquire)){
+   state.table.close();gpa.destroy(state);gpa.destroy(model);
+  }
+ };
+ const root=try owners.shared().enter(io);try owners.shared().associate(io,root,@splat(28));try owners.shared().bind(io,root,"fixture/qwen-bounded-unload");try owners.shared().active(io,root);
+ enabled=!no_warm;owners.current().*=root;state.table.startWarm();owners.current().*=null;
+ if(no_warm){
+  try std.testing.expect(state.table.warm_thread==null and !entered.load(.acquire));
+  try owners.shared().leave(io,root);unload(model);model_retained=false;
+  try std.testing.expectEqual(@as(usize,6),effects);
+  try std.testing.expectEqual(@as(c_int,-1),posix.ftruncate(fd,16<<20));
+  try std.testing.expect(!sdk.diagnostic().uncertain);
+  std.debug.print("GENUINE_QWEN_BOUNDED_UNLOAD disabled_reader_no_join_or_model_proof\n",.{});return;
+ }
+ var tries:usize=0;while(!entered.load(.acquire) and tries<1000):(tries+=1)tick();try std.testing.expect(entered.load(.acquire));
+ try owners.shared().leave(io,root);try std.testing.expect(owners.shared().correlationSnapshot(io,@splat(28)).found);
+ if(independent_uncertainty)sdk.fios_native_request_owners_uncertain();
+ const releaser:?std.Thread=if(blocked or during_join_uncertainty)try std.Thread.spawn(.{},delayedRelease,.{})else null;
+ defer if(releaser)|thread|thread.join();
+ if(!blocked and !during_join_uncertainty)release.store(true,.release);
+ const started=std.Io.Timestamp.now(io,.boot);
+ unload(model);
+ const elapsed=started.untilNow(io,.boot).nanoseconds;
+ if(effects!=0)model_retained=false;
+ if(blocked){
+  if(effects!=0 or elapsed>2500*std.time.ns_per_ms){std.debug.print("QWEN_BOUNDED_UNLOAD_RELEASED_OR_BLOCKED_PARENT\n",.{});return error.TestUnexpectedResult;}
+  try std.testing.expect(elapsed>=1900*std.time.ns_per_ms);
+  try std.testing.expect(state.table.fios_warm_join_pending and !state.table.fios_warm_joined.load(.acquire));
+  try std.testing.expectEqual(fd,state.table.fd);try std.testing.expectEqual(@as(c_int,0),posix.ftruncate(fd,16<<20));
+  try std.testing.expect(owners.shared().correlationSnapshot(io,@splat(28)).found and sdk.diagnostic().uncertain);
+  unload(model);try std.testing.expectEqual(@as(usize,0),effects);
+  release.store(true,.release);tries=0;while(!state.table.fios_warm_joined.load(.acquire) and tries<1000):(tries+=1)tick();
+  try std.testing.expect(state.table.fios_warm_joined.load(.acquire));
+  try std.testing.expect(owners.shared().correlationSnapshot(io,@splat(28)).found and sdk.diagnostic().uncertain);
+ }else if(independent_uncertainty or during_join_uncertainty or force_join_spawn_failure){
+  try std.testing.expectEqual(@as(usize,0),effects);
+  try std.testing.expect(owners.shared().correlationSnapshot(io,@splat(28)).found and sdk.diagnostic().uncertain);
+  if(force_join_spawn_failure)try std.testing.expect(!state.table.fios_warm_join_pending and state.table.warm_thread!=null);
+ }else{
+  try std.testing.expectEqual(@as(usize,6),effects);
+  try std.testing.expectEqual(@as(c_int,-1),posix.ftruncate(fd,16<<20));
+  try std.testing.expect(!owners.shared().correlationSnapshot(io,@splat(28)).found and !sdk.diagnostic().uncertain);
+ }
+ std.debug.print("GENUINE_QWEN_BOUNDED_UNLOAD local_join_and_retained_parent_only; no model/admission/terminal proof\n",.{});
+}

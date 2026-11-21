@@ -1,0 +1,84 @@
+const std = @import("std");
+const warm = @import("warm_constructor");
+pub const shared = @import("sdk/util/shared.zig");
+pub const warm_marker = @import("sdk/util/streamed_warm_source_uncertainty.zig");
+const marker = warm_marker;
+const guard = @import("host/http/server_guard.zig");
+const owners = @import("fios/request_ownership.zig");
+const reported = @import("fios/current_ane_run_uncertainty.zig");
+const io = std.testing.io;
+fn expectKnown(comptime failure: []const u8) !void {
+    if (!marker.known() or !guard.known()) {
+        std.debug.print("{s}\n", .{failure});
+        return error.TestUnexpectedResult;
+    }
+}
+fn initialize(tracker: *owners.Tracker, epoch: u8) !void {
+    tracker.primary_guard = true; // CPU-only fixture; serving remains false.
+    try tracker.initialize(io, @splat(epoch));
+    try tracker.enrollBackendUncertaintyProbe(io, &guard.known);
+}
+fn expectRefusal(tracker: *owners.Tracker, comptime failure: []const u8) !void {
+    if (tracker.claimCorrelatedPreparation(io, "fixture/model", @splat(31))) |_| {
+        std.debug.print("{s}\n", .{failure});
+        return error.TestUnexpectedResult;
+    } else |err| try std.testing.expectEqual(error.CoverageUncertain, err);
+}
+test "streamed warm construction marks before substituted C boundary" {
+    var value = try warm.Metal.init(1, 7);
+    defer value.deinit();
+    if (!warm.boundaryWasFenced()) {
+        std.debug.print("WARM_CONSTRUCTION_NOT_FENCED\n", .{});
+        return error.TestUnexpectedResult;
+    }
+    try expectKnown("WARM_CONSTRUCTION_NOT_FENCED");
+}
+test "streamed warm failed substituted construction retains negative evidence" {
+    warm.failConstruction();
+    try std.testing.expectError(error.MimoGpuKeepWarmDevice, warm.Metal.init(1, 7));
+    try expectKnown("WARM_FAILED_CONSTRUCTION_NOT_FENCED");
+}
+test "streamed warm late construction refuses new preparation" {
+    var tracker = owners.Tracker{};
+    try initialize(&tracker, 161);
+    var value = try warm.Metal.init(1, 7);
+    defer value.deinit();
+    try expectRefusal(&tracker, "WARM_MODE_CLAIM_ACCEPTED");
+}
+test "streamed warm metadata destroy and tracker epochs retain refusal" {
+    var value = try warm.Metal.init(1, 7);
+    value.deinit();
+    try std.testing.expect(value.h == null);
+    var first = owners.Tracker{};
+    try initialize(&first, 162);
+    try expectRefusal(&first, "WARM_EPOCH_OR_DESTROY_CLEARED");
+    var second = owners.Tracker{};
+    try initialize(&second, 163);
+    try expectRefusal(&second, "WARM_EPOCH_OR_DESTROY_CLEARED");
+}
+test "streamed warm concurrent negative markers survive local joins" {
+    const a = try std.Thread.spawn(.{}, marker.markConstruction, .{});
+    const b = try std.Thread.spawn(.{}, marker.markConstruction, .{});
+    a.join();
+    b.join();
+    try expectKnown("WARM_JOIN_CLEARED");
+}
+test "streamed warm absent construction preserves ordinary getter" {
+    try std.testing.expect(!marker.known());
+    try std.testing.expect(!guard.known());
+}
+test "streamed warm existing negative backend remains independent" {
+    try std.testing.expect(!marker.known());
+    reported.observeOutcome(false);
+    try std.testing.expect(guard.known());
+}
+test "streamed warm diagnostic serving guard stays unsupported" {
+    var value = try warm.Metal.init(1, 7);
+    defer value.deinit();
+    var tracker = owners.Tracker{};
+    tracker.primary_guard = false;
+    try tracker.initialize(io, @splat(164));
+    try tracker.enrollDiagnosticUncertaintyProbe(io, &guard.known);
+    try std.testing.expectError(error.UnsupportedSourceGuard, tracker.claimCorrelatedPreparation(io, "fixture/model", @splat(32)));
+    try std.testing.expect(!tracker.primary_guard);
+}

@@ -1,0 +1,58 @@
+const std=@import("std");
+const owners=@import("fios/request_ownership.zig");
+const sdk=@import("fios/sdk_request_ownership.zig");
+extern fn fios_metal_library_matches([*:0]const u8)c_int;
+extern fn fios_metal_fixture_run(u32)c_int;
+extern fn fios_metal_fixture_pause()c_int;
+extern "c" fn getenv([*:0]const u8)?[*:0]const u8;
+var scenario:std.atomic.Value(u32)=.init(0);
+var expected_root:?owners.Token=null;
+var origins:std.atomic.Value(u32)=.init(0);
+var retired:std.atomic.Value(u32)=.init(0);
+var unknown:std.atomic.Value(u32)=.init(0);
+export fn fios_source_metal_event_observe(raw:?*anyopaque,id:u64,phase:u32)c_int {
+ const mode=scenario.load(.acquire);
+ if(id==0)return 1;
+ if(phase==3){_=unknown.fetchAdd(1,.acq_rel);return sdk.fios_native_metal_request_event_observe(raw,id,phase);}
+ if(phase!=1 and phase!=2)return 1;
+ // The genuine Metal fixture starts its callback thread with no native scope.
+ if(phase==2 and (owners.current().*!=null or owners.current_group().*!=null))return 1;
+ const scope=sdk.fios_native_request_owners_enter(raw);if(scope==0)return 1;
+ {
+  defer {if(sdk.fios_native_request_owners_leave(scope)!=0)@panic("fixture owner restoration failed");}
+  const group=owners.current_group().* orelse return 1;const original=expected_root orelse return 1;
+  if(group.len!=1 or !std.meta.eql(group[0],original))return 1;
+ }
+ if(phase==1 and mode==3)return 1;
+ if(phase==2 and (mode==4 or fios_metal_fixture_pause()!=1))return 1;
+ const result=sdk.fios_native_metal_request_event_observe(raw,id,phase);
+ if(result==0) {if(phase==1){_=origins.fetchAdd(1,.acq_rel);}else{_=retired.fetchAdd(1,.acq_rel);}}
+ return result;
+}
+test "genuine empty Metal command buffer original retirement events" {
+ const io=std.testing.io;
+ const mode=try std.fmt.parseInt(u32,std.mem.span(getenv("FIOS_METAL_EVENT_SCENARIO") orelse return error.MissingScenario),10);try std.testing.expect(mode<=4);
+ try owners.shared().initialize(io,@splat(7));try sdk.initialize(io);
+ try std.testing.expectEqual(@as(c_int,1),fios_metal_library_matches(@import("build_options").sdk_library));
+ const root=try owners.shared().enter(io);try owners.shared().bind(io,root,"fixture/empty-metal-events");try owners.shared().active(io,root);expected_root=root;scenario.store(mode,.release);
+ owners.current().*=root;const group=[_]owners.Token{root};owners.current_group().*=&group;
+ defer {owners.current().*=null;owners.current_group().*=null;}
+ try std.testing.expectEqual(@as(c_int,1),fios_metal_fixture_run(mode));
+ if(mode==2)try std.testing.expectEqual(@as(usize,1),owners.shared().snapshot(io).owned);
+ if(mode<3)for(0..1000) |_| {
+  if(sdk.diagnostic().active_contexts==0)break;
+  const delay:std.c.timespec=.{.sec=0,.nsec=std.time.ns_per_ms};_=std.c.nanosleep(&delay,null);
+ };
+ owners.current().*=null;owners.current_group().*=null;try owners.shared().leave(io,root);
+ const events=sdk.metalEventDiagnostic();const snapshot=owners.shared().snapshot(io);
+ if(mode>=3) {
+  try std.testing.expect(events.uncertain and snapshot.uncertain and snapshot.owned>0 and sdk.diagnostic().active_contexts>0);
+  try std.testing.expectEqual(@as(u32,0),retired.load(.acquire));
+  std.debug.print("PASS Metal observer refusal retains independent native uncertainty mode={d}\n",.{mode});return;
+ }
+ try std.testing.expect(!events.uncertain and !snapshot.uncertain and snapshot.owned==0 and sdk.diagnostic().active_contexts==0);
+ if(mode!=1 and origins.load(.acquire)==0){std.debug.print("SDK_METAL_EVENT_ATTRIBUTION_MISSING\n",.{});return error.TestUnexpectedResult;}
+ try std.testing.expectEqual(origins.load(.acquire),retired.load(.acquire));
+ try std.testing.expectEqual(@as(u64,retired.load(.acquire)),events.retired);try std.testing.expectEqual(@as(usize,0),events.active);
+ std.debug.print("PASS genuine empty Metal completion/capture/TLS retirement mode={d} no_native_authority\n",.{mode});
+}

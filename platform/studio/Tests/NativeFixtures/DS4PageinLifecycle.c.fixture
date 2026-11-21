@@ -1,0 +1,46 @@
+// Real factory-created empty page-in work. Zero ranges means no model bytes,
+// file reads, GPU object, forged handle or injected scheduling/failure path.
+static void *pagein_metadata_publication(void *context) {
+    selected_join_work *work=context;
+    if (pthread_mutex_lock(&g_fios_pagein_mutex)!=0 || pthread_mutex_lock(&work->mutex)!=0) abort();
+    work->entered=1;
+    if (pthread_cond_broadcast(&work->condition)!=0 || pthread_mutex_unlock(&work->mutex)!=0) abort();
+    usleep(250000);
+    if (pthread_mutex_unlock(&g_fios_pagein_mutex)!=0) abort();
+    return NULL;
+}
+static int pagein_lifecycle_case(void) {
+    selected_join_work work={PTHREAD_MUTEX_INITIALIZER,PTHREAD_COND_INITIALIZER,0,0,0};
+    pthread_t publisher;
+    JOIN_REQUIRE(pthread_create(&publisher,NULL,pagein_metadata_publication,&work)==0,"Page-in metadata publisher did not start");
+    JOIN_REQUIRE(pthread_mutex_lock(&work.mutex)==0,"Page-in metadata handoff unavailable");
+    while (!work.entered)
+        JOIN_REQUIRE(pthread_cond_wait(&work.condition,&work.mutex)==0,"Page-in metadata handoff failed");
+    JOIN_REQUIRE(pthread_mutex_unlock(&work.mutex)==0,"Page-in metadata handoff release failed");
+    struct timespec before,after;
+    JOIN_REQUIRE(clock_gettime(CLOCK_MONOTONIC,&before)==0,"Page-in preflight clock unavailable");
+    const bool retained=metal_graph_stream_pagein_busy();
+    const uint32_t source_uncertainty=ds4_host_source_uncertainty();
+    JOIN_REQUIRE(clock_gettime(CLOCK_MONOTONIC,&after)==0,"Page-in preflight completion clock unavailable");
+    JOIN_REQUIRE(pthread_join(publisher,NULL)==0,"Page-in metadata publisher did not finish");
+    const double elapsed=(double)(after.tv_sec-before.tv_sec)+(double)(after.tv_nsec-before.tv_nsec)/1000000000.0;
+    JOIN_REQUIRE(source_uncertainty==0,"Ordinary metadata publication invented host uncertainty");
+    JOIN_REQUIRE(retained && elapsed>=0 && elapsed<0.1,"Page-in preflight waited for held metadata");
+    JOIN_REQUIRE(!g_fios_pagein_uncertain && !g_fios_pagein_count && !metal_graph_stream_pagein_busy(),"Ordinary metadata contention poisoned page-in custody");
+    JOIN_REQUIRE(pthread_cond_destroy(&work.condition)==0 && pthread_mutex_destroy(&work.mutex)==0,"Page-in metadata publisher remained live");
+    for (unsigned kind=0;kind<2;++kind) {
+        for (unsigned parallel=0;parallel<2;++parallel) {
+            metal_graph_stream_pagein_job owner={0};
+            owner.ranges=calloc(1,sizeof(*owner.ranges));
+            JOIN_REQUIRE(owner.ranges!=NULL,"Empty page-in range allocation failed");
+            owner.n_threads=parallel ? 3:1;
+            JOIN_REQUIRE(metal_graph_stream_pagein_launch(&owner),"Ordinary empty page-in workers did not start");
+            JOIN_REQUIRE(owner.custody && owner.custody!=&owner && metal_graph_stream_pagein_busy(),"Created page-in worker custody was lost");
+            const bool joined=kind==0 ? metal_graph_stream_prefill_selected_pagein_join(&owner):metal_graph_stream_prefill_layer_pagein_join(&owner);
+            JOIN_REQUIRE(joined,"Ordinary empty page-in workers did not genuinely join");
+            JOIN_REQUIRE(!owner.custody && !owner.started && !g_fios_pagein_count && !g_fios_pagein_uncertain && !metal_graph_stream_pagein_busy(),"Retired page-in job remained registered");
+        }
+    }
+    puts("PASS: page-in preflight retains ordinary metadata contention; selected/layer single/parallel empty factory jobs join and release exact local custody");
+    return 0;
+}

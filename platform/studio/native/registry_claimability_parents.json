@@ -1,0 +1,5 @@
+{
+  "src/fios/current_registry_activity.zig": "25bc42f821a7fe69f9c0e7a4d5e382e9003dce76f62a46ab68e371c91ad8cf50",
+  "src/fios/control_protocol.zig": "bc308da391c654cea92102539d0829bffe52d8267b9b279f96d2d904f886a935",
+  "src/fios/control_transport.zig": "d9af56d2a753946e95d96cecc49601146094ba7480ac48ced86a1ee399004921"
+}

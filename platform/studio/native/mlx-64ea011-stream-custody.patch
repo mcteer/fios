@@ -1,0 +1,222 @@
+diff --git a/mlx/stream.cpp b/mlx/stream.cpp
+index 902015c..49b908a 100644
+--- a/mlx/stream.cpp
++++ b/mlx/stream.cpp
+@@ -8,7 +8,9 @@
+ 
+ #include <array>
+ #include <map>
++#include <limits>
+ #include <optional>
++#include <stdexcept>
+ #include <shared_mutex>
+ 
+ namespace mlx::core {
+@@ -31,6 +33,79 @@ auto& all_streams() {
+   return streams_and_mtx;
+ }
+ 
++constexpr size_t fios_limit = 256;
++struct FiosEntry {
++  Stream stream;
++  uint64_t owner;
++};
++struct FiosRegistry {
++  std::mutex mutex;
++  std::array<std::optional<FiosEntry>, fios_limit> entries;
++  size_t count = 0;
++  uint32_t pending = 0;
++  uint64_t epoch = 1, next_owner = 0, next_hold = 0;
++  uint64_t held = 0, held_owner = 0;
++  bool enabled = false, ever_created = false, uncertain = false, shared = false;
++};
++constinit FiosRegistry fios_registry;
++thread_local uint64_t fios_owner = 0;
++
++bool fios_bump() {
++  if (fios_registry.uncertain) return false;
++  if (fios_registry.epoch == std::numeric_limits<uint64_t>::max()) {
++    fios_registry.uncertain = true;
++    return false;
++  }
++  ++fios_registry.epoch;
++  return true;
++}
++uint64_t fios_owner_locked() {
++  if (fios_owner) return fios_owner;
++  if (fios_registry.next_owner == std::numeric_limits<uint64_t>::max()) {
++    fios_registry.uncertain = true;
++    return 0;
++  }
++  fios_owner = ++fios_registry.next_owner;
++  return fios_bump() ? fios_owner : 0;
++}
++
++struct FiosCreation {
++  uint64_t owner = 0;
++  bool tracked = false, done = false;
++  FiosCreation(const FiosCreation&) = delete;
++  FiosCreation& operator=(const FiosCreation&) = delete;
++  FiosCreation() {
++    std::lock_guard lock(fios_registry.mutex);
++    fios_registry.ever_created = true;
++    if (!fios_registry.enabled) return;
++    if (fios_registry.held) throw std::runtime_error("Stream creation held");
++    if (fios_registry.uncertain) return;
++    if (fios_registry.count + fios_registry.pending >= fios_limit) {
++      fios_registry.uncertain = true;
++      return;
++    }
++    owner = fios_owner_locked();
++    if (!owner || !fios_bump()) return;
++    ++fios_registry.pending;
++    tracked = true;
++  }
++  ~FiosCreation() {
++    if (!tracked || done) return;
++    std::lock_guard lock(fios_registry.mutex);
++    --fios_registry.pending;
++    fios_registry.uncertain = true;
++  }
++  void finish(Stream stream, bool shared) {
++    if (!tracked || done) return;
++    std::lock_guard lock(fios_registry.mutex);
++    fios_registry.entries[fios_registry.count++].emplace(FiosEntry{stream, owner});
++    fios_registry.shared |= shared;
++    --fios_registry.pending;
++    fios_bump();
++    done = true;
++  }
++};
++
+ auto& thread_local_streams() {
+   static std::tuple<std::vector<ThreadLocalStream>, std::mutex> streams_and_mtx;
+   return streams_and_mtx;
+@@ -38,6 +113,62 @@ auto& thread_local_streams() {
+ 
+ } // namespace
+ 
++bool fios_enable_stream_custody_fixture() {
++  std::lock_guard lock(fios_registry.mutex);
++  if (fios_registry.enabled || fios_registry.ever_created || fios_registry.pending)
++    return false;
++  fios_registry.enabled = true;
++  return fios_bump();
++}
++uint64_t fios_current_stream_owner() {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!fios_registry.enabled || fios_registry.uncertain ||
++      (fios_registry.held && !fios_owner)) return 0;
++  return fios_owner_locked();
++}
++FiosStreamCustodyState fios_stream_custody_state() {
++  std::lock_guard lock(fios_registry.mutex);
++  return {fios_registry.epoch, static_cast<uint32_t>(fios_registry.count),
++          fios_registry.pending, fios_registry.enabled, fios_registry.uncertain,
++          fios_registry.held != 0, fios_registry.shared};
++}
++std::vector<Stream> fios_owned_streams() {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!fios_registry.enabled || fios_registry.uncertain || fios_registry.pending ||
++      fios_registry.shared || !fios_owner)
++    throw std::runtime_error("Stream custody unavailable");
++  std::vector<Stream> result;
++  result.reserve(fios_registry.count);
++  for (size_t i = 0; i < fios_registry.count; ++i) {
++    const auto& entry = *fios_registry.entries[i];
++    if (entry.owner == fios_owner) result.push_back(entry.stream);
++  }
++  return result;
++}
++uint64_t fios_hold_stream_creation(uint64_t expected_epoch) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!fios_registry.enabled || fios_registry.uncertain || fios_registry.pending ||
++      fios_registry.held || !fios_owner || fios_registry.epoch != expected_epoch)
++    return 0;
++  if (fios_registry.next_hold == std::numeric_limits<uint64_t>::max()) {
++    fios_registry.uncertain = true;
++    return 0;
++  }
++  if (!fios_bump()) return 0;
++  fios_registry.held_owner = fios_owner;
++  fios_registry.held = ++fios_registry.next_hold;
++  return fios_registry.held;
++}
++bool fios_release_stream_creation(uint64_t ticket) {
++  std::lock_guard lock(fios_registry.mutex);
++  if (!ticket || fios_registry.held != ticket || !fios_owner ||
++      fios_registry.held_owner != fios_owner) return false;
++  if (!fios_bump()) return false;
++  fios_registry.held = 0;
++  fios_registry.held_owner = 0;
++  return true;
++}
++
+ Stream default_stream(Device d) {
+   if (!gpu::is_available() && d.type == Device::gpu) {
+     throw std::invalid_argument(
+@@ -69,6 +200,7 @@ std::vector<Stream> get_streams() {
+ }
+ 
+ Stream new_stream(Device d) {
++  FiosCreation creation;
+   auto& [streams, mtx] = all_streams();
+   std::unique_lock lock(mtx);
+   int index = streams.size();
+@@ -78,10 +210,12 @@ Stream new_stream(Device d) {
+   } else {
+     cpu::new_stream(s);
+   }
++  creation.finish(s, false);
+   return s;
+ }
+ 
+ Stream new_thread_unsafe_stream(Device d) {
++  FiosCreation creation;
+   auto& [streams, mtx] = all_streams();
+   std::unique_lock lock(mtx);
+   int index = streams.size();
+@@ -91,6 +225,7 @@ Stream new_thread_unsafe_stream(Device d) {
+   } else {
+     cpu::new_thread_unsafe_stream(s);
+   }
++  creation.finish(s, true);
+   return s;
+ }
+ 
+diff --git a/mlx/stream.h b/mlx/stream.h
+index 331af60..7f45d6e 100644
+--- a/mlx/stream.h
++++ b/mlx/stream.h
+@@ -2,6 +2,7 @@
+ 
+ #pragma once
+ 
++#include <cstdint>
+ #include <optional>
+ #include <tuple>
+ #include <vector>
+@@ -27,6 +28,23 @@ struct MLX_API ThreadLocalStream : public Stream {
+   using Stream::Stream;
+ };
+ 
++// Source fixture only. Creation custody is not device or model completion.
++struct MLX_API FiosStreamCustodyState {
++  uint64_t epoch;
++  uint32_t registered;
++  uint32_t pending;
++  bool enabled;
++  bool uncertain;
++  bool held;
++  bool shared;
++};
++MLX_API bool fios_enable_stream_custody_fixture();
++MLX_API uint64_t fios_current_stream_owner();
++MLX_API FiosStreamCustodyState fios_stream_custody_state();
++MLX_API std::vector<Stream> fios_owned_streams();
++MLX_API uint64_t fios_hold_stream_creation(uint64_t expected_epoch);
++MLX_API bool fios_release_stream_creation(uint64_t ticket);
++
+ /** Get the default stream of current thread for the given device. */
+ MLX_API Stream default_stream(Device d);
+ 

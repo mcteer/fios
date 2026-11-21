@@ -1,0 +1,81 @@
+// Ordinary CPU bookkeeping object; no native ANE framework/model/device.
+@interface FiosOperationMetadata : NSObject
+@property unsigned calls;
+@property void *owner;
+@property BOOL reload_conflict;
+@end
+@implementation FiosOperationMetadata
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error {
+    (void)qos;*error=nil;self.calls+=1;return YES;
+}
+- (BOOL)loadWithQoS:(unsigned)qos options:(id)options error:(NSError **)error {
+    (void)qos;(void)options;*error=nil;self.calls+=1;return YES;
+}
+#ifdef FIOS_ANE_SOURCE
+- (BOOL)evaluateWithQoS:(unsigned)qos options:(id)options request:(id)request error:(NSError **)error {
+    (void)qos;(void)options;(void)request;*error=nil;self.calls+=1;
+    char text[128]={0};
+    return self.reload_conflict ? !msv_ane_model_reload(self.owner,text,sizeof(text)) : !msv_ane_model_unload(self.owner,text,sizeof(text));
+}
+#endif
+@end
+int main(int argc, char **argv) {
+    @autoreleasepool {
+#ifdef FIOS_ANE_SOURCE
+        if (argc==3) {
+            NSString *root=@(argv[2]);
+            FiosOperationMetadata *value=[FiosOperationMetadata new];
+            msv_ane_model *h=calloc(1,sizeof(*h));value.owner=h;
+            h->model=(__bridge_retained void *)value;
+            h->requests=(__bridge_retained void *)@[[NSObject new]];
+            h->options=(__bridge_retained void *)@{};
+            h->staging_directory=strdup([root stringByAppendingPathComponent:@"stage"].fileSystemRepresentation);
+            char error[128]={0};
+            if (strcmp(argv[1],"active")==0 || strcmp(argv[1],"active-reload")==0) {
+                value.reload_conflict=strcmp(argv[1],"active-reload")==0;
+                if (msv_ane_model_eval(h,0,error,sizeof(error)) || value.calls!=1 ||
+                    !msv_ane_source_uncertainty() || h->fios_active || h->fios_unload_accepted ||
+                    (__bridge id)h->model!=value || msv_ane_model_try_free(h)) return 1;
+            } else {
+                NSFileManager *fm=[NSFileManager defaultManager];
+                setenv("MLX_SERVE_ANE_CACHE_DIR",[root stringByAppendingPathComponent:@"cache"].fileSystemRepresentation,1);
+                NSString *entry=bridge_cache_entry(@"stage");
+                [fm createDirectoryAtPath:entry withIntermediateDirectories:YES attributes:nil error:nil];
+                [[NSData data] writeToFile:[entry stringByAppendingPathComponent:@"compiled.ok"] atomically:YES];
+                [@"artifact" writeToFile:[entry stringByAppendingPathComponent:@"artifact"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                if (!msv_ane_model_unload(h,error,sizeof(error)) || value.calls!=1) return 1;
+                if (strcmp(argv[1],"existing")==0) {
+                    NSString *stage=@(h->staging_directory);
+                    [fm createDirectoryAtPath:stage withIntermediateDirectories:NO attributes:nil error:nil];
+                    [@"original" writeToFile:[stage stringByAppendingPathComponent:@"sentinel"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                    if (msv_ane_model_reload(h,error,sizeof(error)) || value.calls!=1 ||
+                        !msv_ane_source_uncertainty() || h->fios_active ||
+                        ![@"original" isEqualToString:[NSString stringWithContentsOfFile:[stage stringByAppendingPathComponent:@"sentinel"] encoding:NSUTF8StringEncoding error:nil]] ||
+                        msv_ane_model_reload(h,error,sizeof(error)) || msv_ane_model_try_free(h)) return 1;
+                } else if (strcmp(argv[1],"reload")==0) {
+                    if (!msv_ane_model_reload(h,error,sizeof(error)) || value.calls!=2 || h->fios_unload_accepted || h->fios_active || msv_ane_source_uncertainty()) return 1;
+                    if (msv_ane_model_reload(h,error,sizeof(error)) || value.calls!=2) return 1;
+                    if (!msv_ane_model_unload(h,error,sizeof(error)) || value.calls!=3 || !msv_ane_model_try_free(h) || value.calls!=3) return 1;
+                } else return 2;
+            }
+            fprintf(stderr,"PASS: private ANE explicit operation bookkeeping avoids replay\n");return 0;
+        }
+#endif
+        FiosOperationMetadata *value=[FiosOperationMetadata new];
+        msv_ane_model *h=calloc(1,sizeof(*h));h->model=(__bridge_retained void *)value;
+        char error[128]={0};
+        if (!msv_ane_model_unload(h,error,sizeof(error)) || !msv_ane_model_unload(h,error,sizeof(error))) return 1;
+#ifdef FIOS_ANE_SOURCE
+        if (value.calls!=1) { fprintf(stderr,"FIO_CURRENT_ANE_REPLAYED_ACCEPTED_UNLOAD\n");return 1; }
+#else
+        if (value.calls!=2) return 1;
+#endif
+        if (!msv_ane_model_try_free(h)) return 1;
+#ifdef FIOS_ANE_SOURCE
+        if (value.calls!=1) return 1;
+#else
+        if (value.calls!=3) return 1;
+#endif
+        fprintf(stderr,"PASS: private ANE explicit operation bookkeeping avoids replay\n");return 0;
+    }
+}

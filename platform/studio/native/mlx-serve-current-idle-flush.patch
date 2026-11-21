@@ -1,0 +1,22 @@
+--- a/src/engines/mlx/cache/budget.zig
++++ b/src/engines/mlx/cache/budget.zig
+@@ -161,10 +161,17 @@
+ /// returns progress, busy, or done. The caller re-checks for work between calls.
+ /// Inference thread only: unloads run here too, so the collected pointers stay valid.
+ pub fn flushOwedDiskSlices(sch: *Scheduler) prefix_cache_mod.FlushResult {
++    if (model_registry_mod.cleanupUncertain(sch.io)) return .busy;
+     var owed: [16]prefix_cache_mod.FlushTarget = undefined;
+     var result: prefix_cache_mod.FlushResult = .done;
+-    for (owed[0..diskCaches(sch, &owed, true)]) |o| {
+-        const slice = if (admitModuleStaging(sch, o.hc)) o.hc.flushOwedSlice(o.s) else .busy;
++    const n = diskCaches(sch, &owed, true);
++    if (model_registry_mod.cleanupUncertain(sch.io)) return .busy;
++    for (owed[0..n]) |o| {
++        if (model_registry_mod.cleanupUncertain(sch.io)) return .busy;
++        const admitted = admitModuleStaging(sch, o.hc);
++        if (model_registry_mod.cleanupUncertain(sch.io)) return .busy;
++        const slice = if (admitted) o.hc.flushOwedSlice(o.s) else .busy;
++        if (model_registry_mod.cleanupUncertain(sch.io)) return .busy;
+         if (slice == .progress) result = .progress;
+         if (slice == .busy and result == .done) result = .busy;
+     }

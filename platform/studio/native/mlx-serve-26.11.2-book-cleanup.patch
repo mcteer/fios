@@ -1,0 +1,604 @@
+diff --git a/src/engines/ane/engine.zig b/src/engines/ane/engine.zig
+index 0fd05da..c9755a3 100644
+--- a/src/engines/ane/engine.zig
++++ b/src/engines/ane/engine.zig
+@@ -62,6 +62,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+ 
+         const State = struct {
+             book: Book,
++            fios_close_attempted: std.atomic.Value(bool) = .init(false),
+             pool: B.Pool,
+             caps: abi.Caps,
+             eos: []u32,
+@@ -175,14 +176,22 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+             return st;
+         }
+ 
++        fn sourceCleanupUnknown() bool {
++            const options = @import("build_options");
++            return @import("../../fios/current_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++        }
++
+         fn close(e: *anyopaque) callconv(.c) void {
+             const st = state(e);
++            if (st.fios_close_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return;
++            if (sourceCleanupUnknown()) return;
+             st.book.close();
+             for (st.threads) |t| t.join();
++            if (sourceCleanupUnknown() or !st.book.tryDeinit()) return;
+             gpa.free(st.threads);
+-            st.book.deinit();
+             gpa.free(st.eos);
+             st.pool.close(gpa);
++            if (sourceCleanupUnknown()) return;
+             gpa.destroy(st);
+         }
+ 
+diff --git a/src/engines/ds4/engine.zig b/src/engines/ds4/engine.zig
+index 8982d26..57ddb01 100644
+--- a/src/engines/ds4/engine.zig
++++ b/src/engines/ds4/engine.zig
+@@ -73,6 +73,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+ 
+         const State = struct {
+             book: Book,
++            fios_close_attempted: std.atomic.Value(bool) = .init(false),
+             engine: *B.Ds4Engine,
+             session: *B.Ds4Session,
+             caps: abi.Caps,
+@@ -182,15 +183,24 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+             return st;
+         }
+ 
++        fn sourceCleanupUnknown() bool {
++            const options = @import("build_options");
++            return @import("../../fios/current_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++        }
++
+         fn close(e: *anyopaque) callconv(.c) void {
+             const st = state(e);
++            if (st.fios_close_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return;
++            if (sourceCleanupUnknown()) return;
+             st.book.close();
+             st.thread.join();
+-            st.book.deinit();
++            if (sourceCleanupUnknown() or !st.book.tryDeinit()) return;
+             st.tokens.deinit(gpa);
+             gpa.free(st.eos);
+             st.session.free();
++            if (sourceCleanupUnknown()) return;
+             st.engine.close();
++            if (sourceCleanupUnknown()) return;
+             gpa.destroy(st);
+         }
+ 
+diff --git a/src/engines/llama/engine.zig b/src/engines/llama/engine.zig
+index 2ab9a4f..6e9f579 100644
+--- a/src/engines/llama/engine.zig
++++ b/src/engines/llama/engine.zig
+@@ -73,6 +73,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+ 
+         const State = struct {
+             book: Book,
++            fios_close_attempted: std.atomic.Value(bool) = .init(false),
+             engine: *B.LlamaEngine,
+             ctx: *B.LlamaContext,
+             caps: abi.Caps,
+@@ -219,15 +220,24 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+             return st;
+         }
+ 
++        fn sourceCleanupUnknown() bool {
++            const options = @import("build_options");
++            return @import("../../fios/current_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++        }
++
+         fn close(e: *anyopaque) callconv(.c) void {
+             const st = state(e);
++            if (st.fios_close_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return;
++            if (sourceCleanupUnknown()) return;
+             st.book.close();
+             st.thread.join();
+-            st.book.deinit();
++            if (sourceCleanupUnknown() or !st.book.tryDeinit()) return;
+             st.tokens.deinit(gpa);
+             gpa.free(st.eos);
+             st.ctx.free();
++            if (sourceCleanupUnknown()) return;
+             st.engine.close();
++            if (sourceCleanupUnknown()) return;
+             gpa.destroy(st);
+         }
+ 
+@@ -420,98 +430,103 @@ test {
+ 
+ /// A llama.cpp bridge with no model: a sequence's logits after n resident tokens favour `100 + n % 800` (1, every
+ /// other id 0) and it samples their argmax, so a shaped row changes what comes out; an MTP round accepts every draft.
+-const FakeBridge = struct {
+-    pub const vocab = 1024;
+-    pub const Sampling = struct { temperature: f32, top_k: i32 = 0, top_p: f32 = 1, min_p: f32 = 0 };
+-    pub const LlamaEngine = struct {
+-        pub fn open(a: std.mem.Allocator, _: []const u8, _: bridge.OpenOptions) !*LlamaEngine {
+-            return a.create(LlamaEngine);
+-        }
+-        pub fn close(e: *LlamaEngine) void {
+-            testing.allocator.destroy(e);
+-        }
+-        pub fn eosToken(_: *LlamaEngine) i32 {
+-            return 2;
+-        }
+-        pub fn isEog(_: *LlamaEngine, t: i32) bool {
+-            return t == 2 or t == 3;
+-        }
+-        pub fn nVocab(_: *LlamaEngine) i32 {
+-            return vocab;
+-        }
+-        pub fn tokenizeText(_: *LlamaEngine, a: std.mem.Allocator, text: []const u8, add_special: bool) ![]i32 {
+-            const ids = try a.alloc(i32, text.len + @intFromBool(add_special));
+-            if (add_special) ids[0] = 1;
+-            for (text, ids[@intFromBool(add_special)..]) |c, *id| id.* = c;
+-            return ids;
+-        }
+-        pub fn detokenizeOne(_: *LlamaEngine, a: std.mem.Allocator, id: i32) ![]u8 {
+-            return std.fmt.allocPrint(a, "<{d}>", .{id});
+-        }
+-        pub fn chatTemplate(_: *LlamaEngine) ?[]const u8 {
+-            return "{{ messages }}";
+-        }
+-        pub fn createContext(_: *LlamaEngine, opts: bridge.ContextOptions) !*LlamaContext {
+-            const c = try testing.allocator.create(LlamaContext);
+-            const seqs = try testing.allocator.alloc(LlamaSeq, opts.n_seq);
+-            for (seqs) |*s| s.* = .{};
+-            c.* = .{ .seqs = seqs, .drafts = opts.mtp_drafts };
+-            return c;
+-        }
+-    };
+-    pub const LlamaContext = struct {
+-        seqs: []LlamaSeq,
+-        drafts: u32,
+-        pub fn free(c: *LlamaContext) void {
+-            for (c.seqs) |*s| s.resident.deinit(testing.allocator);
+-            testing.allocator.free(c.seqs);
+-            testing.allocator.destroy(c);
+-        }
+-        pub fn mtpDrafts(c: *const LlamaContext) u32 {
+-            return c.drafts;
+-        }
+-        pub fn step(_: *LlamaContext, seqs: []const *LlamaSeq, toks: []const i32) !void {
+-            for (seqs, toks) |s, t| try s.resident.append(testing.allocator, t);
+-        }
+-    };
+-    pub const LlamaSeq = struct {
+-        resident: std.ArrayList(i32) = .empty,
+-        last_used_ns: i64 = 0,
+-        busy: bool = false,
+-        row: [vocab]f32 = @splat(0),
+-        lent: bool = false,
+-        fn next(s: *const LlamaSeq) i32 {
+-            return @intCast(100 + s.resident.items.len % 800);
+-        }
+-        pub fn logits(s: *LlamaSeq) ?[]f32 {
+-            s.row = @splat(0);
+-            s.row[@intCast(s.next())] = 1;
+-            s.lent = true;
+-            return &s.row;
+-        }
+-        pub fn syncWithFallback(s: *LlamaSeq, p: []const i32) !i32 {
+-            const common = @min(bridge.commonPrefixLen(s.resident.items, p), p.len -| 1);
+-            s.resident.shrinkRetainingCapacity(common);
+-            try s.resident.appendSlice(testing.allocator, p[common..]);
+-            return @intCast(common);
+-        }
+-        /// The argmax of the row `logits` handed out (reshaped or not), else of a fresh one.
+-        pub fn sample(s: *LlamaSeq, _: Sampling, _: *u64) i32 {
+-            if (!s.lent) return s.next();
+-            s.lent = false;
+-            return @intCast(std.mem.indexOfMax(f32, &s.row));
+-        }
+-        pub fn specStep(s: *LlamaSeq, id_last: i32, max_drafts: u32, _: Sampling, _: *u64, out: []i32) ![]i32 {
+-            try s.resident.append(testing.allocator, id_last);
+-            for (out[0..max_drafts]) |*o| {
+-                o.* = s.next();
+-                try s.resident.append(testing.allocator, o.*);
+-            }
+-            out[max_drafts] = s.next();
+-            return out[0 .. max_drafts + 1];
+-        }
++// Existing model-free helper, with allocator ownership parameterized for
++// intentionally retained private fixtures; the normal helper is unchanged.
++const FakeBridge = FakeBridgeFor(testing.allocator);
++fn FakeBridgeFor(comptime backing_allocator: std.mem.Allocator) type {
++    return struct {
++        pub const vocab = 1024;
++        pub const Sampling = struct { temperature: f32, top_k: i32 = 0, top_p: f32 = 1, min_p: f32 = 0 };
++        pub const LlamaEngine = struct {
++            pub fn open(a: std.mem.Allocator, _: []const u8, _: bridge.OpenOptions) !*LlamaEngine {
++                return a.create(LlamaEngine);
++            }
++            pub fn close(e: *LlamaEngine) void {
++                backing_allocator.destroy(e);
++            }
++            pub fn eosToken(_: *LlamaEngine) i32 {
++                return 2;
++            }
++            pub fn isEog(_: *LlamaEngine, t: i32) bool {
++                return t == 2 or t == 3;
++            }
++            pub fn nVocab(_: *LlamaEngine) i32 {
++                return vocab;
++            }
++            pub fn tokenizeText(_: *LlamaEngine, a: std.mem.Allocator, text: []const u8, add_special: bool) ![]i32 {
++                const ids = try a.alloc(i32, text.len + @intFromBool(add_special));
++                if (add_special) ids[0] = 1;
++                for (text, ids[@intFromBool(add_special)..]) |c, *id| id.* = c;
++                return ids;
++            }
++            pub fn detokenizeOne(_: *LlamaEngine, a: std.mem.Allocator, id: i32) ![]u8 {
++                return std.fmt.allocPrint(a, "<{d}>", .{id});
++            }
++            pub fn chatTemplate(_: *LlamaEngine) ?[]const u8 {
++                return "{{ messages }}";
++            }
++            pub fn createContext(_: *LlamaEngine, opts: bridge.ContextOptions) !*LlamaContext {
++                const c = try backing_allocator.create(LlamaContext);
++                const seqs = try backing_allocator.alloc(LlamaSeq, opts.n_seq);
++                for (seqs) |*s| s.* = .{};
++                c.* = .{ .seqs = seqs, .drafts = opts.mtp_drafts };
++                return c;
++            }
++        };
++        pub const LlamaContext = struct {
++            seqs: []LlamaSeq,
++            drafts: u32,
++            pub fn free(c: *LlamaContext) void {
++                for (c.seqs) |*s| s.resident.deinit(backing_allocator);
++                backing_allocator.free(c.seqs);
++                backing_allocator.destroy(c);
++            }
++            pub fn mtpDrafts(c: *const LlamaContext) u32 {
++                return c.drafts;
++            }
++            pub fn step(_: *LlamaContext, seqs: []const *LlamaSeq, toks: []const i32) !void {
++                for (seqs, toks) |s, t| try s.resident.append(backing_allocator, t);
++            }
++        };
++        pub const LlamaSeq = struct {
++            resident: std.ArrayList(i32) = .empty,
++            last_used_ns: i64 = 0,
++            busy: bool = false,
++            row: [vocab]f32 = @splat(0),
++            lent: bool = false,
++            fn next(s: *const LlamaSeq) i32 {
++                return @intCast(100 + s.resident.items.len % 800);
++            }
++            pub fn logits(s: *LlamaSeq) ?[]f32 {
++                s.row = @splat(0);
++                s.row[@intCast(s.next())] = 1;
++                s.lent = true;
++                return &s.row;
++            }
++            pub fn syncWithFallback(s: *LlamaSeq, p: []const i32) !i32 {
++                const common = @min(bridge.commonPrefixLen(s.resident.items, p), p.len -| 1);
++                s.resident.shrinkRetainingCapacity(common);
++                try s.resident.appendSlice(backing_allocator, p[common..]);
++                return @intCast(common);
++            }
++            /// The argmax of the row `logits` handed out (reshaped or not), else of a fresh one.
++            pub fn sample(s: *LlamaSeq, _: Sampling, _: *u64) i32 {
++                if (!s.lent) return s.next();
++                s.lent = false;
++                return @intCast(std.mem.indexOfMax(f32, &s.row));
++            }
++            pub fn specStep(s: *LlamaSeq, id_last: i32, max_drafts: u32, _: Sampling, _: *u64, out: []i32) ![]i32 {
++                try s.resident.append(backing_allocator, id_last);
++                for (out[0..max_drafts]) |*o| {
++                    o.* = s.next();
++                    try s.resident.append(backing_allocator, o.*);
++                }
++                out[max_drafts] = s.next();
++                return out[0 .. max_drafts + 1];
++            }
++        };
+     };
+-};
++}
+ 
+ const Fake = Adapter(FakeBridge, testing.allocator);
+ 
+@@ -880,3 +895,108 @@ test "fios current llama batch retains both original request groups" {
+     try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
+     try testing.expect(owners.current().* == null and owners.current_group().* == null);
+ }
++
++test "fios current llama close retains callback-uncertain book parent" {
++    const owners = @import("../../fios/request_ownership.zig");
++    const owner_io = testing.io;
++    const page = std.heap.page_allocator;
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(owner_io, @splat(191));
++    const Trace = struct {
++        var target: std.atomic.Value(usize) = .init(0);
++        var freed: std.atomic.Value(bool) = .init(false);
++        var anchor: u8 = 0;
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(_: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            if (@intFromPtr(bytes.ptr) == target.load(.acquire)) freed.store(true, .release);
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        const allocator: std.mem.Allocator = .{ .ptr = &anchor, .vtable = &vtable };
++    };
++    const A = Adapter(FakeBridgeFor(page), Trace.allocator);
++    const Probe = struct {
++        owner_io: std.Io,
++        book: *Book,
++        unknown: bool,
++        token_seen: std.atomic.Value(bool) = .init(false),
++        callbacks: std.atomic.Value(usize) = .init(0),
++        coordination_ok: std.atomic.Value(bool) = .init(true),
++        fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (ev.kind == .tokens) {
++                self.token_seen.store(true, .release);
++                // Ordinary bounded close coordination, not a backend fault:
++                // finish only once the real book has entered closing.
++                for (0..2000) |_| {
++                    self.book.mu.lockUncancelable(self.owner_io);
++                    const closing = self.book.closing;
++                    self.book.mu.unlock(self.owner_io);
++                    if (closing) return .stop;
++                    self.owner_io.sleep(.fromMilliseconds(1), .awake) catch {};
++                }
++                self.coordination_ok.store(false, .release);
++                return .stop;
++            }
++            if (ev.kind == .finished) {
++                _ = self.callbacks.fetchAdd(1, .acq_rel);
++                if (self.unknown) owners.shared().fence(self.owner_io);
++            }
++            return .go;
++        }
++        fn log(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
++        fn wake(_: *anyopaque) callconv(.c) void {}
++    };
++    for ([_]bool{ false, true }) |unknown| {
++        Trace.target.store(0, .release);
++        Trace.freed.store(false, .release);
++        const temp = try page.create(testing.TmpDir);
++        temp.* = testing.tmpDir(.{});
++        const buffer = try page.create([std.fs.max_path_bytes]u8);
++        const path = try llamaGguf(temp, buffer);
++        const actor_check = try page.create(Probe);
++        actor_check.* = .{ .owner_io = owner_io, .book = undefined, .unknown = unknown };
++        const host = try page.create(abi.Host);
++        host.* = .{ .ctx = actor_check, .log = Probe.log, .wake = Probe.wake };
++        const settings = "{\"seqs\":1,\"mtp_drafts\":0}";
++        const open: abi.Open = .{ .model_dir = abi.Str.of(path), .model_type = .{}, .config_json = .{}, .context = 64, .max_concurrent = 1, .memory_budget = 0, .settings_json = abi.Str.of(settings), .options_json = .{}, .host = host };
++        var info: abi.Info = undefined;
++        var verdict: abi.Verdict = .{};
++        const engine = A.table.open(&open, &info, &verdict) orelse return error.Open;
++        const st = A.state(engine);
++        actor_check.book = &st.book;
++        Trace.target.store(@intFromPtr(engine), .release);
++        const root = try owners.shared().enter(owner_io);
++        try owners.shared().bind(owner_io, root, "fixture/llama-book-parent");
++        owners.current().* = root;
++        try testing.expectEqual(abi.Verdict.Code.ok, A.table.submit(engine, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 2, .sampling = .{ .temperature = 0 } }, .{ .ctx = actor_check, .event = Probe.event }).code);
++        try owners.shared().leave(owner_io, root);
++        owners.current().* = null;
++        for (0..2000) |_| {
++            if (actor_check.token_seen.load(.acquire)) break;
++            try owner_io.sleep(.fromMilliseconds(1), .awake);
++        }
++        try testing.expect(actor_check.token_seen.load(.acquire));
++        A.table.close(engine);
++        try testing.expect(actor_check.coordination_ok.load(.acquire));
++        try testing.expectEqual(@as(usize, 1), actor_check.callbacks.load(.acquire));
++        if (unknown) {
++            if (Trace.freed.load(.acquire)) std.debug.print("FIO_CURRENT_LLAMA_DROPPED_UNCERTAIN_BOOK_PARENT\n", .{});
++            try testing.expect(!Trace.freed.load(.acquire)); // Witness before dereference.
++            if (@hasField(Book, "fios_quarantine")) try testing.expect(st.book.fios_quarantine != null);
++            A.table.close(engine);
++            try testing.expect(!Trace.freed.load(.acquire));
++            try testing.expectEqual(@as(usize, 1), actor_check.callbacks.load(.acquire));
++            try testing.expect(owners.shared().knownUncertain(owner_io));
++        } else {
++            try testing.expect(Trace.freed.load(.acquire));
++            temp.cleanup();
++            page.destroy(temp);
++            page.destroy(buffer);
++            page.destroy(host);
++            page.destroy(actor_check);
++        }
++    }
++}
+diff --git a/src/engines/own_thread/book.zig b/src/engines/own_thread/book.zig
+index 57a0146..2d4b18a 100644
+--- a/src/engines/own_thread/book.zig
++++ b/src/engines/own_thread/book.zig
+@@ -3,6 +3,9 @@
+ //! contract of `abi/engine.zig`. The book's lock is never held across a `Sink.event`.
+ 
+ const std = @import("std");
++const build_options = @import("build_options");
++const cleanup = @import("../../fios/current_cleanup_uncertainty.zig");
++const locked_cleanup = @import("../../fios/current_locked_cleanup_uncertainty.zig");
+ const fios_ownership = @import("../../fios/request_ownership.zig");
+ const abi = @import("../../abi/engine.zig");
+ 
+@@ -19,6 +22,9 @@ pub fn nowNs() u64 {
+ pub const Req = struct {
+     // Trusted original attribution survives caller/connection retirement.
+     fios_owner: ?fios_ownership.Retained = null,
++    fios_finish_attempted: std.atomic.Value(bool) = .init(false),
++    fios_quarantined: bool = false,
++    fios_quarantine_next: ?*Req = null,
+     id: u64,
+     sink: abi.Sink,
+     prompt: []u32,
+@@ -90,6 +96,7 @@ pub const Req = struct {
+ 
+     /// The last event. `why` names a failure (static text); ignored otherwise.
+     pub fn finish(r: *Req, reason: Reason, why: []const u8) void {
++        if (r.fios_finish_attempted.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) return;
+         if (r.stats.prefill_ns > 0) r.stats.decode_ns = nowNs() - r.t0 - r.stats.prefill_ns;
+         const ev: abi.Event = .{
+             .kind = .finished,
+@@ -110,16 +117,34 @@ pub const Book = struct {
+     cond: std.Io.Condition = .init,
+     reqs: std.ArrayList(*Req) = .empty,
+     closing: bool = false,
++    // Removed from runnable work, retained as original diagnostic custody.
++    fios_quarantine: ?*Req = null,
+     decode_tps: f64 = 0,
+     prefill_tps: f64 = 0,
+ 
+-    pub fn deinit(b: *Book) void {
+-        std.debug.assert(b.reqs.items.len == 0);
++    /// Caller excludes new readers. Local storage release is not native
++    /// completion, and a joined worker never clears independent uncertainty.
++    pub fn tryDeinit(b: *Book) bool {
++        if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) return false;
++        b.mu.lockUncancelable(io);
++        const retained = b.reqs.items.len != 0 or b.fios_quarantine != null;
++        b.mu.unlock(io);
++        if (retained) { fios_ownership.shared().fence(io); return false; }
+         b.reqs.deinit(b.gpa);
++        b.reqs = .empty;
++        return true;
++    }
++
++    pub fn deinit(b: *Book) void {
++        _ = b.tryDeinit();
+     }
+ 
+     /// Copies `r` into a new waiting request; null with `out` set when refused (`caps`, a full queue, closing).
+     pub fn add(b: *Book, caps: abi.Caps, id: u64, r: *const abi.Request, sink: abi.Sink, out: *abi.Verdict) ?*Req {
++        if (cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) {
++            out.* = abi.Verdict.refuse(.failed, "native cleanup uncertainty");
++            return null;
++        }
+         if (abi.refusal(caps, abi.needs(r))) |v| {
+             out.* = v;
+             return null;
+@@ -173,6 +198,15 @@ pub const Book = struct {
+     }
+ 
+     fn free(b: *Book, r: *Req) void {
++        // Called under Book.mu: fixed negative flags/cached source state only,
++        // never a dynamic source callback under this mutex.
++        if (r.fios_quarantined) return;
++        if (locked_cleanup.known(io, build_options.fios_source_sdk, build_options.llama_engine)) {
++            r.fios_quarantined = true;
++            r.fios_quarantine_next = b.fios_quarantine;
++            b.fios_quarantine = r;
++            return;
++        }
+         const fio_owner = r.fios_owner;
+         // Callback-free cached check: free() also runs under the book mutex.
+         // Original references stay quarantined on independent uncertainty;
+@@ -387,3 +421,75 @@ test "fios current book retains original request through queue and callback" {
+     try testing.expectEqual(root.sequence, queued.root_sequence);
+     try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
+ }
++
++test "fios current book cleanup retains callback uncertainty and payload" {
++    const owners = @import("../../fios/request_ownership.zig");
++    const owner_io = testing.io;
++    const page = std.heap.page_allocator;
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(owner_io, @splat(179));
++    const Trace = struct {
++        request: usize = 0,
++        freed: bool = false,
++        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
++            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
++        }
++        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (@intFromPtr(bytes.ptr) == self.request) self.freed = true;
++            std.heap.page_allocator.rawFree(bytes, alignment, ret);
++        }
++        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
++        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
++    };
++    const Probe = struct {
++        owner_io: std.Io,
++        unknown: bool,
++        calls: usize = 0,
++        fn event(raw: *anyopaque, _: u64, ev: *const abi.Event) callconv(.c) abi.Action {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            if (ev.kind == .finished) {
++                self.calls += 1;
++                if (self.unknown) owners.shared().fence(self.owner_io);
++            }
++            return .go;
++        }
++    };
++    for ([_]bool{ false, true }) |unknown| {
++        const root = try owners.shared().enter(owner_io);
++        try owners.shared().bind(owner_io, root, "fixture/book-cleanup");
++        owners.current().* = root;
++        const trace = try page.create(Trace);
++        trace.* = .{};
++        const b = try page.create(Book);
++        b.* = .{ .gpa = trace.allocator(), .max_waiting = 2 };
++        const probe = try page.create(Probe);
++        probe.* = .{ .owner_io = owner_io, .unknown = unknown };
++        var verdict: abi.Verdict = .{};
++        const sink: abi.Sink = .{ .ctx = probe, .event = Probe.event };
++        const request = b.add(.{}, 1, &.{ .prompt = abi.span(u32, &.{1}), .max_tokens = 1 }, sink, &verdict).?;
++        trace.request = @intFromPtr(request);
++        try owners.shared().leave(owner_io, root);
++        owners.current().* = null;
++        try testing.expect(b.next(false).? == request);
++        b.done(request, .stop, "");
++        try testing.expectEqual(@as(usize, 1), probe.calls);
++        if (unknown) {
++            if (trace.freed) std.debug.print("FIO_CURRENT_BOOK_DROPPED_CALLBACK_PAYLOAD\n", .{});
++            try testing.expect(!trace.freed); // Witness before dereference.
++            try testing.expectEqualSlices(u32, &.{1}, request.prompt);
++            if (@hasField(Book, "fios_quarantine")) try testing.expect(b.fios_quarantine == request);
++            b.deinit();
++            try testing.expect(!trace.freed);
++            try testing.expect(b.add(.{}, 2, &.{ .prompt = abi.span(u32, &.{2}), .max_tokens = 1 }, sink, &verdict) == null);
++            try testing.expectEqual(@as(usize, 1), probe.calls);
++            try testing.expect(owners.shared().knownUncertain(owner_io));
++        } else {
++            try testing.expect(trace.freed);
++            b.deinit();
++            page.destroy(b);
++            page.destroy(probe);
++            page.destroy(trace);
++        }
++    }
++}
+diff --git a/src/fios/current_locked_cleanup_uncertainty.zig b/src/fios/current_locked_cleanup_uncertainty.zig
+new file mode 100644
+index 0000000..b46b494
+--- /dev/null
++++ b/src/fios/current_locked_cleanup_uncertainty.zig
+@@ -0,0 +1,21 @@
++//! Negative cleanup evidence under an existing engine/book mutex. The fixed
++//! backend getters and cached source state invoke no dynamic source callback.
++//! This supplies neither native completion nor admission authority.
++const std = @import("std");
++const owners = @import("request_ownership.zig");
++const backend = @import("current_backend_uncertainty.zig");
++
++pub fn known(io: std.Io, comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
++    const native_unknown = backend.known(sdk_enabled, llama_enabled);
++    const source = owners.shared();
++    source.mutex.lockUncancelable(io);
++    const started = source.initialized;
++    source.mutex.unlock(io);
++    if (native_unknown) {
++        if (started) source.fence(io);
++        return true;
++    }
++    // Legacy metadata-only callers may precede startup; absence is never
++    // positive authority and cannot hide the independent native flags.
++    return started and source.knownUncertain(io);
++}

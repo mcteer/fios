@@ -1,0 +1,28 @@
+#include <atomic>
+#include <algorithm>
+#include <vector>
+#include <cstdio>
+#include <cstdlib>
+using llama_pos=int;
+struct Row {int tok,pos,seq;};
+struct mlx_llama_ctx {void *batch=nullptr,*tgt=nullptr,*dft=nullptr;std::vector<int> out_idx{7},pos{10};};
+static std::atomic<bool> fios_llama_uncertain{false};
+static int status=1,checks=0,processes=0,catches=0;
+static int fios_llama_failed(mlx_llama_ctx*) {fios_llama_uncertain=true;return -1;}
+static void llama_batch_ext_clear(void*) {}
+static int llama_batch_ext_add_token(void*,int,int) {return 0;}
+static void llama_batch_ext_set_pos(void*,int,const int*) {}
+static void llama_batch_ext_set_output_logits(void*,int,bool) {}
+static constexpr int LLAMA_PROCESS_TYPE_DECODE=0;
+static int llama_process(void*,int,void*) {++processes;return 0;}
+static int llama_fios_synchronize_checked_v1(void*) {++checks;return status;}
+static int mtp_catch_up(mlx_llama_ctx*,const Row*,int) {++catches;return 0;}
+// FIOS_ACTUAL_DECODE_ROWS
+int main(int argc,char**argv) {
+ if(argc!=2)return 9;status=std::atoi(argv[1]);mlx_llama_ctx c;c.dft=&c;
+ Row row{3,10,0};int result=decode_rows(&c,&row,1,0);
+ if(status==1) {if(result||checks!=1||processes!=1||catches!=1||c.pos[0]!=11||c.out_idx[0]!=0||fios_llama_uncertain)return 3;}
+ else {if(result!=-1||checks!=1||processes!=1||catches||c.pos[0]!=10||c.out_idx[0]!=-1||!fios_llama_uncertain)return 3;
+ if(decode_rows(&c,&row,1,0)!=-1||processes!=1||checks!=1)return 3;}
+ puts("PASS: checked decode retains failure before progress and dependent work");
+}

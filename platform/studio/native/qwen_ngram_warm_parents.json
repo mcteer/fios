@@ -1,0 +1,6 @@
+{
+  "src/plugins/qwen4_exp/qwen4_exp.zig": "dc66c2b364ba27f7b16d06c7b2e837e605dfb466feced43f75ebdda6039c47e4",
+  "src/shared_all.zig": "03b9171c58d41166d4b26e99eacb56396dd9f6b9637b39a2609f7939aff20f18",
+  "src/fios/current_backend_uncertainty.zig": "0bfcb4afb60fc1a951d61428f65da2e5fad752224e9d8f778a5400be54072e65",
+  "src/host/http/server.zig": "a8423df2514389ee1f3744174b22a37620ad2be403428a0adf3cfc9fe955509c"
+}

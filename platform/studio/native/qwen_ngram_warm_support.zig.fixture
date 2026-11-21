@@ -1,0 +1,13 @@
+const std=@import("std");
+// ACTUAL_QWEN_WARM_LATCH_DECLARATION
+const marker=@import("../../sdk/util/qwen_ngram_warm_uncertainty.zig");
+const fixed=@import("../../fios/current_backend_uncertainty.zig");
+var enabled=true;
+fn warmEnabled()bool{return enabled;}
+const log=struct {fn info(comptime _:[]const u8,_:anytype)void{}};
+fn asGb(x:u64)f64{return @as(f64,@floatFromInt(x))/1e9;}
+const Warm=struct {live_warm_bytes:std.atomic.Value(u64)=.init(0),live_warm_total:std.atomic.Value(u64)=.init(0)};var live=Warm{};
+fn warmBytes()*Warm{return &live;}
+const NgramTable=struct {warm_thread:?std.Thread=null,has_region:bool=true,warm_stop:std.atomic.Value(bool)=.init(false),warm_bytes:std.atomic.Value(u64)=.init(0),observed:std.atomic.Value(bool)=.init(false),started:std.atomic.Value(bool)=.init(false),
+fn warmRegion(self:*@This(),i:usize)?struct{len:u64}{return if(self.has_region and i==0) .{.len=16} else null;}
+fn warmMain(self:*@This(),_:u64)void {self.observed.store(marker.known() and fixed.known(false,false),.release);self.started.store(true,.release);}

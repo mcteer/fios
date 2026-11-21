@@ -1,0 +1,469 @@
+"""Read-only combined artifact review. Never executes/enrolls candidate code."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import runpy
+import stat
+import time
+
+COMPOSE = runpy.run_path(str(Path(__file__).with_name('compose-platform-candidate.py')))
+API, RUNTIME = COMPOSE['API'], COMPOSE['RUNTIME']
+require = API['require']
+sha = lambda data: hashlib.sha256(data).hexdigest()
+
+
+def review(directory, expected):
+    require(isinstance(expected, str) and re.fullmatch('[0-9a-f]{64}', expected))
+    root = Path(directory)
+    require(root.is_absolute() and root.resolve() == root and str(root).startswith(('/private/tmp/', '/tmp/')))
+    chain = API['directory_chain'](root)
+    began = time.monotonic()
+    try:
+        info = os.fstat(chain[-1][0])
+        require(info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o700)
+        named = (root/'composition.json').lstat()
+        require(stat.S_ISREG(named.st_mode) and named.st_nlink == 1 and 0 < named.st_size <= 4 << 20)
+        payload, identity = API['read_source'](root/'composition.json', root)
+        require(sha(payload) == expected)
+        value = json.loads(payload, object_pairs_hook=RUNTIME['unique_object'])
+        require(set(value) == {'version','purpose','scope','platform_manifest_sha256','python_candidate_sha256',
+                'release_template_sha256','uv_lock_sha256','source_revision','source_inputs','files','bytes',
+                'candidate_programs_executed','package_complete','approved','immutable_tree_enrolled','installed',
+                'activation','native_authority','remaining'})
+        require(type(value['version']) is int and value['version'] == 1 and
+                value['purpose'] == 'platform_runtime_review_composition' and
+                value['scope'] == 'declared_component_bytes_not_installation_or_native_provenance')
+        require(all(value[key] is False for key in ('candidate_programs_executed','package_complete','approved',
+                'immutable_tree_enrolled','installed','activation','native_authority')))
+        require(value['remaining'] == ['operator_release_and_host_review','protected_installation',
+                'credential_configuration','native_contract_and_enrollment','installed_acceptance'])
+        for key in ('platform_manifest_sha256','python_candidate_sha256','release_template_sha256','uv_lock_sha256'):
+            require(isinstance(value[key], str) and re.fullmatch('[0-9a-f]{64}', value[key]))
+        sources = value['source_inputs']
+        require(isinstance(sources,dict) and set(sources) == {'scripts/compose-platform-candidate.py',
+                'scripts/check-platform-python-candidate.py','scripts/package-platform-python.py',
+                'scripts/lib/platform-release.mjs','platform/studio/deployment/release.json'} and
+                all(isinstance(digest,str) and re.fullmatch('[0-9a-f]{64}',digest) for digest in sources.values()))
+        # Provenance declarations are not paths to follow or approval evidence.
+        platform = COMPOSE['platform_review'](root/'platform', value['platform_manifest_sha256'], root/'release-template.json')
+        runtime = RUNTIME['review'](root/'python-runtime', value['python_candidate_sha256'])
+        raw, _ = API['read_source'](root/'python-runtime/candidate.json',root/'python-runtime')
+        candidate = json.loads(raw,object_pairs_hook=RUNTIME['unique_object'])
+        require(value['source_revision'] == platform['manifest']['source_revision'] and
+                value['release_template_sha256'] == platform['template_sha256'] == candidate['release_template_sha256'] and
+                value['uv_lock_sha256'] == platform['manifest']['python']['uv_lock_sha256'] == candidate['uv_lock_sha256'])
+        records = value['files']
+        expected_files = {'platform/'+item['path'] for item in platform['manifest']['artifacts']}
+        expected_files.update('python-runtime/'+name for name in candidate['files'])
+        expected_files.update(['platform/release.json','python-runtime/candidate.json','release-template.json'])
+        require(isinstance(records,dict) and set(records) == expected_files and len(records) <= COMPOSE['MAX_FILES'])
+        folders = {str(parent) for name in records for parent in Path(name).parents if str(parent) != '.'}
+        total, observed = 0, set()
+        for path in root.rglob('*'):
+            require(time.monotonic()-began <= 240)
+            name = str(path.relative_to(root)); info = path.lstat()
+            if stat.S_ISDIR(info.st_mode):
+                require(name in folders and info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o700)
+                continue
+            require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.getuid())
+            if name == 'composition.json':
+                require(stat.S_IMODE(info.st_mode) == 0o644)
+                continue
+            require(name in records)
+            record = records[name]
+            require(isinstance(record,dict) and set(record) == {'bytes','sha256','mode'} and
+                    type(record['bytes']) is int and 0 <= record['bytes'] <= API['MAX_FILE'] and
+                    type(record['mode']) is int and record['mode'] in (0o644,0o755) and
+                    isinstance(record['sha256'],str) and re.fullmatch('[0-9a-f]{64}',record['sha256']))
+            data, current = API['read_source'](path,root)
+            require(len(data) == record['bytes'] and sha(data) == record['sha256'] and
+                    stat.S_IMODE(current[2]) == record['mode'])
+            total += len(data); require(total <= COMPOSE['MAX_TOTAL']); observed.add(name)
+        require(observed == expected_files and type(value['bytes']) is int and total == value['bytes'])
+        require(API['read_source'](root/'composition.json',root) == (payload,identity))
+        API['verify_chain'](chain)
+        return {'composition_sha256':expected,'files':len(records),'bytes':total,
+                'candidate_programs_executed':False,'installed':False,'activation':False,'native_authority':False,
+                'review':'per_file_component_data_not_atomic_installed_custody'}
+    finally:
+        API['close_chain'](chain)
+
+
+def installation_plan(directory, expected, host):
+    measured = review(directory, expected)
+    require(host in ('fios-edge-a.lab','fios-edge-b.lab'))
+    root = Path(directory)
+    raw, _ = API['read_source'](root/'composition.json',root)
+    require(sha(raw) == expected)
+    value = json.loads(raw,object_pairs_hook=RUNTIME['unique_object'])
+    platform_files = sum(name.startswith('platform/') for name in value['files'])
+    runtime_files = sum(name.startswith('python-runtime/') for name in value['files'])
+    return {**measured,'version':1,'operation':'composed_platform_install_review','host':host,
+            'state':'blocked','changes_made':False,'privileged_commands':[],
+            'installation_layout':[
+                {'source_prefix':'platform/','destination':'/Library/Application Support/Fios/Studio','files':platform_files},
+                {'source_prefix':'python-runtime/','destination':'/Library/Application Support/Fios/Studio/python/runtime','files':runtime_files}],
+            'service_user':'mcteer','launchd_registration':'not_proposed',
+            'state_and_credentials':'separate_operator_review_not_in_bundle',
+            'blockers':['development_components_not_installable_release','operator_installation_not_approved',
+                        'protected_destination_and_credential_configuration_unimplemented',
+                        'native_contract_and_enrollment_unproven','installed_acceptance_pending'],
+            'preserves':['native_inference_uncertainty','platform_exports','unrelated_runtime_objects','fios_database','legacy_volume']}
+
+
+def first_install_proposal(directory, expected, host):
+    plan = installation_plan(directory, expected, host)
+    root = Path(directory)
+    raw, _ = API['read_source'](root/'composition.json', root)
+    require(sha(raw) == expected)
+    value = json.loads(raw, object_pairs_hook=RUNTIME['unique_object'])
+    prefix = '/Library/Application Support/Fios/Studio'
+    copies, destinations = [], set()
+    for name, record in sorted(value['files'].items()):
+        if name == 'release-template.json':
+            continue  # Review evidence, never an installed runtime input.
+        if name.startswith('platform/'):
+            relative = name[len('platform/'):]
+        else:
+            require(name.startswith('python-runtime/'))
+            relative = 'python/runtime/'+name[len('python-runtime/'):]
+        require(relative and all(part not in ('', '.', '..') for part in relative.split('/')))
+        destination = prefix+'/'+relative
+        require(destination not in destinations)
+        destinations.add(destination)
+        copies.append({'source':str(root/name),'destination':destination,'sha256':record['sha256'],
+                       'bytes':record['bytes'],'mode':record['mode'],
+                       'program':'/usr/bin/install',
+                       'argv':['-o','root','-g','wheel','-m',format(record['mode'],'04o'),str(root/name),destination]})
+    folders = {str(parent) for destination in destinations for parent in Path(destination).parents
+               if str(parent) == prefix or str(parent).startswith(prefix+'/')}
+    create = [{'program':'/bin/mkdir','argv':['-m','0755',folder]}
+              for folder in sorted(folders,key=lambda name:(len(Path(name).parts),name))]
+    tool_inputs = {name:sha(API['read_source'](COMPOSE['ROOT']/name,COMPOSE['ROOT'])[0])
+                   for name in ('scripts/check-platform-composition.py','scripts/install-platform.mjs')}
+    return {**plan,'operation':'first_install_command_proposal','commands_authorized':False,
+            'requires_operator_execution':True,'candidate_programs_executed':False,
+            'proposal_tool_inputs':tool_inputs,
+            'proposal_scope':'inactive_new_prefix_only_not_upgrade_or_activation',
+            'proposed_files':len(copies),'proposed_directories':len(create),
+            'proposed_bytes':sum(item['bytes'] for item in copies),
+            'review_only_excluded':['release-template.json'],
+            'mandatory_preconditions':['separate_operator_installation_approval',
+                'complete_installable_release_review_not_development_receipt',
+                'execute_on_exact_reviewed_studio_not_core',
+                'root_wheel_operator_and_protected_no_symlink_parent',
+                'destination_prefix_absent_no_overwrite',
+                'no_registered_platform_jobs_or_running_platform_writers',
+                'serialized_operator_transaction_and_source_hash_recheck'],
+            'proposed_directory_commands':create,'proposed_file_commands':copies,
+            'source_and_destination_hashes':'verify_all_before_copy_and_all_protected_copies_afterward',
+            'on_failure':'stop_retain_partial_prefix_for_diagnosis_do_not_activate_or_delete',
+            'launchd_registration':'not_proposed','enrollment_written':False,
+            'credentials_written':False,'state_opened':False}
+
+
+def uninstall_proposal(directory, expected, host):
+    plan = first_install_proposal(directory, expected, host)
+    files = plan.pop('proposed_file_commands')
+    directories = plan.pop('proposed_directory_commands')
+    # Only the exact reviewed managed artifact names. No state, enrollment,
+    # credentials, launchd registration, runtime objects or unrelated paths.
+    removals = [{'program':'/bin/rm','argv':[item['destination']],
+                 'destination':item['destination'],'required_sha256':item['sha256'],
+                 'required_bytes':item['bytes'],'required_mode':item['mode']}
+                for item in files]
+    empty_directories = [{'program':'/bin/rmdir','argv':[item['argv'][-1]]}
+                         for item in reversed(directories)]
+    return {**plan,'operation':'uninstall_command_proposal',
+            'proposal_scope':'known_artifacts_only_retains_state_enrollment_and_unknown_files',
+            'mandatory_preconditions':['separate_operator_uninstall_approval',
+                'execute_on_exact_reviewed_studio_not_core',
+                'root_wheel_operator_and_protected_no_symlink_prefix',
+                'verified_stopped_state_configuration_and_program_backup',
+                'platform_jobs_unregistered_and_all_writers_stopped',
+                'reviewed_launchd_registration_removed_or_persistently_disabled',
+                'owned_native_child_reconciled_no_unknown_native_disruption',
+                'serialized_operator_transaction',
+                'reverify_each_installed_artifact_owner_mode_size_and_hash_before_removal'],
+            'proposed_file_removals':removals,'proposed_empty_directory_removals':empty_directories,
+            'enrollment_retained':True,'credentials_retained':True,'state_and_exports_retained':True,
+            'unknown_files':'retain_never_recurse_or_expand_removal_scope',
+            'source_and_destination_hashes':'installed_file_must_match_exact_reviewed_artifact_before_removal',
+            'on_failure':'stop_retain_remaining_data_and_uncertainty_no_recursive_cleanup'}
+
+
+def python_enrollment_proposal(directory, expected, host, uid, state, review_sha256):
+    plan = installation_plan(directory, expected, host)
+    require(isinstance(uid,str) and re.fullmatch('[1-9][0-9]{0,9}',uid) and int(uid)<=4294967295)
+    require(isinstance(state,str) and state.startswith('/Users/mcteer/') and str(Path(state))==state and
+            len(state.encode())<1024 and '\0' not in state and all(part not in ('.','..') for part in Path(state).parts))
+    require(isinstance(review_sha256,str) and re.fullmatch('[0-9a-f]{64}',review_sha256))
+    root=Path(directory)
+    raw,_=API['read_source'](root/'composition.json',root);require(sha(raw)==expected)
+    composition=json.loads(raw,object_pairs_hook=RUNTIME['unique_object'])
+    raw,_=API['read_source'](root/'platform/release.json',root)
+    require(sha(raw)==composition['platform_manifest_sha256'])
+    platform=json.loads(raw,object_pairs_hook=RUNTIME['unique_object'])
+    raw,_=API['read_source'](root/'python-runtime/candidate.json',root)
+    require(sha(raw)==composition['python_candidate_sha256'])
+    runtime=json.loads(raw,object_pairs_hook=RUNTIME['unique_object'])
+    manager=next(item for item in platform['artifacts'] if item['path']=='bin/studio-manager')
+    interpreter=runtime['files'].get('bin/python')
+    require(isinstance(interpreter,dict) and interpreter['mode']==0o755)
+    policy={'version':1,'purpose':'reviewed_platform_python_worker','uid':int(uid),'host':host,
+            'state_path':state,'review_sha256':review_sha256,'manager_sha256':manager['sha256'],
+            'manifest_sha256':composition['python_candidate_sha256'],'python_sha256':interpreter['sha256'],
+            'uv_lock_sha256':runtime['uv_lock_sha256'],'producer_sha256':runtime['producer_sha256'],
+            'release_template_sha256':runtime['release_template_sha256'],
+            'policy_sha256':platform['python']['policy_sha256'],'python_version':'3.11.17','package_version':'0.1.0'}
+    require(all(isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value)
+                for key,value in policy.items() if key.endswith('_sha256')))
+    payload=(json.dumps(policy,indent=2)+'\n').encode();require(len(payload)<=4096)
+    return {**plan,'operation':'python_enrollment_configuration_proposal','commands_authorized':False,
+            'approved':False,'policy_written':False,'credentials_written':False,'state_opened':False,
+            'review_identity':'supplied_correlation_not_approval_or_provenance',
+            'destination':'/Library/Application Support/Fios/Studio/python-enrollment.json',
+            'policy_candidate':policy,'policy_candidate_sha256':sha(payload),
+            'policy_candidate_json':payload.decode('ascii'),
+            'policy_encoding':'UTF8_JSON_indent2_trailing_newline',
+            'configuration_scope':'declared_component_bindings_not_installed_policy_or_native_permission'}
+
+
+def stage_python_enrollment(directory, expected, host, uid, state, review_sha256, output):
+    proposal=python_enrollment_proposal(directory,expected,host,uid,state,review_sha256)
+    output=Path(output)
+    require(os.getuid()!=0 and output.is_absolute() and str(output).startswith(('/private/tmp/','/tmp/')) and
+            output.parent.resolve()==output.parent and not output.is_relative_to(Path(directory)) and
+            not Path(directory).is_relative_to(output))
+    payload=proposal['policy_candidate_json'].encode('ascii')
+    review_bytes=(json.dumps(proposal,indent=2)+'\n').encode()
+    fd,chain=API['open_output'](output)
+    try:
+        API['write_data'](fd,'python-enrollment.json',payload,False)
+        API['write_data'](fd,'review.json',review_bytes,False)
+        require(API['read_source'](output/'python-enrollment.json',output)[0]==payload)
+        require(API['read_source'](output/'review.json',output)[0]==review_bytes)
+        review(directory,expected)  # Recheck source component bytes before success.
+        API['verify_chain'](chain)
+        receipt={'version':1,'operation':'private_python_enrollment_stage','composition_sha256':expected,
+                 'policy_sha256':sha(payload),'review_sha256':sha(review_bytes),'private_files_written':3,
+                 'source_rechecked':True,'approved':False,'installed_policy_written':False,
+                 'installed':False,'activation':False,'native_authority':False,'state_opened':False}
+        API['write_data'](fd,'stage-receipt.json',(json.dumps(receipt,indent=2)+'\n').encode(),False)
+        require(set(os.listdir(fd))=={'python-enrollment.json','review.json','stage-receipt.json'})
+        API['verify_chain'](chain)
+        return receipt
+    finally:
+        API['close_chain'](chain)  # Retain failed/partial data; never path cleanup.
+
+
+def python_policy_install_proposal(directory, expected, host, bundle, bundle_sha256):
+    require(isinstance(bundle_sha256,str) and re.fullmatch('[0-9a-f]{64}',bundle_sha256))
+    root=Path(bundle)
+    require(root.is_absolute() and root.resolve()==root and str(root).startswith(('/private/tmp/','/tmp/')))
+    chain=API['directory_chain'](root)
+    try:
+        info=os.fstat(chain[-1][0])
+        require(info.st_uid==os.getuid() and stat.S_IMODE(info.st_mode)==0o700)
+        require(set(os.listdir(chain[-1][0]))=={'python-enrollment.json','review.json','stage-receipt.json'})
+        records={}
+        for name in ('python-enrollment.json','review.json','stage-receipt.json'):
+            info=(root/name).lstat()
+            require(stat.S_ISREG(info.st_mode) and info.st_nlink==1 and info.st_uid==os.getuid() and
+                    stat.S_IMODE(info.st_mode)==0o644 and 0<info.st_size<=65536)
+            records[name]=API['read_source'](root/name,root)
+        receipt=json.loads(records['stage-receipt.json'][0],object_pairs_hook=RUNTIME['unique_object'])
+        require(sha(records['stage-receipt.json'][0])==bundle_sha256)
+        previous=json.loads(records['review.json'][0],object_pairs_hook=RUNTIME['unique_object'])
+        policy=previous['policy_candidate']
+        require(type(policy['uid']) is int and policy['host']==host)
+        current=python_enrollment_proposal(directory,expected,host,str(policy['uid']),policy['state_path'],policy['review_sha256'])
+        require(json.dumps(previous,sort_keys=True)==json.dumps(current,sort_keys=True) and
+                records['python-enrollment.json'][0]==current['policy_candidate_json'].encode('ascii'))
+        expected_receipt={'version':1,'operation':'private_python_enrollment_stage','composition_sha256':expected,
+                'policy_sha256':current['policy_candidate_sha256'],'review_sha256':sha(records['review.json'][0]),
+                'private_files_written':3,'source_rechecked':True,'approved':False,'installed_policy_written':False,
+                'installed':False,'activation':False,'native_authority':False,'state_opened':False}
+        require(json.dumps(receipt,sort_keys=True)==json.dumps(expected_receipt,sort_keys=True))
+        for name,record in records.items():
+            require(API['read_source'](root/name,root)==record)
+        API['verify_chain'](chain)
+        destination=current['destination'];source=str(root/'python-enrollment.json')
+        return {**current,'operation':'python_policy_install_command_proposal','requires_operator_execution':True,
+                'stage_receipt_sha256':bundle_sha256,'staged_policy_rechecked':True,
+                'mandatory_preconditions':['separate_operator_runtime_enrollment_approval',
+                    'reviewed_merged_release_and_exact_studio_account_state_context',
+                    'root_protected_manager_and_complete_runtime_match_reviewed_bytes',
+                    'stopped_platform_writers_and_verified_state_configuration_backup',
+                    'policy_destination_absent_no_overwrite','serialized_operator_transaction',
+                    'reverify_source_before_copy_and_protected_destination_afterward'],
+                'proposed_file_commands':[{'program':'/usr/bin/install',
+                    'argv':['-o','root','-g','wheel','-m','0644',source,destination],
+                    'source':source,'destination':destination,'sha256':current['policy_candidate_sha256'],
+                    'bytes':len(records['python-enrollment.json'][0]),'mode':0o644}],
+                'launchd_registration':'not_proposed','on_failure':'stop_retain_data_no_activation_or_cleanup'}
+    finally:
+        API['close_chain'](chain)
+
+
+def python_policy_removal_proposal(directory, expected, host, bundle, bundle_sha256):
+    plan=python_policy_install_proposal(directory,expected,host,bundle,bundle_sha256)
+    item=plan.pop('proposed_file_commands')[0]
+    return {**plan,'operation':'python_policy_removal_command_proposal','policy_removed':False,
+            'state_and_exports_retained':True,'credentials_retained':True,
+            'mandatory_preconditions':['separate_operator_runtime_enrollment_removal_approval',
+                'execute_on_exact_reviewed_studio_account_state_context',
+                'verified_stopped_state_configuration_and_program_backup',
+                'platform_writers_and_private_workers_stopped',
+                'preserve_independent_native_inference_uncertainty',
+                'serialized_operator_transaction',
+                'installed_policy_is_regular_single_link_root_owned_mode0644_no_acl',
+                'reverify_exact_installed_policy_bytes_before_removal'],
+            'proposed_file_removals':[{'program':'/bin/rm','argv':[item['destination']],
+                'destination':item['destination'],'required_sha256':item['sha256'],
+                'required_bytes':item['bytes'],'required_mode':0o644,'required_uid':0}],
+            'on_failure':'stop_retain_configuration_backups_and_uncertainty_no_recursive_cleanup'}
+
+
+def configuration_removal_proposal(directory, expected, host, configuration, configuration_sha256):
+    plan=installation_plan(directory,expected,host)
+    require(isinstance(configuration_sha256,str) and re.fullmatch('[0-9a-f]{64}',configuration_sha256))
+    require(isinstance(configuration,(str,Path)))
+    root=Path(configuration)
+    require(root.is_absolute() and root.resolve()==root and str(root).startswith(('/private/tmp/','/tmp/')))
+    names=['runtime-enrollment.json','session-enrollment.json','python-enrollment.json',
+           'resource-enrollment.json','native-serving-launch.json','sandbox-enrollment.json']
+    chain=API['directory_chain'](root)
+    try:
+        info=os.fstat(chain[-1][0]);require(info.st_uid==os.getuid() and stat.S_IMODE(info.st_mode)==0o700)
+        began=time.monotonic();records={}
+        def read(name):
+            require(time.monotonic()-began<=2)
+            info=(root/name).lstat()
+            require(stat.S_ISREG(info.st_mode) and info.st_uid==os.getuid() and info.st_nlink==1 and
+                    stat.S_IMODE(info.st_mode)==0o600 and 0<=info.st_size<=65536)
+            result=API['read_source'](root/name,root)
+            require(result[1]==API['identity'](info) and len(result[0])==info.st_size)
+            return result
+        records['manifest.json']=read('manifest.json')
+        require(sha(records['manifest.json'][0])==configuration_sha256)
+        manifest=json.loads(records['manifest.json'][0],object_pairs_hook=RUNTIME['unique_object'])
+        require(isinstance(manifest,dict) and set(manifest)=={'version','scope','files'} and type(manifest['version']) is int and manifest['version'] in (1,2) and
+                manifest['scope']=='opaque_configuration_data_only' and isinstance(manifest['files'],list) and len(manifest['files'])==6)
+        removals=[]
+        for name,row in zip(names,manifest['files']):
+            require(isinstance(row,dict) and row.get('name')==name)
+            if set(row)=={'name'}:
+                continue
+            require(set(row)==({'name','bytes','sha256','originalUID','originalMode'} | ({'originalGID'} if manifest['version']==2 else set())) and
+                    type(row['bytes']) is int and 0<=row['bytes']<=65536 and
+                    isinstance(row['sha256'],str) and re.fullmatch('[0-9a-f]{64}',row['sha256']) and
+                    type(row['originalUID']) is int and row['originalUID'] in (0,os.getuid()) and
+                    type(row['originalMode']) is int and 0<=row['originalMode']<=0o7777 and not row['originalMode']&0o7022)
+            if manifest['version']==2:require(type(row['originalGID']) is int and 0<=row['originalGID']<=4294967295)
+            records[name]=read(name)
+            require(len(records[name][0])==row['bytes'] and sha(records[name][0])==row['sha256'])
+            destination='/Library/Application Support/Fios/Studio/'+name
+            removals.append({'program':'/bin/rm','argv':[destination],'destination':destination,
+                'required_sha256':row['sha256'],'required_bytes':row['bytes'],'required_uid':0,
+                'required_mode':row['originalMode'],'snapshot_original_uid':row['originalUID'],'snapshot_original_gid':row.get('originalGID')})
+        require(set(os.listdir(chain[-1][0]))==set(records))
+        for name,record in records.items():require(read(name)==record)
+        API['verify_chain'](chain)
+        return {**plan,'operation':'configuration_removal_command_proposal','commands_authorized':False,
+                'requires_operator_execution':True,'configuration_removed':False,'credentials_written':False,
+                'state_opened':False,'state_and_exports_retained':True,'credentials_retained':True,
+                'native_inference_uncertainty_retained':True,'configuration_manifest_sha256':configuration_sha256,'configuration_snapshot_version':manifest['version'],
+                'configuration_snapshot_rechecked':True,'configuration_documents_interpreted':False,
+                'stopped_state_backup_verified':False,'proposed_file_removals':removals,
+                'mandatory_preconditions':['separate_operator_enrollment_removal_approval',
+                    'exact_reviewed_studio_account_state_and_installed_context',
+                    'registrations_removed_or_persistently_disabled_and_all_platform_writers_stopped',
+                    'owned_native_children_absent_or_in_separately_reviewed_retained_custody',
+                    'independently_verified_complete_stopped_state_exports_configuration_backup',
+                    'installed_files_regular_single_link_root_owned_no_acl_exact_size_mode_and_hash',
+                    'serialized_operator_transaction_and_recheck_each_file_before_removal',
+                    'preserve_independent_native_inference_uncertainty'],
+                'on_failure':'stop_retain_backups_configuration_and_uncertainty_no_recursive_cleanup'}
+    finally:
+        API['close_chain'](chain)
+
+
+def configuration_restore_proposal(directory, expected, host, configuration, configuration_sha256):
+    plan=configuration_removal_proposal(directory,expected,host,configuration,configuration_sha256)
+    removals=plan.pop('proposed_file_removals')
+    # Protected enrollment was root-owned. Do not silently promote a user-owned
+    # snapshot into a protected policy or change the original owner on rollback.
+    require(all(item['snapshot_original_uid']==0 and item['snapshot_original_gid'] in (None,0) for item in removals))
+    group_recorded=plan['configuration_snapshot_version']==2
+    commands=[]
+    for item in removals:
+        source=str(Path(configuration)/Path(item['destination']).name)
+        commands.append({'program':'/usr/bin/install',
+            'argv':['-o','root','-g','wheel','-m',format(item['required_mode'],'04o'),source,item['destination']],
+            'source':source,'destination':item['destination'],
+            'sha256':item['required_sha256'],'bytes':item['required_bytes'],
+            'uid':0,'mode':item['required_mode'],'destination_must_be_absent':True})
+    return {**plan,'operation':'configuration_restore_command_proposal','configuration_restored':False,
+            'proposed_file_restorations':commands,
+            'absent_snapshot_entries':'must_remain_absent_no_removal_proposed',
+            'snapshot_host_binding_verified':False,'original_group_recorded':group_recorded,
+            'proposed_group':'wheel_from_recorded_gid' if group_recorded else 'wheel_requires_independent_previous_enrollment_review',
+            'mandatory_preconditions':['separate_operator_configuration_rollback_approval',
+                'execute_on_original_studio_account_state_and_previous_release_context',
+                'independently_verify_snapshot_origin_host_and_previous_configuration_group_wheel',
+                'registrations_removed_or_persistently_disabled_and_all_platform_writers_stopped',
+                'owned_native_children_absent_or_in_separately_reviewed_retained_custody',
+                'independently_verified_complete_stopped_state_exports_configuration_and_credential_backup',
+                'preserve_failed_release_state_configuration_and_credentials_for_diagnosis',
+                'all_six_fixed_destination_files_absent_no_overwrite',
+                'protected_root_directory_root_owned_nonwritable_no_symlink_or_acl',
+                'serialized_operator_transaction_reverify_snapshot_bytes_before_each_copy',
+                'verify_exact_destination_uid_mode_size_hash_after_each_copy',
+                'no_registration_activation_until_complete_previous_release_compatibility_review',
+                'preserve_independent_native_inference_uncertainty'],
+            'on_failure':'stop_retain_partial_restore_and_backups_no_activation_or_automatic_cleanup'}
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--candidate',required=True)
+    parser.add_argument('--sha256',required=True)
+    parser.add_argument('--host')
+    modes=parser.add_mutually_exclusive_group()
+    modes.add_argument('--first-install-proposal',action='store_true')
+    modes.add_argument('--uninstall-proposal',action='store_true')
+    modes.add_argument('--python-enrollment-proposal',action='store_true')
+    modes.add_argument('--stage-python-enrollment',action='store_true')
+    modes.add_argument('--python-policy-install-proposal',action='store_true')
+    modes.add_argument('--python-policy-removal-proposal',action='store_true')
+    modes.add_argument('--configuration-removal-proposal',action='store_true')
+    modes.add_argument('--configuration-restore-proposal',action='store_true')
+    parser.add_argument('--uid')
+    parser.add_argument('--state')
+    parser.add_argument('--review-sha256')
+    parser.add_argument('--to')
+    parser.add_argument('--bundle')
+    parser.add_argument('--bundle-sha256')
+    parser.add_argument('--configuration')
+    parser.add_argument('--configuration-sha256')
+    args = parser.parse_args()
+    require(not (args.first_install_proposal or args.uninstall_proposal or args.python_enrollment_proposal or args.stage_python_enrollment or args.python_policy_install_proposal or args.python_policy_removal_proposal or args.configuration_removal_proposal or args.configuration_restore_proposal) or args.host is not None)
+    require((args.python_enrollment_proposal or args.stage_python_enrollment) or all(value is None for value in (args.uid,args.state,args.review_sha256)))
+    require(args.stage_python_enrollment or args.to is None)
+    require(not args.stage_python_enrollment or args.to is not None)
+    require((args.python_policy_install_proposal or args.python_policy_removal_proposal) or (args.bundle is None and args.bundle_sha256 is None))
+    require((args.configuration_removal_proposal or args.configuration_restore_proposal) or (args.configuration is None and args.configuration_sha256 is None))
+    result = (configuration_restore_proposal(args.candidate,args.sha256,args.host,args.configuration,args.configuration_sha256) if args.configuration_restore_proposal else
+              configuration_removal_proposal(args.candidate,args.sha256,args.host,args.configuration,args.configuration_sha256) if args.configuration_removal_proposal else
+              python_policy_removal_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_removal_proposal else
+              python_policy_install_proposal(args.candidate,args.sha256,args.host,args.bundle,args.bundle_sha256) if args.python_policy_install_proposal else
+              stage_python_enrollment(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256,args.to) if args.stage_python_enrollment else
+              python_enrollment_proposal(args.candidate,args.sha256,args.host,args.uid,args.state,args.review_sha256) if args.python_enrollment_proposal else
+              uninstall_proposal(args.candidate,args.sha256,args.host) if args.uninstall_proposal else
+              first_install_proposal(args.candidate,args.sha256,args.host) if args.first_install_proposal else
+              installation_plan(args.candidate,args.sha256,args.host) if args.host else review(args.candidate,args.sha256))
+    print(json.dumps(result))

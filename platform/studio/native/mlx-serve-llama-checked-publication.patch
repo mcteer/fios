@@ -1,0 +1,16 @@
+--- a/lib/llama_shim/llama_shim.cpp
++++ b/lib/llama_shim/llama_shim.cpp
+@@ -388,6 +388,13 @@
+             const bool attached = attach_mtp(c, cp, p->mtp_drafts, err, errlen);
+             if (!attached && fios_llama_uncertain.load(std::memory_order_acquire)) return NULL;
+         }
++#ifdef LLAMA_FIOS_CHECKED_SYNC_V1
++        if (llama_fios_synchronize_checked_v1(c->tgt) != 1 ||
++            (c->dft && llama_fios_synchronize_checked_v1(c->dft) != 1)) {
++            fios_llama_mark_uncertain(e);
++            copy_err(err, errlen, "llama context synchronization uncertain"); return NULL;
++        }
++#endif
+         return c;
+     } catch (...) {
+         fios_llama_mark_uncertain(e);

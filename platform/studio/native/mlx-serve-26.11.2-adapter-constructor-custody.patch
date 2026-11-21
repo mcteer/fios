@@ -1,0 +1,399 @@
+diff --git a/src/engines/ds4/engine.zig b/src/engines/ds4/engine.zig
+index 2b0f766..cbbd5bd 100644
+--- a/src/engines/ds4/engine.zig
++++ b/src/engines/ds4/engine.zig
+@@ -124,28 +124,33 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+         }
+ 
+         fn openOrError(o: *const abi.Open, info: *abi.Info) !*State {
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             const path = abi.items(u8, o.model_dir);
+             const flags = parseFlags(abi.items(u8, o.settings_json)) catch return error.InvalidSettings;
+             const engine = try load.open(B, io, gpa, path, flags);
+-            errdefer engine.close();
++            errdefer if (!sourceCleanupUnknown()) engine.close();
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             var ctx = askedContext(o);
+             const session = engine.createSession(@intCast(ctx)) catch |err| retry: {
+                 // Only the trained window an unset context asked for falls back; an explicit one fails by name.
++                if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+                 const default_ctx = B.clampSessionCtx(0);
+                 if (o.context != 0 or ctx <= default_ctx) return err;
+                 log.warn("[ds4] the GGUF's trained {d}-token window was refused ({s}); opening ds4's default {d}\n", .{ ctx, @errorName(err), default_ctx });
+                 ctx = default_ctx;
++                if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+                 break :retry try engine.createSession(@intCast(ctx));
+             };
+-            errdefer session.free();
++            errdefer if (!sourceCleanupUnknown()) session.free();
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             const vocab: usize = engine.vocabSize();
+             var eos: std.ArrayList(u32) = .empty;
+-            errdefer eos.deinit(gpa);
++            errdefer if (!sourceCleanupUnknown()) eos.deinit(gpa);
+             for (0..vocab) |t| if (engine.isStop(@intCast(t))) try eos.append(gpa, @intCast(t));
+             var tokens = try TokenTable.init(gpa, vocab);
+-            errdefer tokens.deinit(gpa);
++            errdefer if (!sourceCleanupUnknown()) tokens.deinit(gpa);
+             const st = try gpa.create(State);
+-            errdefer gpa.destroy(st);
++            errdefer if (!sourceCleanupUnknown()) gpa.destroy(st);
+             st.* = .{
+                 .book = .{ .gpa = gpa, .max_waiting = @max(o.max_concurrent, 1) },
+                 .engine = engine,
+@@ -165,9 +170,10 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+                 .tokens = tokens,
+                 .file_bytes = fileBytes(path),
+             };
+-            errdefer gpa.free(st.eos);
++            errdefer if (!sourceCleanupUnknown()) gpa.free(st.eos);
+             st.thread = try std.Thread.spawn(.{}, work, .{st});
+             const startup = std.fmt.bufPrint(&st.startup_buf, "ds4: {d}-token session, {d} draft tokens per round", .{ ctx, engine.mtpDraftTokens() }) catch "";
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             info.* = .{
+                 .name = abi.span(u8, "ds4"),
+                 .version = abi.span(u8, build_options.ds4_commit),
+@@ -370,7 +376,17 @@ test {
+ 
+ /// A ds4 bridge with no model: its logits always favour id 50 (2), then `100 + n % 800` after n tokens in the
+ /// session (1), so a shaped row changes what comes out; a speculative round commits three tokens.
+-const FakeBridge = struct {
++const FakeConstructorObserver = struct {
++    pub fn opened() void {}
++    pub fn closed() void {}
++    pub fn childFreed() void {}
++};
++const FakeBridge = FakeBridgeFor(testing.allocator);
++fn FakeBridgeFor(comptime backing_allocator: std.mem.Allocator) type {
++    return FakeBridgeWithObserverFor(backing_allocator, FakeConstructorObserver);
++}
++fn FakeBridgeWithObserverFor(comptime backing_allocator: std.mem.Allocator, comptime Observer: type) type {
++    return struct {
+     pub const vocab = 1024;
+     /// The largest session the fake admits: a bigger one is refused, as ds4's memory guard refuses one that does not fit.
+     pub const session_cap: u32 = 1 << 20;
+@@ -391,10 +407,12 @@ const FakeBridge = struct {
+         pub fn open(a: std.mem.Allocator, _: []const u8, opts: anytype) !*Ds4Engine {
+             const e = try a.create(Ds4Engine);
+             e.* = .{ .embedded_mtp = opts.embedded_mtp, .drafts = if (opts.prefill_chunk == 1) 0 else 4 };
++            Observer.opened();
+             return e;
+         }
+         pub fn close(e: *Ds4Engine) void {
+-            testing.allocator.destroy(e);
++            Observer.closed();
++            backing_allocator.destroy(e);
+         }
+         pub fn mtpDraftTokens(e: *Ds4Engine) c_int {
+             return e.drafts;
+@@ -429,7 +447,7 @@ const FakeBridge = struct {
+         }
+         pub fn createSession(_: *Ds4Engine, ctx: i32) !*Ds4Session {
+             if (ctx > session_cap) return error.SessionCreateFailed;
+-            const s = try testing.allocator.create(Ds4Session);
++            const s = try backing_allocator.create(Ds4Session);
+             s.* = .{};
+             return s;
+         }
+@@ -444,8 +462,9 @@ const FakeBridge = struct {
+             s.row[100 + s.toks.items.len % 800] = 1;
+         }
+         pub fn free(s: *Ds4Session) void {
+-            s.toks.deinit(testing.allocator);
+-            testing.allocator.destroy(s);
++            Observer.childFreed();
++            s.toks.deinit(backing_allocator);
++            backing_allocator.destroy(s);
+         }
+         pub fn invalidate(s: *Ds4Session) void {
+             s.toks.clearRetainingCapacity();
+@@ -457,11 +476,11 @@ const FakeBridge = struct {
+         }
+         pub fn sync(s: *Ds4Session, p: []const i32) !void {
+             s.toks.clearRetainingCapacity();
+-            try s.toks.appendSlice(testing.allocator, p);
++            try s.toks.appendSlice(backing_allocator, p);
+             s.refresh();
+         }
+         pub fn eval(s: *Ds4Session, t: i32) !void {
+-            try s.toks.append(testing.allocator, t);
++            try s.toks.append(backing_allocator, t);
+             s.refresh();
+         }
+         pub fn argmax(s: *Ds4Session) i32 {
+@@ -492,6 +511,7 @@ const FakeBridge = struct {
+         }
+     };
+ };
++}
+ 
+ const Fake = Adapter(FakeBridge, testing.allocator);
+ 
+@@ -829,3 +849,52 @@ test "fios current ds4 adapter worker restores original request origins" {
+     try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
+     try testing.expect(owners.current().* == null and owners.current_group().* == null);
+ }
++
++// Existing model-free bridge with metadata callbacks; no native backend/model.
++const FiosConstructorProbe = struct {
++    var opens: usize = 0;
++    var closes: usize = 0;
++    var child_frees: usize = 0;
++    pub fn opened() void {
++        opens += 1;
++        @import("../../fios/request_ownership.zig").shared().fence(testing.io);
++    }
++    pub fn closed() void { closes += 1; }
++    pub fn childFreed() void { child_frees += 1; }
++};
++fn fiosConstructorPublication(preexisting: bool) !void {
++    const owners = @import("../../fios/request_ownership.zig");
++    try owners.shared().initialize(testing.io, @splat(253));
++    if (preexisting) owners.shared().fence(testing.io);
++    var tmp = testing.tmpDir(.{});
++    defer tmp.cleanup();
++    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
++    const path = try ds4Gguf(&tmp, &path_buf);
++    const host: abi.Host = .{ .ctx = undefined, .log = struct {
++        fn f(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
++    }.f, .wake = struct { fn f(_: *anyopaque) callconv(.c) void {} }.f };
++    const open: abi.Open = .{ .model_dir = abi.span(u8, path), .model_type = .{}, .config_json = .{},
++        .context = 0, .max_concurrent = 1, .memory_budget = 0, .settings_json = .{}, .options_json = .{}, .host = &host };
++    var info: abi.Info = undefined;
++    var verdict: abi.Verdict = .{};
++    const probe_table = Adapter(FakeBridgeWithObserverFor(std.heap.smp_allocator, FiosConstructorProbe), std.heap.smp_allocator).table;
++    const engine = probe_table.open(&open, &info, &verdict);
++    if (engine != null) std.debug.print("FIO_CURRENT_ds4_CONSTRUCTOR_PUBLISHED_UNCERTAINTY\n", .{});
++    try testing.expect(engine == null);
++    try testing.expectEqual(abi.Verdict.Code.failed, verdict.code);
++    try testing.expectEqualStrings("NativeCleanupUncertain", abi.items(u8, verdict.why));
++    try testing.expectEqual(@as(usize, if (preexisting) 0 else 1), FiosConstructorProbe.opens);
++    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.closes);
++    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.child_frees);
++    try testing.expect(owners.shared().knownUncertain(testing.io));
++    try testing.expect(probe_table.open(&open, &info, &verdict) == null);
++    try testing.expectEqual(@as(usize, if (preexisting) 0 else 1), FiosConstructorProbe.opens);
++    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.closes);
++    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.child_frees);
++}
++test "fios current ds4 constructor refuses known uncertainty before effects" {
++    try fiosConstructorPublication(true);
++}
++test "fios current ds4 constructor retains uncertainty without publication" {
++    try fiosConstructorPublication(false);
++}
+diff --git a/src/engines/ds4/load.zig b/src/engines/ds4/load.zig
+index 80b55d7..7f80eda 100644
+--- a/src/engines/ds4/load.zig
++++ b/src/engines/ds4/load.zig
+@@ -18,6 +18,7 @@ pub const Flags = struct {
+ /// Opens the GGUF at `path` on `bridge` (`bridge.zig`, or a test double). ds4 refuses `--mtp` together with
+ /// `--ssd-streaming`, so the support GGUF is only sought when streaming is off.
+ pub fn open(comptime bridge: type, io: std.Io, gpa: std.mem.Allocator, path: []const u8, flags: Flags) !*bridge.Ds4Engine {
++    if (sourceCleanupUnknown(io)) return error.NativeCleanupUncertain;
+     log.info("[ds4] opening engine: {s}\n", .{path});
+     const want = flags.mtp and !flags.ssd_streaming;
+     const spec: engine_pick.Spec = if (want) bridge.ggufSpec(io, gpa, path) else .{};
+@@ -25,6 +26,7 @@ pub fn open(comptime bridge: type, io: std.Io, gpa: std.mem.Allocator, path: []c
+     defer if (found) |p| gpa.free(p);
+     if (found) |p| if (spec.support_gguf) log.info("[ds4] MTP draft head: {s}\n", .{p}) else log.info("[ds4] this model takes no support GGUF in ds4, skipping {s} (--mlx-gguf drafts with it)\n", .{p});
+     const mtp_path = if (spec.support_gguf) found else null;
++    if (sourceCleanupUnknown(io)) return error.NativeCleanupUncertain;
+     const engine = try bridge.Ds4Engine.open(gpa, path, .{
+         .warm_weights = true,
+         .ssd_streaming = flags.ssd_streaming,
+@@ -35,11 +37,18 @@ pub fn open(comptime bridge: type, io: std.Io, gpa: std.mem.Allocator, path: []c
+         .dspark = flags.dspark,
+         .embedded_mtp = spec.embedded_mtp,
+     });
++    if (sourceCleanupUnknown(io)) return error.NativeCleanupUncertain;
+     // `draft_tokens` is the spec-readiness signal for both support kinds (MTP count, or the DSpark block size).
+     log.info("[ds4] engine ready (EOS={d}, has_mtp={}, draft_tokens={d})\n", .{ engine.eosToken(), engine.hasMtp(), engine.mtpDraftTokens() });
++    if (sourceCleanupUnknown(io)) return error.NativeCleanupUncertain;
+     return engine;
+ }
+ 
++fn sourceCleanupUnknown(io: std.Io) bool {
++    const options = @import("build_options");
++    return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++}
++
+ test "open: a support GGUF beside the model reaches ds4 only for an arch that takes one" {
+     const io = std.testing.io;
+     var tmp = std.testing.tmpDir(.{});
+diff --git a/src/engines/llama/engine.zig b/src/engines/llama/engine.zig
+index 2c4d6d4..cfe755f 100644
+--- a/src/engines/llama/engine.zig
++++ b/src/engines/llama/engine.zig
+@@ -170,20 +170,22 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+         }
+ 
+         fn openOrError(o: *const abi.Open, info: *abi.Info) !*State {
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             const path = abi.items(u8, o.model_dir);
+             const settings = parseSettings(abi.items(u8, o.settings_json)) catch return error.InvalidSettings;
+             const n_ctx = if (o.context > 0) o.context else default_context;
+             const opened = try load.open(B, io, gpa, path, settings, n_ctx);
+-            errdefer opened.engine.close();
+-            errdefer opened.ctx.free();
++            errdefer if (!sourceCleanupUnknown()) opened.engine.close();
++            errdefer if (!sourceCleanupUnknown()) opened.ctx.free();
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             const vocab: usize = @intCast(@max(opened.engine.nVocab(), 0));
+             var eos: std.ArrayList(u32) = .empty;
+-            errdefer eos.deinit(gpa);
++            errdefer if (!sourceCleanupUnknown()) eos.deinit(gpa);
+             for (0..vocab) |t| if (opened.engine.isEog(@intCast(t))) try eos.append(gpa, @intCast(t));
+             var tokens = try TokenTable.init(gpa, vocab);
+-            errdefer tokens.deinit(gpa);
++            errdefer if (!sourceCleanupUnknown()) tokens.deinit(gpa);
+             const st = try gpa.create(State);
+-            errdefer gpa.destroy(st);
++            errdefer if (!sourceCleanupUnknown()) gpa.destroy(st);
+             const seqs: u32 = @intCast(opened.ctx.seqs.len);
+             st.* = .{
+                 .book = .{ .gpa = gpa, .max_waiting = @max(o.max_concurrent, 1) },
+@@ -202,9 +204,10 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+                 .tokens = tokens,
+                 .file_bytes = fileBytes(path),
+             };
+-            errdefer gpa.free(st.eos);
++            errdefer if (!sourceCleanupUnknown()) gpa.free(st.eos);
+             st.thread = try std.Thread.spawn(.{}, work, .{st});
+             const startup = std.fmt.bufPrint(&st.startup_buf, "llama.cpp: {d} sequences x {d} tokens, {d} MTP drafts", .{ seqs, n_ctx, opened.ctx.mtpDrafts() }) catch "";
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             info.* = .{
+                 .name = abi.span(u8, "llama.cpp"),
+                 .version = abi.span(u8, build_options.llama_tag),
+@@ -433,15 +436,26 @@ test {
+ // Existing model-free helper, with allocator ownership parameterized for
+ // intentionally retained private fixtures; the normal helper is unchanged.
+ const FakeBridge = FakeBridgeFor(testing.allocator);
++const FakeConstructorObserver = struct {
++    pub fn opened() void {}
++    pub fn closed() void {}
++    pub fn childFreed() void {}
++};
+ fn FakeBridgeFor(comptime backing_allocator: std.mem.Allocator) type {
++    return FakeBridgeWithObserverFor(backing_allocator, FakeConstructorObserver);
++}
++fn FakeBridgeWithObserverFor(comptime backing_allocator: std.mem.Allocator, comptime Observer: type) type {
+     return struct {
+         pub const vocab = 1024;
+         pub const Sampling = struct { temperature: f32, top_k: i32 = 0, top_p: f32 = 1, min_p: f32 = 0 };
+         pub const LlamaEngine = struct {
+             pub fn open(a: std.mem.Allocator, _: []const u8, _: bridge.OpenOptions) !*LlamaEngine {
+-                return a.create(LlamaEngine);
++                const engine = try a.create(LlamaEngine);
++                Observer.opened();
++                return engine;
+             }
+             pub fn close(e: *LlamaEngine) void {
++                Observer.closed();
+                 backing_allocator.destroy(e);
+             }
+             pub fn eosToken(_: *LlamaEngine) i32 {
+@@ -477,6 +491,7 @@ fn FakeBridgeFor(comptime backing_allocator: std.mem.Allocator) type {
+             seqs: []LlamaSeq,
+             drafts: u32,
+             pub fn free(c: *LlamaContext) void {
++                Observer.childFreed();
+                 for (c.seqs) |*s| s.resident.deinit(backing_allocator);
+                 backing_allocator.free(c.seqs);
+                 backing_allocator.destroy(c);
+@@ -1000,3 +1015,52 @@ test "fios current llama close retains callback-uncertain book parent" {
+         }
+     }
+ }
++
++// Existing model-free bridge with metadata callbacks; no native backend/model.
++const FiosConstructorProbe = struct {
++    var opens: usize = 0;
++    var closes: usize = 0;
++    var child_frees: usize = 0;
++    pub fn opened() void {
++        opens += 1;
++        @import("../../fios/request_ownership.zig").shared().fence(testing.io);
++    }
++    pub fn closed() void { closes += 1; }
++    pub fn childFreed() void { child_frees += 1; }
++};
++fn fiosConstructorPublication(preexisting: bool) !void {
++    const owners = @import("../../fios/request_ownership.zig");
++    try owners.shared().initialize(testing.io, @splat(253));
++    if (preexisting) owners.shared().fence(testing.io);
++    var tmp = testing.tmpDir(.{});
++    defer tmp.cleanup();
++    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
++    const path = try llamaGguf(&tmp, &path_buf);
++    const host: abi.Host = .{ .ctx = undefined, .log = struct {
++        fn f(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
++    }.f, .wake = struct { fn f(_: *anyopaque) callconv(.c) void {} }.f };
++    const open: abi.Open = .{ .model_dir = abi.span(u8, path), .model_type = .{}, .config_json = .{},
++        .context = 0, .max_concurrent = 1, .memory_budget = 0, .settings_json = .{}, .options_json = .{}, .host = &host };
++    var info: abi.Info = undefined;
++    var verdict: abi.Verdict = .{};
++    const probe_table = Adapter(FakeBridgeWithObserverFor(std.heap.smp_allocator, FiosConstructorProbe), std.heap.smp_allocator).table;
++    const engine = probe_table.open(&open, &info, &verdict);
++    if (engine != null) std.debug.print("FIO_CURRENT_llama_CONSTRUCTOR_PUBLISHED_UNCERTAINTY\n", .{});
++    try testing.expect(engine == null);
++    try testing.expectEqual(abi.Verdict.Code.failed, verdict.code);
++    try testing.expectEqualStrings("NativeCleanupUncertain", abi.items(u8, verdict.why));
++    try testing.expectEqual(@as(usize, if (preexisting) 0 else 1), FiosConstructorProbe.opens);
++    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.closes);
++    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.child_frees);
++    try testing.expect(owners.shared().knownUncertain(testing.io));
++    try testing.expect(probe_table.open(&open, &info, &verdict) == null);
++    try testing.expectEqual(@as(usize, if (preexisting) 0 else 1), FiosConstructorProbe.opens);
++    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.closes);
++    try testing.expectEqual(@as(usize, 0), FiosConstructorProbe.child_frees);
++}
++test "fios current llama constructor refuses known uncertainty before effects" {
++    try fiosConstructorPublication(true);
++}
++test "fios current llama constructor retains uncertainty without publication" {
++    try fiosConstructorPublication(false);
++}
+diff --git a/src/engines/llama/load.zig b/src/engines/llama/load.zig
+index 038de03..38048ea 100644
+--- a/src/engines/llama/load.zig
++++ b/src/engines/llama/load.zig
+@@ -19,17 +19,21 @@ pub fn Opened(comptime bridge: type) type {
+ /// Opens the GGUF at `path` on `bridge` (`bridge.zig`, or a test double) with a context of `s.seqs` sequences of
+ /// `ctx_size` tokens each. An `mtp-*.gguf` head beside the model wins over the trunk's own NextN heads.
+ pub fn open(comptime bridge: type, io: std.Io, gpa: std.mem.Allocator, path: []const u8, s: Settings, ctx_size: u32) !Opened(bridge) {
++    if (sourceCleanupUnknown(io)) return error.NativeCleanupUncertain;
+     log.info("[llama] opening engine: {s}\n", .{path});
+     const mtp_path: ?[]u8 = if (s.mtp_drafts > 0) model_discovery.findLlamaMtpSidecar(io, gpa, path) else null;
+     defer if (mtp_path) |p| gpa.free(p);
+     if (mtp_path) |p| log.info("[llama] MTP draft head: {s}\n", .{p});
++    if (sourceCleanupUnknown(io)) return error.NativeCleanupUncertain;
+     const engine = try bridge.LlamaEngine.open(gpa, path, .{
+         .mtp_path = mtp_path,
+         .load_mtp = s.mtp_drafts > 0,
+     });
+-    errdefer engine.close();
++    errdefer if (!sourceCleanupUnknown(io)) engine.close();
++    if (sourceCleanupUnknown(io)) return error.NativeCleanupUncertain;
+     log.info("[llama] engine ready (EOS={d}, n_vocab={d})\n", .{ engine.eosToken(), engine.nVocab() });
+ 
++    if (sourceCleanupUnknown(io)) return error.NativeCleanupUncertain;
+     const ctx = try engine.createContext(.{
+         .ctx_size = @intCast(ctx_size),
+         .n_seq = s.seqs,
+@@ -38,8 +42,15 @@ pub fn open(comptime bridge: type, io: std.Io, gpa: std.mem.Allocator, path: []c
+         .ubatch = s.ubatch,
+         .mtp_drafts = s.mtp_drafts,
+     });
++    if (sourceCleanupUnknown(io)) return error.NativeCleanupUncertain;
+     log.info("[llama] context: {d} sequences x {d} tokens, KV {s}, MTP drafts {d}\n", .{
+         ctx.seqs.len, ctx_size, s.kv_quant.label(), ctx.mtpDrafts(),
+     });
++    if (sourceCleanupUnknown(io)) return error.NativeCleanupUncertain;
+     return .{ .engine = engine, .ctx = ctx };
+ }
++
++fn sourceCleanupUnknown(io: std.Io) bool {
++    const options = @import("build_options");
++    return @import("../../fios/current_ds4_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++}

@@ -1,0 +1,54 @@
+// Complete actual generic stream release methods; row/collection types and pool are CPU substitutes.
+const std=@import("std");
+const scenario=@import("build_options").scenario;
+var refused=false;
+var stop_fails=false;
+var copier_stops:usize=0;
+var native_stops:usize=0;
+const expert_io=struct{fn cleanupUncertain()bool{return refused;}};
+const Trace=struct{
+ allocs:usize=0,frees:usize=0,
+ fn alloc(raw:*anyopaque,n:usize,alignment:std.mem.Alignment,ret:usize)?[*]u8{const self:*@This()=@ptrCast(@alignCast(raw));self.allocs+=1;return std.heap.page_allocator.rawAlloc(n,alignment,ret);}
+ fn free(raw:*anyopaque,b:[]u8,alignment:std.mem.Alignment,ret:usize)void{const self:*@This()=@ptrCast(@alignCast(raw));self.frees+=1;std.heap.page_allocator.rawFree(b,alignment,ret);}
+ const vtable:std.mem.Allocator.VTable=.{.alloc=alloc,.resize=std.mem.Allocator.noResize,.remap=std.mem.Allocator.noRemap,.free=free};
+ fn allocator(self:*@This())std.mem.Allocator{return .{.ptr=self,.vtable=&vtable};}
+};
+const Pool=struct{
+ stopped:bool=false,
+ fn prepareStop(self:*@This())bool{if(refused)return false;if(self.stopped)return true;native_stops+=1;if(stop_fails){refused=true;return false;}self.stopped=true;return true;}
+ fn stop(self:*@This())void{_ = self.prepareStop();}
+};
+const Collection=struct{bytes:[]u8,fn deinit(self:*@This(),a:std.mem.Allocator)void{a.free(self.bytes);}};
+const Rows=struct{a:std.mem.Allocator,bytes:[]u8,fn deinit(self:*@This())void{self.a.free(self.bytes);}};
+const Layer=struct{policy:Collection,base:Rows,ext:?Rows,meta:[]u8};
+const Alt=struct{rows:Rows,meta:[]u8};
+const Ahead=struct{loads:[]u8,reads:[]bool,parts:[]u8,landed:[]bool};
+const Stream=struct{
+ allocator:std.mem.Allocator,pool:*Pool,layers:[]Layer,
+ held_base:Collection,held_scratch:Collection,promote_copies:Collection,
+ transient:Rows,transient_meta:[]u8,alt:?Alt,geom_of:[]u8,selector:?Collection,event_word:?*i64,
+ ahead:Ahead,p7_rows:[]u8,ahead_job:[]u8,
+ fn stopCopier(_: *@This())void{copier_stops+=1;}
+ // ACTUAL_PREPARE
+ // ACTUAL_DEINIT
+};
+fn bytes(a:std.mem.Allocator)![]u8{const b=try a.alloc(u8,16);@memset(b,73);return b;}
+fn rows(a:std.mem.Allocator)!Rows{return .{.a=a,.bytes=try bytes(a)};}
+fn collection(a:std.mem.Allocator)!Collection{return .{.bytes=try bytes(a)};}
+pub fn main()!void{
+ var trace:Trace=.{};const a=trace.allocator();var pool:Pool=.{};
+ const parent=try a.create(Stream);const layers=try a.alloc(Layer,1);
+ layers[0]=.{.policy=try collection(a),.base=try rows(a),.ext=try rows(a),.meta=try bytes(a)};
+ const word=try a.create(i64);word.*=31415;
+ parent.*=.{.allocator=a,.pool=&pool,.layers=layers,.held_base=try collection(a),.held_scratch=try collection(a),.promote_copies=try collection(a),
+ .transient=try rows(a),.transient_meta=try bytes(a),.alt=.{.rows=try rows(a),.meta=try bytes(a)},.geom_of=try bytes(a),.selector=try collection(a),.event_word=word,
+ .ahead=.{.loads=try bytes(a),.reads=try a.alloc(bool,1),.parts=try bytes(a),.landed=try a.alloc(bool,1)},.p7_rows=try bytes(a),.ahead_job=try bytes(a)};
+ refused=scenario==0;stop_fails=scenario==1;
+ parent.deinit();
+ if(scenario!=2){
+  if(trace.frees!=0){std.debug.print("FIO_STREAM_POOL_ROWS_RELEASED_AFTER_REFUSAL\n",.{});return error.RowsReleased;}
+  if(!refused or word.*!=31415 or parent.layers.ptr!=layers.ptr or parent.layers[0].base.bytes[0]!=73)return error.ParentStorageChanged;
+  if(scenario==0 and (copier_stops!=0 or native_stops!=0))return error.KnownRefusalTouchedWriters;
+ }else if(trace.frees!=trace.allocs or native_stops!=1 or copier_stops!=1 or refused)return error.HealthyRowsReleaseChanged;
+ std.debug.print("PASS: actual generic stream retains rows/event/parent or releases healthy graph\n",.{});
+}

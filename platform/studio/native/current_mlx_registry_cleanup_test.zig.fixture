@@ -1,0 +1,88 @@
+
+test "fios current MLX model teardown retains callback uncertainty through registry" {
+    const io = std.testing.io;
+    const page = std.heap.page_allocator;
+    const owners = @import("../../fios/request_ownership.zig");
+    const plugin_driver = @import("../../engines/mlx/plugin/driver.zig");
+    const plugin_api = @import("../../abi/plugin.zig");
+    const moduleShell = @import("../../engines/mlx/modules/shell.zig").moduleShell;
+    const mlxc = @import("../../mlx/ffi.zig");
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(199));
+    const Trace = struct {
+        model: usize = 0,
+        registry: usize = 0,
+        sibling: usize = 0,
+        wrapper: usize = 0,
+        transformer: usize = 0,
+        model_freed: bool = false,
+        registry_freed: bool = false,
+        sibling_freed: bool = false,
+        wrapper_freed: bool = false,
+        transformer_freed: bool = false,
+        fn alloc(_: *anyopaque, n: usize, alignment: std.mem.Alignment, ret: usize) ?[*]u8 {
+            return std.heap.page_allocator.rawAlloc(n, alignment, ret);
+        }
+        fn free(raw: *anyopaque, bytes: []u8, alignment: std.mem.Alignment, ret: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            if (@intFromPtr(bytes.ptr) == self.model) self.model_freed = true;
+            if (@intFromPtr(bytes.ptr) == self.registry) self.registry_freed = true;
+            if (@intFromPtr(bytes.ptr) == self.sibling) self.sibling_freed = true;
+            if (@intFromPtr(bytes.ptr) == self.wrapper) self.wrapper_freed = true;
+            if (@intFromPtr(bytes.ptr) == self.transformer) self.transformer_freed = true;
+            std.heap.page_allocator.rawFree(bytes, alignment, ret);
+        }
+        const vtable: std.mem.Allocator.VTable = .{ .alloc = alloc, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = free };
+        fn allocator(self: *@This()) std.mem.Allocator { return .{ .ptr = self, .vtable = &vtable }; }
+    };
+    const Probe = struct {
+        io: std.Io,
+        unknown: bool,
+        calls: usize = 0,
+        fn unload(raw: *anyopaque) callconv(.c) void {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.calls += 1;
+            if (self.unknown) owners.shared().fence(self.io);
+        }
+    };
+    const model_table = try page.create(plugin_api.ModelTable);
+    model_table.* = undefined;
+    model_table.unload = Probe.unload;
+    for ([_]bool{ false, true }) |unknown| {
+        const trace = try page.create(Trace);
+        trace.* = .{};
+        const allocator = trace.allocator();
+        const registry = try ModelRegistry.init(allocator, io, null, 2, 0, null);
+        const model = try registry.registerStub("fixture/mlx-registry-cleanup", "/fixture/never-loaded", null);
+        const sibling = try registry.registerStub("fixture/mlx-registry-sibling", "/fixture/also-never-loaded", null);
+        trace.sibling = @intFromPtr(sibling);
+        trace.registry = @intFromPtr(registry);
+        trace.model = @intFromPtr(model);
+        const probe = try page.create(Probe);
+        probe.* = .{ .io = io, .unknown = unknown };
+        const bound = try allocator.create(plugin_driver.Bound);
+        bound.* = .{ .table = model_table, .model = probe };
+        const transformer = try allocator.create(Transformer);
+        const config = std.mem.zeroInit(model_mod.ModelConfig, .{ .model_type = "llama", .num_hidden_layers = 0 });
+        transformer.* = try moduleShell(allocator, config, mlxc.gpuStream());
+        transformer.plugin = bound;
+        trace.wrapper = @intFromPtr(bound);
+        trace.transformer = @intFromPtr(transformer);
+        model.transformer = transformer;
+        registry.deinit();
+        try std.testing.expectEqual(@as(usize, 1), probe.calls);
+        if (unknown) {
+            if (trace.model_freed or trace.registry_freed) std.debug.print("FIO_CURRENT_MLX_REGISTRY_DROPPED_CALLBACK_CUSTODY\n", .{});
+            try std.testing.expect(!trace.model_freed and !trace.registry_freed and !trace.sibling_freed and !trace.wrapper_freed and !trace.transformer_freed);
+            try std.testing.expectEqualStrings("fixture/mlx-registry-cleanup", model.id);
+            try std.testing.expect(model.transformer == transformer and transformer.plugin == bound);
+            try std.testing.expectEqual(@as(usize, 2), registry.entries.count());
+            registry.deinit();
+            try std.testing.expectEqual(@as(usize, 1), probe.calls);
+        } else {
+            try std.testing.expect(trace.model_freed and trace.registry_freed and trace.sibling_freed and trace.wrapper_freed and trace.transformer_freed);
+            page.destroy(probe);
+            page.destroy(trace);
+        }
+    }
+}

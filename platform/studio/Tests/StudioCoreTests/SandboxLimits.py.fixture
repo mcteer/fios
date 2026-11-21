@@ -1,0 +1,141 @@
+# Trusted finite Linux-container rehearsal only; never executed on macOS.
+import errno
+import mmap
+import os
+import signal
+import time
+from pathlib import Path
+
+CG = Path('/sys/fs/cgroup')
+
+def number(name):
+    text = (CG / name).read_text().strip()
+    assert text.isascii() and text.isdigit(), name
+    return int(text)
+
+def fields(name):
+    return {key: int(value) for key, value in (line.split() for line in (CG / name).read_text().splitlines())}
+
+print('METRIC: trusted Linux limit entry uid=' + str(os.getuid()) + ' cgroup_v2=' + str((CG / 'cgroup.controllers').exists()), flush=True)
+for name in ['memory.max', 'memory.swap.max', 'memory.swap.current', 'pids.max', 'cpu.max']:
+    value = (CG / name).read_text().strip()
+    assert len(value) <= 128 and all(c in '0123456789max \n' for c in value)
+    print(f'METRIC: kernel {name}={value}', flush=True)
+assert os.getuid() == 65532 and (CG / 'cgroup.controllers').exists()
+assert number('memory.max') == 512 << 20
+assert number('memory.swap.max') == 0 and number('memory.swap.current') == 0
+assert number('pids.max') == 64
+assert (CG / 'cpu.max').read_text().split() == ['100000', '100000']
+
+# Bound writes even if the expected tmpfs cap is absent. Observe actual ENOSPC,
+# not only inspect/config. Reclaim each owned file before the next allocation.
+for directory, cap in [('/workspace', 128 << 20), ('/tmp', 64 << 20)]:
+    path = Path(directory) / 'finite-cgroup-limit-fixture'
+    before = number('memory.current')
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    written, refused = 0, False
+    try:
+        chunk = b'x' * (1 << 20)
+        while written <= cap:
+            try:
+                count = os.write(descriptor, chunk)
+                assert count > 0
+                written += count
+            except OSError as error:
+                assert error.errno == errno.ENOSPC
+                refused = True
+                break
+        charged = number('memory.current')
+        assert refused and cap - (2 << 20) <= written <= cap
+        assert charged + (8 << 20) >= before + written
+        print(f'METRIC: actual tmpfs={directory} written_bytes={written} ENOSPC=true memory_charge_delta_bytes={charged-before}', flush=True)
+    finally:
+        os.close(descriptor)
+        path.unlink()
+
+# Prove memory.max enforcement with one finite, disposable child rather than
+# accepting the advertised limit alone. Prefer this child as the OOM victim;
+# the trusted parent remains available to reap and inspect kernel counters.
+before_oom = fields('memory.events')
+pid = os.fork()
+if pid == 0:
+    try:
+        Path('/proc/self/oom_score_adj').write_text('1000')
+        allocation = mmap.mmap(-1, 600 << 20)
+        for offset in range(0, 600 << 20, 4096):
+            allocation[offset] = 1
+        os._exit(77)  # Reaching this point means the ceiling did not enforce.
+    except BaseException:
+        os._exit(78)  # A Python/allocation error is not kernel OOM evidence.
+deadline = time.monotonic() + 2
+status = None
+try:
+    while time.monotonic() < deadline:
+        waited, value = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            status = value
+            break
+        time.sleep(0.01)
+finally:
+    if status is None:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+assert status is not None, 'Memory enforcement exceeded finite deadline'
+after_oom = fields('memory.events')
+oom_kills = after_oom['oom_kill'] - before_oom['oom_kill']
+assert os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL
+assert oom_kills > 0 and after_oom['oom'] > before_oom['oom']
+assert number('memory.swap.current') == 0
+print(f'METRIC: actual memory ceiling=536870912 child_sigkill=true oom_kill_delta={oom_kills}', flush=True)
+
+# Two genuinely busy children contend for one kernel-enforced CPU quota.
+# A one-child benchmark alone could not distinguish a one/two-CPU cap.
+children = []
+before = fields('cpu.stat')
+started = time.monotonic()
+try:
+    for _ in range(2):
+        pid = os.fork()
+        if pid == 0:
+            deadline = started + 2.2
+            value = 1
+            while time.monotonic() < deadline:
+                value = (value * 1664525 + 1013904223) & 0xffffffff
+            os._exit(0)
+        children.append(pid)
+finally:
+    for pid in children:
+        _, status = os.waitpid(pid, 0)
+        assert os.waitstatus_to_exitcode(status) == 0
+wall = time.monotonic() - started
+after = fields('cpu.stat')
+consumed = after['usage_usec'] - before['usage_usec']
+throttled = after['nr_throttled'] - before['nr_throttled']
+assert throttled > 0 and after['throttled_usec'] > before['throttled_usec']
+assert consumed <= wall * 1_300_000 + 100_000
+print(f'METRIC: actual CPU quota one core/two busy children wall_ms={int(wall*1000)} cpu_ms={consumed//1000} throttled_periods={throttled}', flush=True)
+
+children, refused = [], False
+before = fields('pids.events')['max']
+try:
+    for _ in range(80):
+        try:
+            pid = os.fork()
+        except OSError as error:
+            assert error.errno == errno.EAGAIN
+            refused = True
+            break
+        if pid == 0:
+            time.sleep(3)
+            os._exit(0)
+        children.append(pid)
+    current = number('pids.current')
+    denied = fields('pids.events')['max'] - before
+    assert refused and current <= 64 and denied > 0
+    print(f'METRIC: actual PID ceiling=64 sampled_current={current} forked_children={len(children)} kernel_denials={denied}', flush=True)
+finally:
+    for pid in children:
+        _, status = os.waitpid(pid, 0)
+        assert os.waitstatus_to_exitcode(status) == 0
+assert number('memory.swap.current') == 0
+print('LIMITS_PASS', flush=True)

@@ -1,0 +1,5 @@
+{
+  "src/host/api/completions.zig": "08744cd8dad776ddc55bd22e025e0d699b3c1e530715037c846c478c38e7b98c",
+  "src/host/api/anthropic_stream.zig": "9afb08e87c07b2f2012465aa1fc663a07b65fabc32a35df35146ac3b21a796d5",
+  "src/host/api/responses/handler.zig": "b670b12a4caebc93cbe3a5be554acb9f704321dc2fb2e2c55b0fcb907e5eed29"
+}

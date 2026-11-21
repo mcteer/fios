@@ -1,0 +1,32 @@
+#include <atomic>
+#include <vector>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+using llama_pos=int;using llama_token=int;
+struct mlx_llama_ctx {void *dbatch=nullptr,*dft=nullptr;size_t n_embd_h=1;int n_vocab=1;std::vector<float> draft_h{0},pending_h{0};std::vector<int> drafts{0};};
+static std::atomic<bool> fios_llama_uncertain{false};
+static int status=1,checks=0,processes=0,reads=0,trims=0;
+static int fios_llama_failed(mlx_llama_ctx*) {fios_llama_uncertain=true;return -1;}
+static void llama_batch_ext_clear(void*) {}
+static int llama_batch_ext_add_token(void*,int,int) {return 0;}
+static void llama_batch_ext_set_pos(void*,int,const int*) {}
+struct Embd {float *p;int n;size_t w;};
+static bool llama_batch_ext_set_embd_token(void*,int,Embd) {return true;}
+static void llama_batch_ext_set_output_logits(void*,int,bool) {}
+static constexpr int LLAMA_PROCESS_TYPE_DECODE=0;
+static int llama_process(void*,int,void*) {++processes;return 0;}
+static int llama_fios_synchronize_checked_v1(void*) {++checks;return status;}
+static const float *llama_get_logits_ith(void*,int) {++reads;static float f=1;return &f;}
+static const float *llama_get_embeddings_nextn_ith(void*,int) {++reads;static float f=1;return &f;}
+static int argmax_row(const float*,int) {return 4;}
+static void dft_trim(mlx_llama_ctx*,int,int) {++trims;}
+// FIOS_ACTUAL_DRAFT
+int main(int argc,char**argv) {
+ if(argc!=2)return 9;status=std::atoi(argv[1]);mlx_llama_ctx c;
+ int result=draft(&c,0,3,10,1);
+ if(status==1) {if(result!=1||checks!=1||processes!=1||reads!=2||trims!=1||c.drafts[0]!=4||fios_llama_uncertain)return 3;}
+ else {if(result!=-1||checks!=1||processes!=1||reads||trims||c.drafts[0]!=0||!fios_llama_uncertain)return 3;
+ if(draft(&c,0,3,10,1)!=-1||processes!=1||checks!=1)return 3;}
+ puts("PASS: checked draft stops before output reads and rollback");
+}

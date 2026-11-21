@@ -1,0 +1,32 @@
+import Foundation
+
+// Reads only frames emitted by the isolated CPU projection, not a native socket.
+@main struct SDKReadinessFrames {
+    static func main()throws {
+        guard CommandLine.arguments.count==3 else {throw NativeControlError.invalid}
+        let instance=String(repeating:"08",count:16)
+        let original=try Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[1])),fenced=try Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[2]))
+        let before=try NativeBackendFenceWire.backgroundReply(original,instance:instance)
+        let after=try NativeBackendFenceWire.backgroundReply(fenced,instance:instance,after:before.sampleSequence)
+        for replay in [original,fenced] {
+            do {
+                _=try NativeBackendFenceWire.backgroundReply(replay,instance:instance,after:after.sampleSequence)
+                fatalError("Accepted an old or duplicate SDK frame")
+            } catch NativeControlError.invalid {}
+        }
+        do {
+            _=try NativeBackendFenceWire.backgroundReply(fenced,instance:String(repeating:"09",count:16))
+            fatalError("Accepted SDK frame from a different instance")
+        } catch NativeControlError.invalid {}
+        guard before.current==NativeCurrentBackendFlags(available:1,uncertain:0),after.current==NativeCurrentBackendFlags(available:1,uncertain:1),
+              before.backgroundCoverage==NativeBackgroundCoverage(sdkResidencyRefreshUntracked:nil),
+              after.backgroundCoverage==before.backgroundCoverage,let now=after.sampledAt else {throw NativeControlError.invalid}
+        let peer=NativeControlPeer(pid:42,start:100,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"a",count:64)))
+        var diagnostics=NativeBackendFenceDiagnostics(configured:true,observeBackground:true)
+        diagnostics.completed(NativeBackendFenceSample(peer:peer,receivedAt:now,fences:before),expectedInstance:instance,now:now)
+        diagnostics.completed(NativeBackendFenceSample(peer:peer,receivedAt:now,fences:after),expectedInstance:instance,now:now)
+        let result=diagnostics.summary(now:now)
+        guard result["retained_uncertainty"] as? Bool==true,result["coverage"] as? String=="unknown",
+              result["authority"] as? Bool==false,result["retained_coverage_gap"] as? Bool==false else {throw NativeControlError.invalid}
+    }
+}

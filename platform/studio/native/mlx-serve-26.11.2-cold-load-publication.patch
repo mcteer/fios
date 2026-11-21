@@ -1,0 +1,415 @@
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index 78b3669..67df5e8 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -220,6 +220,7 @@ pub var prefill_admission_refused_log: ?*const fn (*const model_mod.ModelConfig,
+ pub var hot_cache_budget_invalidate: ?*const fn () void = null;
+ 
+ pub const Scheduler = @import("../../host/gpu_thread/scheduler.zig").Scheduler;
++const FiosLoadPlan = @import("../../host/gpu_thread/requests.zig").FiosLoadPlan;
+ 
+ /// Construct a Scheduler whose inference thread loads the model. Returns
+ /// only after load + (optional) warmup completes. On load failure, returns
+@@ -849,6 +850,7 @@ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
+     // slice handed to the LoadRequest stays valid while we block on `done`.
+     var victims_buf: [16]*LoadedModel = undefined;
+     var n_victims: usize = 0;
++    var fios_load_plan: FiosLoadPlan = .{};
+     // The requester's reference, taken when the load is claimed: a model that turns `.ready`
+     // with no reference is another load's free eviction victim before this thread wakes.
+     var pinned = false;
+@@ -929,46 +931,17 @@ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
+         // (multi-victim). On failure — every other resident model is pinned
+         // by an in-flight request — roll back and surface a 503 instead of
+         // loading anyway and crashing.
+-        const n = self.registry.planEvictionsLocked(entry.id, foreign_reader, &victims_buf, mlxActiveBytes()) orelse {
+-            // Name the numbers. A refusal that logs NOTHING sends the user
+-            // hunting for a concurrent request that does not exist: on an
+-            // idle server the cause is always the static cap (#126), and
+-            // the flag that moves it is not otherwise discoverable.
+-            const gb = 1024.0 * 1024.0 * 1024.0;
+-            if (loadExceedsMemCap(estimated, self.registry.max_resident_mem)) {
+-                log.err("Refusing to load {s}: needs ~{d:.2} GB, more than --max-resident-mem {d:.2} GB on its own, so unloading other models cannot help. Raise the cap.\n", .{
+-                    entry.id,
+-                    @as(f64, @floatFromInt(estimated)) / gb,
+-                    @as(f64, @floatFromInt(self.registry.max_resident_mem)) / gb,
+-                });
+-            } else if (self.registry.countLoadedLocked() == 0 and self.registry.reserved_bytes == entry.load_estimate) {
+-                log.err("Refusing to load {s}: needs ~{d:.2} GB, and {d:.2} GB of live memory belongs to no model, so no unload can free it. Restart the server.\n", .{
+-                    entry.id,
+-                    @as(f64, @floatFromInt(estimated)) / gb,
+-                    @as(f64, @floatFromInt(mlxActiveBytes())) / gb,
+-                });
+-            } else log.err("Refusing to load {s}: needs ~{d:.2} GB with {d:.2} GB resident ({d:.2} GB live, {d:.2} GB reserved by loads in flight, this one included) across {d} model(s), and unloading the idle ones does not fit it under --max-resident-models {d} and --max-resident-mem {d:.2} GB (0 = off). Unload a model or raise a cap.\n", .{
+-                entry.id,
+-                @as(f64, @floatFromInt(estimated)) / gb,
+-                @as(f64, @floatFromInt(self.registry.current_resident_bytes)) / gb,
+-                @as(f64, @floatFromInt(mlxActiveBytes())) / gb,
+-                @as(f64, @floatFromInt(self.registry.reserved_bytes)) / gb,
+-                self.registry.countLoadedLocked(),
+-                self.registry.max_resident_models,
+-                @as(f64, @floatFromInt(self.registry.max_resident_mem)) / gb,
+-            });
+-            self.registry.markUnloadedLocked(entry); // releases the reservation
+-            self.registry.mutex.unlock(self.io);
+-            return error.NotEnoughMemory;
+-        };
++        const n = try planLoadEvictionsLocked(self, entry, foreign_reader, &victims_buf, estimated, mlxActiveBytes());
+         n_victims = n;
+         // Drain readers on each victim before the inference thread frees it.
+         for (victims_buf[0..n_victims]) |v| self.registry.waitForRefcountZeroLocked(v);
++        fios_load_plan = try captureFiosLoadPlanLocked(self, entry, victims_buf[0..n_victims]);
+         self.registry.mutex.unlock(self.io);
+     }
+ 
+     // ── Stage 2: build + post LoadRequest, wait for completion.
+     var req = LoadRequest{
++        .fios_plan = fios_load_plan,
+         .fios_origins = if (fios_origins) |*held| held else null,
+         .entry = entry,
+         .config = owned.config,
+@@ -1017,13 +990,7 @@ fn ensureLoadedOnce(self: *Scheduler, id_or_empty: []const u8) !*LoadedModel {
+     // A GGUF entry opens on its engine (issue #59: discovered/pulled GGUF dirs cold-load on demand).
+     req.gguf = owned.gguf;
+ 
+-    {
+-        self.queue_mu.lockUncancelable(self.io);
+-        defer self.queue_mu.unlock(self.io);
+-        if (self.shutdown.load(.acquire)) return error.Shutdown;
+-        try self.load_queue.append(self.allocator, &req);
+-        self.queue_cond.broadcast(self.io);
+-    }
++    try publishLoadRequest(self, &req);
+ 
+     // Block until the inference thread signals done.
+     req.done_mu.lockUncancelable(self.io);
+@@ -2089,3 +2056,282 @@ test "fios current unload uncertainty crosses as uncertain not ownership conflic
+     try std.testing.expect(entry.state == .ready and entry.fios_model_mutation == null);
+     try std.testing.expect(owners.shared().knownUncertain(io));
+ }
++
++
++// The caller owns registry.mutex and its error defer. Metadata-only test seam;
++// the live allocation count is captured by the existing caller.
++fn planLoadEvictionsLocked(self: *Scheduler, entry: *LoadedModel, foreign_reader: ?*LoadedModel, victims: []*LoadedModel, estimated: u64, live_bytes: u64) !usize {
++    return self.registry.planEvictionsLocked(entry.id, foreign_reader, victims, live_bytes) orelse {
++        // Name the numbers. A refusal that logs NOTHING sends the user
++        // hunting for a concurrent request that does not exist: on an
++        // idle server the cause is always the static cap (#126), and
++        // the flag that moves it is not otherwise discoverable.
++        const gb = 1024.0 * 1024.0 * 1024.0;
++        if (loadExceedsMemCap(estimated, self.registry.max_resident_mem)) {
++            log.err("Refusing to load {s}: needs ~{d:.2} GB, more than --max-resident-mem {d:.2} GB on its own, so unloading other models cannot help. Raise the cap.\n", .{
++                entry.id,
++                @as(f64, @floatFromInt(estimated)) / gb,
++                @as(f64, @floatFromInt(self.registry.max_resident_mem)) / gb,
++            });
++        } else if (self.registry.countLoadedLocked() == 0 and self.registry.reserved_bytes == entry.load_estimate) {
++            log.err("Refusing to load {s}: needs ~{d:.2} GB, and {d:.2} GB of live memory belongs to no model, so no unload can free it. Restart the server.\n", .{
++                entry.id,
++                @as(f64, @floatFromInt(estimated)) / gb,
++                @as(f64, @floatFromInt(live_bytes)) / gb,
++            });
++        } else log.err("Refusing to load {s}: needs ~{d:.2} GB with {d:.2} GB resident ({d:.2} GB live, {d:.2} GB reserved by loads in flight, this one included) across {d} model(s), and unloading the idle ones does not fit it under --max-resident-models {d} and --max-resident-mem {d:.2} GB (0 = off). Unload a model or raise a cap.\n", .{
++            entry.id,
++            @as(f64, @floatFromInt(estimated)) / gb,
++            @as(f64, @floatFromInt(self.registry.current_resident_bytes)) / gb,
++            @as(f64, @floatFromInt(live_bytes)) / gb,
++            @as(f64, @floatFromInt(self.registry.reserved_bytes)) / gb,
++            self.registry.countLoadedLocked(),
++            self.registry.max_resident_models,
++            @as(f64, @floatFromInt(self.registry.max_resident_mem)) / gb,
++        });
++        self.registry.markUnloadedLocked(entry); // releases the reservation
++        // The enclosing caller owns the lock and its error defer.
++        return error.NotEnoughMemory;
++    };
++}
++
++// The actual queue publication edge, separated from CPU model parsing.
++fn publishLoadRequest(self: *Scheduler, req: *LoadRequest) !void {
++    // Queue unlock runs first. No fallible operation follows successful append,
++    // so this rollback can never release already-published backend work.
++    errdefer rollbackUnpublishedLoad(self, req);
++    self.queue_mu.lockUncancelable(self.io);
++    defer self.queue_mu.unlock(self.io);
++    if (req.fios_plan.claim_sequence != null and model_registry_mod.cleanupUncertainLocked(self.io)) return error.NativeCleanupUncertain;
++    if (self.shutdown.load(.acquire)) return error.Shutdown;
++    try self.load_queue.append(self.allocator, req);
++    self.queue_cond.broadcast(self.io);
++}
++
++
++fn captureFiosLoadPlanLocked(self: *Scheduler, entry: *LoadedModel, victims: []const *LoadedModel) !FiosLoadPlan {
++    if (!entry.fios_owner_guard) return .{};
++    if (entry.state != .loading or entry.fios_load_claim_sequence == 0 or victims.len > 16) {
++        fios_ownership.shared().fence(self.io);
++        return error.NativeCleanupUncertain;
++    }
++    var plan: FiosLoadPlan = .{ .claim_sequence = entry.fios_load_claim_sequence };
++    for (victims, 0..) |victim, index| {
++        if (!victim.fios_owner_guard or victim.state != .evicting or victim.fios_model_mutation == null) {
++            fios_ownership.shared().fence(self.io);
++            return error.NativeCleanupUncertain;
++        }
++        plan.victim_mutations[index] = victim.fios_model_mutation;
++    }
++    return plan;
++}
++
++fn rollbackUnpublishedLoad(self: *Scheduler, req: *LoadRequest) void {
++    const claim = req.fios_plan.claim_sequence orelse return;
++    if (req.evict_entries.len > req.fios_plan.victim_mutations.len) {
++        fios_ownership.shared().fence(self.io);
++        return;
++    }
++    self.registry.mutex.lockUncancelable(self.io);
++    defer self.registry.mutex.unlock(self.io);
++    for (req.evict_entries, 0..) |victim, index| {
++        const original = req.fios_plan.victim_mutations[index] orelse continue;
++        if (victim.fios_model_mutation) |current| {
++            if (victim.state == .evicting and std.meta.eql(original, current)) self.registry.unmarkEvictingLocked(victim);
++        }
++    }
++    // A later claim, independent uncertainty or attempted backend work is
++    // never reset by this original sender's publication failure.
++    if (req.entry.fios_owner_guard and req.entry.state == .loading and req.entry.fios_load_claim_sequence == claim)
++        self.registry.markUnloadedLocked(req.entry);
++}
++
++// Actual cold-load metadata and publication controls; no model/backend exists.
++test "fios current cold load refusal preserves caller registry lock" {
++    const io = std.testing.io;
++    fios_ownership.shared().primary_guard = false;
++    try fios_ownership.shared().initialize(io, @splat(239));
++    const registry = try model_registry_mod.ModelRegistry.init(std.heap.page_allocator, io, null, 1, 1, null);
++    defer registry.deinit();
++    const entry = try registry.registerStub("fixture/refused-cold-load", "/fixture/no-model", null);
++    entry.fios_owner_guard = true;
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = std.heap.page_allocator, .io = io, .registry = registry });
++    registry.mutex.lockUncancelable(io);
++    var held = true;
++    defer if (held) registry.mutex.unlock(io);
++    try std.testing.expect(registry.tryBeginLoadLocked(entry));
++    registry.reserveLoadLocked(entry, 4096);
++    var victims: [16]*LoadedModel = undefined;
++    try std.testing.expectError(error.NotEnoughMemory, planLoadEvictionsLocked(&scheduler, entry, null, &victims, 4096, 0));
++    const unexpectedly_unlocked = registry.mutex.tryLock();
++    if (unexpectedly_unlocked) { registry.mutex.unlock(io); held = false; }
++    try std.testing.expect(!unexpectedly_unlocked);
++    try std.testing.expect(entry.state == .unloaded and registry.reserved_bytes == 0);
++}
++
++test "fios current cold load publication refusal releases original reservations" {
++    const io = std.testing.io;
++    fios_ownership.shared().primary_guard = false;
++    try fios_ownership.shared().initialize(io, @splat(241));
++    for ([_]bool{ false, true }) |shutdown| {
++        const registry = try model_registry_mod.ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
++        defer registry.deinit();
++        const entry = try registry.registerStub("fixture/unpublished-cold", "/fixture/no-model", null);
++        const victim = try registry.registerStub("fixture/unpublished-victim", "/fixture/no-victim", null);
++        entry.fios_owner_guard = true;
++        victim.fios_owner_guard = true;
++        victim.state = .ready;
++        registry.mutex.lockUncancelable(io);
++        const claimed = registry.tryBeginLoadLocked(entry);
++        registry.reserveLoadLocked(entry, 4096);
++        const marked = registry.markEvictingLocked(victim);
++        var victims = [_]*LoadedModel{victim};
++        var plan_scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = std.heap.page_allocator, .io = io, .registry = registry });
++        const plan = try captureFiosLoadPlanLocked(&plan_scheduler, entry, &victims);
++        registry.mutex.unlock(io);
++        try std.testing.expect(claimed and marked);
++        var fail = std.testing.FailingAllocator.init(std.heap.page_allocator, .{ .fail_index = 0 });
++        var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = fail.allocator(), .io = io, .registry = registry });
++        scheduler.shutdown.store(shutdown, .release);
++        var req = std.mem.zeroInit(LoadRequest, .{ .entry = entry, .config = undefined, .tok = undefined, .chat_config = undefined, .model_dir = entry.path, .evict_entries = &victims, .fios_plan = plan, .allocator = std.heap.page_allocator });
++        const result = publishLoadRequest(&scheduler, &req);
++        if (shutdown) try std.testing.expectError(error.Shutdown, result)
++        else try std.testing.expectError(error.OutOfMemory, result);
++        try std.testing.expect(entry.state == .unloaded and registry.reserved_bytes == 0);
++        try std.testing.expect(victim.state == .ready and victim.fios_model_mutation == null);
++        try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared().snapshot(io).model_mutations);
++        try std.testing.expectEqual(@as(usize, 0), scheduler.load_queue.items.len);
++    }
++}
++
++
++test "fios current stale cold publication preserves later claim and victim ticket" {
++    const io = std.testing.io;
++    fios_ownership.shared().primary_guard = false;
++    try fios_ownership.shared().initialize(io, @splat(243));
++    const registry = try model_registry_mod.ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
++    const entry = try registry.registerStub("fixture/original-cold", "/fixture/no-model", null);
++    const victim = try registry.registerStub("fixture/original-victim", "/fixture/no-victim", null);
++    entry.fios_owner_guard = true;
++    victim.fios_owner_guard = true;
++    victim.state = .ready;
++    var victims = [_]*LoadedModel{victim};
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = std.heap.page_allocator, .io = io, .registry = registry });
++    var plan: FiosLoadPlan = undefined;
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        try std.testing.expect(registry.tryBeginLoadLocked(entry));
++        registry.reserveLoadLocked(entry, 4096);
++        try std.testing.expect(registry.markEvictingLocked(victim));
++        plan = try captureFiosLoadPlanLocked(&scheduler, entry, &victims);
++    }
++    var req = std.mem.zeroInit(LoadRequest, .{ .entry = entry, .config = undefined, .tok = undefined, .chat_config = undefined, .model_dir = entry.path, .evict_entries = &victims, .fios_plan = plan, .allocator = std.heap.page_allocator });
++    var later: fios_ownership.ModelMutation = undefined;
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        registry.unmarkEvictingLocked(victim);
++        registry.markUnloadedLocked(entry);
++        try std.testing.expect(registry.tryBeginLoadLocked(entry));
++        registry.reserveLoadLocked(entry, 8192);
++        try std.testing.expect(registry.markEvictingLocked(victim));
++        later = victim.fios_model_mutation.?;
++    }
++    var fail = std.testing.FailingAllocator.init(std.heap.page_allocator, .{ .fail_index = 0 });
++    scheduler.allocator = fail.allocator();
++    try std.testing.expectError(error.OutOfMemory, publishLoadRequest(&scheduler, &req));
++    try std.testing.expect(entry.state == .loading and entry.fios_load_claim_sequence != plan.claim_sequence.?);
++    try std.testing.expectEqual(@as(u64, 8192), registry.reserved_bytes);
++    try std.testing.expect(victim.state == .evicting and std.meta.eql(later, victim.fios_model_mutation.?));
++    try std.testing.expectEqual(@as(usize, 1), fios_ownership.shared().snapshot(io).model_mutations);
++    registry.mutex.lockUncancelable(io);
++    registry.unmarkEvictingLocked(victim);
++    registry.markUnloadedLocked(entry);
++    registry.mutex.unlock(io);
++    registry.deinit();
++}
++
++test "fios current unpublished cold cleanup retains independent uncertainty" {
++    const io = std.testing.io;
++    fios_ownership.shared().primary_guard = false;
++    try fios_ownership.shared().initialize(io, @splat(245));
++    const registry = try model_registry_mod.ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
++    const entry = try registry.registerStub("fixture/original-cold", "/fixture/no-model", null);
++    const victim = try registry.registerStub("fixture/original-victim", "/fixture/no-victim", null);
++    entry.fios_owner_guard = true;
++    victim.fios_owner_guard = true;
++    victim.state = .ready;
++    var victims = [_]*LoadedModel{victim};
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = std.heap.page_allocator, .io = io, .registry = registry });
++    var plan: FiosLoadPlan = undefined;
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        try std.testing.expect(registry.tryBeginLoadLocked(entry));
++        registry.reserveLoadLocked(entry, 4096);
++        try std.testing.expect(registry.markEvictingLocked(victim));
++        plan = try captureFiosLoadPlanLocked(&scheduler, entry, &victims);
++    }
++    var req = std.mem.zeroInit(LoadRequest, .{ .entry = entry, .config = undefined, .tok = undefined, .chat_config = undefined, .model_dir = entry.path, .evict_entries = &victims, .fios_plan = plan, .allocator = std.heap.page_allocator });
++    fios_ownership.shared().fence(io);
++    try std.testing.expectError(error.NativeCleanupUncertain, publishLoadRequest(&scheduler, &req));
++    try std.testing.expectEqual(@as(usize, 0), scheduler.load_queue.items.len);
++    try std.testing.expect(fios_ownership.shared().knownUncertain(io));
++    try std.testing.expect(entry.state == .error_state and entry.fios_load_uncertain.load(.acquire));
++    try std.testing.expectEqual(@as(u64, 4096), registry.reserved_bytes);
++    // Only the never-published victim reservation is released. Its resident
++    // fields and the independent source fence are untouched.
++    try std.testing.expect(victim.state == .ready and victim.fios_model_mutation == null);
++    try std.testing.expectEqual(@as(usize, 0), fios_ownership.shared().snapshot(io).model_mutations);
++}
++
++test "fios current published cold request retains its original reservations" {
++    const io = std.testing.io;
++    fios_ownership.shared().primary_guard = false;
++    try fios_ownership.shared().initialize(io, @splat(247));
++    const registry = try model_registry_mod.ModelRegistry.init(std.heap.page_allocator, io, null, 2, 0, null);
++    const entry = try registry.registerStub("fixture/original-cold", "/fixture/no-model", null);
++    const victim = try registry.registerStub("fixture/original-victim", "/fixture/no-victim", null);
++    entry.fios_owner_guard = true;
++    victim.fios_owner_guard = true;
++    victim.state = .ready;
++    var victims = [_]*LoadedModel{victim};
++    var scheduler = std.mem.zeroInit(Scheduler, .{ .allocator = std.heap.page_allocator, .io = io, .registry = registry });
++    var plan: FiosLoadPlan = undefined;
++    {
++        registry.mutex.lockUncancelable(io);
++        defer registry.mutex.unlock(io);
++        try std.testing.expect(registry.tryBeginLoadLocked(entry));
++        registry.reserveLoadLocked(entry, 4096);
++        try std.testing.expect(registry.markEvictingLocked(victim));
++        plan = try captureFiosLoadPlanLocked(&scheduler, entry, &victims);
++    }
++    var req = std.mem.zeroInit(LoadRequest, .{ .entry = entry, .config = undefined, .tok = undefined, .chat_config = undefined, .model_dir = entry.path, .evict_entries = &victims, .fios_plan = plan, .allocator = std.heap.page_allocator });
++    try publishLoadRequest(&scheduler, &req);
++    try std.testing.expectEqual(@as(usize, 1), scheduler.load_queue.items.len);
++    try std.testing.expect(scheduler.load_queue.items[0] == &req);
++    try std.testing.expect(entry.state == .loading and entry.fios_load_claim_sequence == plan.claim_sequence.?);
++    try std.testing.expectEqual(@as(u64, 4096), registry.reserved_bytes);
++    try std.testing.expect(victim.state == .evicting and victim.fios_model_mutation != null);
++    try std.testing.expectEqual(@as(usize, 1), fios_ownership.shared().snapshot(io).model_mutations);
++    // No worker or native backend exists. Keep the queued metadata retained;
++    // this control supplies no completion/cleanup claim.
++}
++
++test "fios current cold claim sequence exhaustion fences without wrapping" {
++    const io = std.testing.io;
++    fios_ownership.shared().primary_guard = false;
++    try fios_ownership.shared().initialize(io, @splat(249));
++    const registry = try model_registry_mod.ModelRegistry.init(std.heap.page_allocator, io, null, 1, 0, null);
++    const entry = try registry.registerStub("fixture/exhausted-cold-claim", "/fixture/no-model", null);
++    entry.fios_owner_guard = true;
++    entry.fios_load_claim_sequence = std.math.maxInt(u64);
++    registry.mutex.lockUncancelable(io);
++    const claimed = registry.tryBeginLoadLocked(entry);
++    registry.mutex.unlock(io);
++    try std.testing.expect(!claimed and entry.state == .unloaded);
++    try std.testing.expectEqual(std.math.maxInt(u64), entry.fios_load_claim_sequence);
++    try std.testing.expectEqual(@as(u64, 0), registry.reserved_bytes);
++    try std.testing.expect(fios_ownership.shared().knownUncertain(io));
++}
+diff --git a/src/host/gpu_thread/requests.zig b/src/host/gpu_thread/requests.zig
+index 83488c7..765c38d 100644
+--- a/src/host/gpu_thread/requests.zig
++++ b/src/host/gpu_thread/requests.zig
+@@ -29,7 +29,15 @@ const GgufRoute = @import("../../sdk/quant/gguf/engine_pick.zig").Route;
+ /// BEFORE the new load starts. The conn thread has already marked the
+ /// victim `.evicting` and waited for refcount == 0, so freeing GPU memory
+ /// is safe.
++// Private code-only snapshot captured under registry.mutex before publication.
++// These identities release only never-published metadata; no native proof.
++pub const FiosLoadPlan = struct {
++    claim_sequence: ?u64 = null,
++    victim_mutations: [16]?fios_ownership.ModelMutation = @splat(null),
++};
++
+ pub const LoadRequest = struct {
++    fios_plan: FiosLoadPlan = .{},
+     // Trusted sender metadata remains alive until the uncancelable done wait.
+     // Workers clone references before entering; no model/admission capability.
+     fios_origins: ?*const fios_ownership.Retained = null,
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index b3ab787..f16c05f 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -315,6 +315,8 @@ pub const LoadedModel = struct {
+         break :blk if (@hasDecl(options, "fios_source_sdk")) options.fios_source_sdk else false;
+     },
+     fios_model_mutation: ?fios_owners.ModelMutation = null,
++    // Process-local registry identity, unrelated to a platform job attempt.
++    fios_load_claim_sequence: u64 = 0,
+     fios_teardown_attempted: std.atomic.Value(bool) = .init(false),
+     /// MLX bytes the load added, measured at ready: above `bytes_resident` when the model fills its own cache
+     /// at load (a plugin's streamed-expert cache), so eviction credits what unloading frees.
+@@ -1061,6 +1063,13 @@ pub const ModelRegistry = struct {
+     /// this negative check does not supply atomic native admission.
+     pub fn tryBeginLoadLocked(self: *ModelRegistry, entry: *LoadedModel) bool {
+         if (entry.fios_load_uncertain.load(.acquire) or cleanupUncertainLocked(self.io) or entry.state != .unloaded) return false;
++        if (entry.fios_owner_guard) {
++            if (entry.fios_load_claim_sequence == std.math.maxInt(u64)) {
++                fios_owners.shared().fence(self.io);
++                return false;
++            }
++            entry.fios_load_claim_sequence += 1;
++        }
+         entry.state = .loading;
+         self.stateChanged();
+         return true;

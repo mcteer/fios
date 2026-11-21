@@ -1,0 +1,41 @@
+// Ordinary primary/auxiliary attribution with genuine bounded ownership data.
+const std = @import("std");
+const ownership = @import("request_ownership.zig");
+test "fios primary activity preserves disjoint request attribution" {
+    const io = std.testing.io;
+    var tracker: ownership.Tracker = .{};
+    try tracker.initialize(io, @splat(7));
+    const first = try tracker.enter(io);
+    const waiting = try tracker.enter(io);
+    try tracker.bind(io, first, "org/primary");
+    try tracker.bindAuxiliary(io, first, "org/auxiliary");
+    try tracker.active(io, first);
+    const held = try tracker.retainTokens(io, &.{first});
+    try tracker.leave(io, first);
+    const other = try tracker.enter(io);
+    try tracker.bind(io, other, "org/second-primary");
+    const associated = tracker.snapshot(io);
+    try std.testing.expectEqual(@as(usize, 3), associated.model_count);
+    const primary = tracker.primarySnapshot(io);
+    try std.testing.expectEqual(@as(usize, 3), primary.owned);
+    try std.testing.expectEqual(@as(usize, 1), primary.ingress);
+    try std.testing.expectEqual(@as(usize, 1), primary.active);
+    try std.testing.expectEqual(@as(usize, 2), primary.model_count);
+    try std.testing.expectEqualStrings("org/primary", primary.models[0].id[0..primary.models[0].len]);
+    try std.testing.expectEqual(@as(usize, 1), primary.models[0].active);
+    try std.testing.expectEqualStrings("org/second-primary", primary.models[1].id[0..primary.models[1].len]);
+    try std.testing.expectEqual(@as(usize, 1), primary.models[1].preparing);
+    try std.testing.expect(!primary.uncertain and primary.sample_sequence > associated.sample_sequence);
+    try tracker.responding(io, first);
+    const responding = tracker.primarySnapshot(io);
+    try std.testing.expectEqual(@as(usize, 1), responding.responding);
+    try std.testing.expectEqual(@as(usize, 1), responding.models[0].responding);
+    held.release(io);
+    try tracker.leave(io, waiting);
+    try tracker.leave(io, other);
+    const empty = tracker.primarySnapshot(io);
+    try std.testing.expectEqual(@as(usize, 0), empty.model_count);
+    try std.testing.expectEqual(@as(usize, 0), empty.owned);
+    try std.testing.expect(!empty.uncertain);
+    std.debug.print("PASS: disjoint primary snapshot retains original request across connection release and excludes auxiliary attribution; no backend/model action\n", .{});
+}

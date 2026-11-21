@@ -1,0 +1,33 @@
+//! Host/unit metadata composition only. No ANE library or request is invoked.
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const outcome = @import("fios/current_ane_run_uncertainty.zig");
+const locked = @import("fios/current_ane_locked_cleanup_uncertainty.zig");
+extern fn fios_fixture_ane_outcome_failure() void;
+extern fn fios_fixture_ane_outcome_success() void;
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    if (outcome.known()) return error.InitialFence;
+    owners.shared().primary_guard = false;
+    try owners.shared().initialize(io, @splat(119));
+    const root = try owners.shared().enter(io);
+    const correlation: owners.CorrelationID = @splat(120);
+    try owners.shared().associate(io, root, correlation);
+    try owners.shared().bind(io, root, "fixture/ane-reported-outcome");
+    owners.current().* = root;
+    const retained = (try owners.retainCurrent(io)).?;
+    fios_fixture_ane_outcome_success();
+    if (outcome.known()) return error.SuccessCreatedFence;
+    fios_fixture_ane_outcome_failure();
+    if (!outcome.known() or !locked.known(io, false, false)) return error.UnitLatchPartitioned;
+    owners.current().* = null;
+    try owners.shared().leave(io, root);
+    if (retained.releaseIfCertain(io)) return error.OriginalMetadataReleased;
+    fios_fixture_ane_outcome_success();
+    if (!outcome.known()) return error.SuccessClearedFence;
+    const snapshot = owners.shared().snapshot(io);
+    const lineage = owners.shared().correlationSnapshot(io, correlation);
+    if (!snapshot.uncertain or snapshot.owned != 1 or !lineage.found or !lineage.uncertain or lineage.references != 1)
+        return error.OriginalLineageLost;
+    std.debug.print("PASS: separate actual unit/host ANE metadata latch preserves original lineage\n", .{});
+}

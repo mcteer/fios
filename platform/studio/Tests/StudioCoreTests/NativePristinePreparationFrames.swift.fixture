@@ -1,0 +1,13 @@
+import Foundation
+
+@main
+struct NativePristinePreparationFrames {
+    static func main()throws {
+        guard CommandLine.arguments.count==2 else {throw NativeControlError.invalid}
+        let bytes=try Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[1]))
+        let closure=try NativePristinePreparationWire.reply(bytes,instance:String(repeating:"ab",count:16),
+            correlationID:String(repeating:"01",count:32),model:"fixture/a",rootSequence:1,after:0)
+        guard closure.rootSequence==1,closure.sourceSampledAt != nil else {throw NativeControlError.invalid}
+        print("PASS actual native pristine preparation frame retains exact CPU closure identity; no native authority")
+    }
+}

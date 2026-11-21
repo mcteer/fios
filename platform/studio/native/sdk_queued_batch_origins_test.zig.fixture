@@ -1,0 +1,111 @@
+// Ordinary actor handoff and real SDK CPU callbacks, using actual current
+// native helpers. Slot-shaped metadata here is not full scheduler acceptance.
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const sdk = @import("fios/sdk_request_ownership.zig");
+const slots = @import("fios/current_queued_origins.zig");
+extern "c" fn usleep(microseconds: c_uint) c_int;
+extern fn fios_host_owner_fixture_start() c_int;
+extern fn fios_host_owner_fixture_wait(second: c_int) c_int;
+extern fn fios_host_owner_fixture_owner(second: c_int) c_int;
+extern fn fios_host_owner_fixture_release_first() void;
+extern fn fios_host_owner_fixture_cleanup() c_int;
+const Slot = struct { fios_origins: ?*const owners.Retained };
+const Flag = std.atomic.Value(bool);
+fn wait(flag: *Flag) !void {
+    for (0..3000) |_| {
+        if (flag.load(.acquire)) return;
+        _ = usleep(1000);
+    }
+    return error.SlotFixtureDeadline;
+}
+const Work = struct {
+    io: std.Io,
+    entries: []const *Slot,
+    entered: Flag = .init(false),
+    go: Flag = .init(false),
+    done: Flag = .init(false),
+    started: Flag = .init(false),
+    failed: Flag = .init(false),
+    restored: Flag = .init(false),
+    fn run(self: *Work) void {
+        const previous = owners.shared().enter(self.io) catch {
+            self.failed.store(true, .release);self.entered.store(true, .release);return;
+        };
+        defer owners.shared().leave(self.io, previous) catch {};
+        owners.current().* = previous;
+        defer owners.current().* = null;
+        var scope = (slots.retain(self.io, self.entries) catch {
+            self.failed.store(true, .release);self.entered.store(true, .release);return;
+        }) orelse {self.failed.store(true, .release);self.entered.store(true, .release);return;};
+        scope.enter(self.io) catch {
+            self.failed.store(true, .release);self.entered.store(true, .release);return;
+        };
+        defer {
+            if (!scope.finish(self.io)) self.failed.store(true, .release);
+            self.restored.store(std.meta.eql(owners.current().*, previous) and owners.current_group().* == null, .release);
+        }
+        self.entered.store(true, .release);
+        wait(&self.go) catch {self.failed.store(true, .release);return;};
+        if (fios_host_owner_fixture_start() != 1) {self.failed.store(true, .release);self.done.store(true, .release);return;}
+        self.started.store(true, .release);
+        self.done.store(true, .release);
+    }
+};
+test "fios genuine queued batch origin union retains both native roots" {
+    const io = std.testing.io;
+    try owners.shared().initialize(io, @splat(29));
+    try sdk.initialize(io);
+    const first = try owners.shared().enter(io);
+    const second = try owners.shared().enter(io);
+    const first_id: owners.CorrelationID = @splat(31);
+    const second_id: owners.CorrelationID = @splat(37);
+    try owners.shared().associate(io, first, first_id);
+    try owners.shared().associate(io, second, second_id);
+    try owners.shared().bind(io, first, "fixture/slot-origin");
+    try owners.shared().bind(io, second, "fixture/slot-origin");
+    const first_origin = try owners.shared().retainTokens(io, &.{first});
+    const second_origin = try owners.shared().retainTokens(io, &.{second});
+    var a: Slot = .{ .fios_origins = &first_origin };
+    var b: Slot = .{ .fios_origins = &second_origin };
+    try owners.shared().leave(io, first);
+    try owners.shared().leave(io, second);
+    // A repeated participant is ordinary interleaving, not another request.
+    const participants = [_]*Slot{ &a, &b, &a };
+    var work: Work = .{ .io = io, .entries = &participants };
+    const thread = try std.Thread.spawn(.{}, Work.run, .{&work});
+    var joined = false;
+    var cleaned = false;
+    defer {
+        work.go.store(true, .release);
+        if (!joined) thread.join();
+        if (work.started.load(.acquire) and !cleaned) { _ = fios_host_owner_fixture_cleanup(); }
+    }
+    try wait(&work.entered);
+    try std.testing.expect(!work.failed.load(.acquire));
+    // Release and overwrite original metadata after the actor's clone.
+    try std.testing.expect(a.fios_origins.?.releaseIfCertain(io));a.fios_origins = null;
+    try std.testing.expect(b.fios_origins.?.releaseIfCertain(io));b.fios_origins = null;
+    work.go.store(true, .release);
+    try wait(&work.done);
+    thread.join();joined = true;
+    try std.testing.expect(!work.failed.load(.acquire) and work.restored.load(.acquire));
+    try std.testing.expectEqual(@as(c_int, 1), fios_host_owner_fixture_wait(0));
+    try std.testing.expectEqual(@as(c_int, 1), fios_host_owner_fixture_owner(0));
+    try std.testing.expectEqual(@as(usize, 2), owners.shared().snapshot(io).owned);
+    const first_lineage = owners.shared().correlationSnapshot(io, first_id);
+    const second_lineage = owners.shared().correlationSnapshot(io, second_id);
+    try std.testing.expect(first_lineage.found and second_lineage.found);
+    try std.testing.expectEqual(first.sequence, first_lineage.root_sequence);
+    try std.testing.expectEqual(second.sequence, second_lineage.root_sequence);
+    fios_host_owner_fixture_release_first();
+    try std.testing.expectEqual(@as(c_int, 1), fios_host_owner_fixture_wait(1));
+    try std.testing.expectEqual(@as(c_int, 1), fios_host_owner_fixture_owner(1));
+    try std.testing.expectEqual(@as(usize, 2), owners.shared().snapshot(io).owned);
+    try std.testing.expect(owners.shared().correlationSnapshot(io, first_id).found);
+    try std.testing.expect(owners.shared().correlationSnapshot(io, second_id).found);
+    try std.testing.expectEqual(@as(c_int, 1), fios_host_owner_fixture_cleanup());cleaned = true;
+    try std.testing.expectEqual(@as(u32, 0), sdk.diagnostic().active_contexts);
+    try std.testing.expectEqual(@as(usize, 0), owners.shared().snapshot(io).owned);
+    std.debug.print("PASS: genuine SDK callbacks retain both queued batch origins after actor exit and metadata cleanup; no terminal authority\n", .{});
+}

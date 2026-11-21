@@ -1,0 +1,38 @@
+
+// Direct bookkeeping outcomes only; no ANE API or native request is invoked.
+test "fios current ane reported run failure is not replayed" {
+    const owners = @import("../../fios/request_ownership.zig");
+    const outcome = @import("../../fios/current_ane_run_uncertainty.zig");
+    try owners.shared().initialize(testing.io, @splat(254));
+    try testing.expect(!outcome.known());
+    const MockRun = struct {
+        var calls: usize = 0;
+        fn run(_: @This(), _: *rt.ErrBuf) error{RunFailed}!void {
+            calls += 1;
+            outcome.observeOutcome(false);
+            return error.RunFailed;
+        }
+    };
+    try testing.expectError(error.RunFailed, runReqsImpl(@as([]const MockRun, &.{.{}})));
+    if (MockRun.calls != 1) std.debug.print("FIO_CURRENT_ANE_REPLAYED_REPORTED_UNCERTAINTY\n", .{});
+    try testing.expectEqual(@as(usize, 1), MockRun.calls);
+    try testing.expect(outcome.known());
+    try testing.expect(owners.shared().knownUncertain(testing.io));
+    outcome.observeOutcome(true);
+    try testing.expect(outcome.known());
+    try testing.expect(@import("../../fios/current_ane_locked_cleanup_uncertainty.zig").known(testing.io, false, false));
+    try testing.expect(owners.shared().knownUncertain(testing.io));
+}
+test "fios current ane outcome uncertainty survives source initialization" {
+    const owners = @import("../../fios/request_ownership.zig");
+    const outcome = @import("../../fios/current_ane_run_uncertainty.zig");
+    try testing.expect(!outcome.known());
+    outcome.observeOutcome(true);
+    try testing.expect(!outcome.known());
+    outcome.observeOutcome(false);
+    try owners.shared().initialize(testing.io, @splat(255));
+    try testing.expect(outcome.known());
+    try testing.expect(@import("../../fios/current_ane_locked_cleanup_uncertainty.zig").known(testing.io, false, false));
+    outcome.observeOutcome(true);
+    try testing.expect(outcome.known() and owners.shared().knownUncertain(testing.io));
+}

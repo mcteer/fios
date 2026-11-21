@@ -1,0 +1,66 @@
+// Tiny healthy IOSurface ownership + ordinary CPU objects; no ANE model/API.
+#ifndef FIOS_ANE_SOURCE
+#error "Private source fixture required"
+#endif
+@interface FiosBindingModel : NSObject
+@property unsigned calls;
+@end
+@implementation FiosBindingModel
+- (BOOL)unloadWithQoS:(unsigned)qos error:(NSError **)error { (void)qos;*error=nil;self.calls+=1;return YES; }
+@end
+static bool fio_child_saw_parent;
+@interface FiosBindingChild : NSObject
+@property (weak) FiosBindingModel *parent;
+@end
+@implementation FiosBindingChild
+- (void)dealloc { fio_child_saw_parent=self.parent!=nil; }
+@end
+int main(int argc,char **argv) {
+    if (argc!=2) return 2;
+    const bool healthy=strcmp(argv[1],"healthy")==0,pending=strcmp(argv[1],"pending")==0;
+    if (!healthy && !pending && strcmp(argv[1],"uncertain")!=0) return 2;
+    IOSurfaceRef surface=msv_ane_bridge_surface(16);
+    if (!surface || IOSurfaceGetAllocSize(surface)>32768) { fprintf(stderr,"surface size refused\n");return 1; }
+    CFIndex original=CFGetRetainCount(surface);
+    msv_ane_model *h=calloc(1,sizeof(*h));IOSurfaceRef inputs[]={surface};
+    if (!fios_ane_model_capture_surfaces(h,inputs,1,surface) || h->fios_surface_count!=2 ||
+        h->fios_surfaces[0]!=surface || h->fios_surfaces[1]!=surface || CFGetRetainCount(surface)!=original+2) { fprintf(stderr,"surface capture refs %ld initial %ld\n",CFGetRetainCount(surface),original);return 1; }
+    __weak NSData *program_seen;
+    __weak NSData *weights_seen;
+    __weak NSObject *descriptor_seen;
+    __weak FiosBindingModel *model_seen;
+    __weak FiosBindingChild *child_seen;
+    @autoreleasepool {
+        NSMutableData *program=[NSMutableData dataWithLength:8];program_seen=program;
+        NSMutableData *weights=[NSMutableData dataWithLength:16];weights_seen=weights;
+        NSObject *descriptor=[NSObject new];descriptor_seen=descriptor;
+        FiosBindingModel *model=[FiosBindingModel new];model_seen=model;
+        FiosBindingChild *child=[FiosBindingChild new];child.parent=model;child_seen=child;
+        NSMutableArray *ins=[NSMutableArray array],*outs=[NSMutableArray array],*metadata=[NSMutableArray array],*requests=[NSMutableArray array];
+        NSDictionary *options=@{};
+        fios_ane_model_capture_inputs(h,program,weights,ins,outs,metadata,requests,options);
+        h->fios_descriptor=(__bridge_retained void *)descriptor;
+        h->model=(__bridge_retained void *)model;
+        if (pending) h->fios_pending_binding=(__bridge_retained void *)child;
+        else fios_ane_model_adopt_binding(h,requests,child);
+        if ((__bridge id)h->requests!=requests || (__bridge id)h->options!=options ||
+            ((__bridge NSArray *)h->fios_constructor_inputs)[0]!=program ||
+            ((__bridge NSArray *)h->fios_constructor_inputs)[1]!=weights ||
+            ((__bridge NSArray *)h->fios_bindings)[0]!=ins || ((__bridge NSArray *)h->fios_bindings)[1]!=outs ||
+            ((__bridge NSArray *)h->fios_bindings)[2]!=metadata) return 1;
+        model=nil;child=nil;requests=nil;
+        if (!healthy && !pending) fios_ane_fence(FIOS_ANE_REQUEST); // CPU metadata only.
+    }
+    bool accepted=msv_ane_model_try_free(h);
+    if (accepted!=healthy) return 1;
+    if (healthy) {
+        if (program_seen || weights_seen || descriptor_seen || model_seen || child_seen ||
+            !fio_child_saw_parent || CFGetRetainCount(surface)!=original) { fprintf(stderr,"healthy owners %d %d %d %d %d parent %d refs %ld initial %ld\n",program_seen!=nil,weights_seen!=nil,descriptor_seen!=nil,model_seen!=nil,child_seen!=nil,fio_child_saw_parent,CFGetRetainCount(surface),original);return 1; }
+    } else {
+        if (!program_seen || !weights_seen || !descriptor_seen || !model_seen || !child_seen ||
+            model_seen.calls || fio_child_saw_parent || !msv_ane_source_uncertainty() ||
+            CFGetRetainCount(surface)!=original+2 || msv_ane_model_try_free(h)) return 1;
+    }
+    CFRelease(surface); // Only this fixture's original extra owner; no terminal claim.
+    fprintf(stderr,"PASS: private ANE raw bindings preserve declared input owners\n");return 0;
+}

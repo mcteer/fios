@@ -1,0 +1,25 @@
+// Pure CPU descriptor/input lifetime control; no ANE framework/model/API.
+#ifndef FIOS_ANE_SOURCE
+#error "Private source fixture required"
+#endif
+static bool fio_descriptor_saw_input;
+@interface FiosDescriptorMetadata : NSObject
+@property (weak) NSData *program;
+@end
+@implementation FiosDescriptorMetadata
+- (void)dealloc { fio_descriptor_saw_input=self.program!=nil; }
+@end
+int main(void) {
+    @autoreleasepool {
+        msv_ane_program *p=calloc(1,sizeof(*p));
+        NSMutableData *program=[NSMutableData new],*weights=[NSMutableData new];
+        FiosDescriptorMetadata *descriptor=[FiosDescriptorMetadata new];descriptor.program=program;
+        NSMutableArray *models=[NSMutableArray new],*options=[NSMutableArray new];
+        fios_ane_program_capture_inputs(p,program,weights,models,options);
+        p->fios_descriptor=(__bridge_retained void *)descriptor;
+        program=nil;weights=nil;descriptor=nil;models=nil;options=nil;
+        if (!msv_ane_program_try_free(p)) return 1;
+    }
+    if (!fio_descriptor_saw_input) { fprintf(stderr,"FIO_CURRENT_ANE_DESCRIPTOR_OUTLIVED_DECLARED_INPUT\n");return 1; }
+    fprintf(stderr,"PASS: private ANE descriptor releases with original inputs alive\n");return 0;
+}

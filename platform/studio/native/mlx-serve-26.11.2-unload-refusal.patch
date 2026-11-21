@@ -1,0 +1,314 @@
+diff --git a/src/engines/mlx/load.zig b/src/engines/mlx/load.zig
+index b917a3e..e961beb 100644
+--- a/src/engines/mlx/load.zig
++++ b/src/engines/mlx/load.zig
+@@ -70,6 +70,7 @@ const scheduler_mod = @import("scheduler.zig");
+ /// caller decides how to surface (startup → recordLoadError + signal
+ /// started; on-demand → req.error_name + done broadcast).
+ pub fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
++    if (model_registry_mod.cleanupUncertain(sch.io)) return error.NativeCleanupUncertain;
+     // ── An engine beside MLX: a GGUF on ds4 or llama.cpp (the stub config/tok/chat_config move onto the entry),
+     //    or an MLX pack on the Neural Engine. `params` is `LoadParams` (startup) or `*LoadRequest` (cold load).
+     const Ty = @TypeOf(params);
+@@ -77,7 +78,7 @@ pub fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
+     const Inner = if (TyInfo == .pointer) TyInfo.pointer.child else Ty;
+     params.entry.load_progress.start(io_util.nowMsMonotonic(sch.io));
+     const ane_declined = if (@hasField(Inner, "ane_declined")) params.ane_declined else false;
+-    if (params.gguf == null and engines_served.aneWanted(params.config, params.ane) and !ane_declined and engines_load.aneAdmit(sch, params) and try engines_load.aneOpen(sch, params)) return;
++    if (params.gguf == null and engines_served.aneWanted(params.config, params.ane) and !ane_declined and try engines_load.aneAdmit(sch, params) and try engines_load.aneOpen(sch, params)) return;
+     if (params.gguf) |route| return engines_load.loadGguf(sch, params, route);
+     // ── media-gen fast path: the (stub) config's model_type marks an image/
+     //    audio/video model (FLUX / Qwen3-TTS / LTX). Build the modality engine
+@@ -111,7 +112,7 @@ pub fn doLoadOnInferenceThread(sch: *Scheduler, params: anytype) !void {
+     else
+         null;
+     defer if (in_dir_drafter) |p| sch.allocator.free(p);
+-    makeRoomInRam(sch, params.entry.id, model_bytes);
++    try makeRoomInRam(sch, params.entry.id, model_bytes);
+     const live_before = mlxActiveBytes();
+     if (!scheduler_mod.skip_mem_preflight) {
+         const gb = 1024.0 * 1024.0 * 1024.0;
+diff --git a/src/engines/mlx/runtime/engine_load.zig b/src/engines/mlx/runtime/engine_load.zig
+index 0692149..6dab720 100644
+--- a/src/engines/mlx/runtime/engine_load.zig
++++ b/src/engines/mlx/runtime/engine_load.zig
+@@ -73,7 +73,8 @@ fn adoptEngineWindow(config: *ModelConfig, window: u32) void {
+ 
+ /// The Neural Engine's own preflight: its layout runs there, its RAM is made and its bill fits; false serves the
+ /// model on the GPU (by name in the log). Inference thread: making room frees MLX models.
+-pub fn aneAdmit(sch: *Scheduler, params: anytype) bool {
++pub fn aneAdmit(sch: *Scheduler, params: anytype) !bool {
++    if (@import("../../../host/registry/registry.zig").cleanupUncertain(sch.io)) return error.NativeCleanupUncertain;
+     const t = served_mod.table(.ane).?;
+     var v: abi.Verdict = .{};
+     if (!t.probe(.of(params.model_dir), .{}, &v)) {
+@@ -82,7 +83,7 @@ pub fn aneAdmit(sch: *Scheduler, params: anytype) bool {
+     }
+     // Its own preflight: the int8 copies outweigh a 4-bit pack's shards, and the GPU arm checks those.
+     const need = aneBytes(sch.allocator, params.model_dir, params.ane_slots) orelse return false;
+-    makeRoomInRam(sch, params.entry.id, need);
++    try makeRoomInRam(sch, params.entry.id, need);
+     if (!scheduler_mod.skip_mem_preflight) {
+         const avail = availForLoad(sch.io, need);
+         if (memInsufficientForLoad(need, avail)) {
+diff --git a/src/engines/mlx/runtime/load_requests.zig b/src/engines/mlx/runtime/load_requests.zig
+index 1e9aa99..434379d 100644
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -41,7 +41,8 @@ pub fn logWiredPolicy(r: mlx.WiredPolicyResult) void {
+ }
+ 
+ /// Free `victims` (each marked `.evicting`, nobody holding it) on this thread.
+-fn evictResident(sch: *Scheduler, victims: []const *LoadedModel) void {
++fn evictResident(sch: *Scheduler, victims: []const *LoadedModel) !void {
++    if (model_registry_mod.cleanupUncertain(sch.io)) return error.NativeCleanupUncertain;
+     for (victims) |victim| {
+         const victim_bytes = victim.bytes_resident; // unloadResident zeroes it
+         log.info("[registry] evicting model id={s} ({d:.2} GB resident)\n", .{
+@@ -49,7 +50,7 @@ fn evictResident(sch: *Scheduler, victims: []const *LoadedModel) void {
+             @as(f64, @floatFromInt(victim_bytes)) / 1_073_741_824.0,
+         });
+         moveHotCacheViewOff(sch, victim);
+-        victim.unloadResident();
++        if (!victim.tryUnloadResident()) return error.NativeCleanupUncertain;
+         sch.registry.mutex.lockUncancelable(sch.io);
+         sch.registry.accountEvictedLocked(victim_bytes);
+         sch.registry.finalizeEvictionLocked(victim);
+@@ -59,12 +60,14 @@ fn evictResident(sch: *Scheduler, victims: []const *LoadedModel) void {
+     // BEFORE the load: its preflight reads OS-level availability, and the
+     // parked pool would make it refuse a load that fits.
+     _ = mlx.mlx_clear_cache();
++    if (model_registry_mod.cleanupUncertain(sch.io)) return error.NativeCleanupUncertain;
+ }
+ 
+ /// Unloads idle models, oldest first, when that lets a load of `weights` fit in RAM: as few as fit
+ /// it, none when it already fits or when even all of them cannot (`planRamEvictionsLocked`). Runs
+ /// past `--skip-mem-preflight` too: an idle model reloads, an overcommitted Mac kills the server.
+-pub fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) void {
++pub fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) !void {
++    if (model_registry_mod.cleanupUncertain(sch.io)) return error.NativeCleanupUncertain;
+     const room = loadRamRoom() orelse return;
+     const need = loadRequirementBytes(weights);
+     var victims: [16]*LoadedModel = undefined;
+@@ -78,7 +81,7 @@ pub fn makeRoomInRam(sch: *Scheduler, keep_id: []const u8, weights: u64) void {
+         @as(f64, @floatFromInt(room)) / 1_073_741_824.0,
+         n,
+     });
+-    evictResident(sch, victims[0..n]);
++    try evictResident(sch, victims[0..n]);
+ }
+ 
+ pub fn runLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
+@@ -92,13 +95,13 @@ pub fn runLoadRequest(sch: *Scheduler, req: *LoadRequest) void {
+     // Step 1: evict victims (if any) BEFORE the load, so peak GPU residency
+     // never holds the old + new model at once. unloadResident() drops
+     // mlx_arrays — same thread-stream invariant as cleanup_queue drain.
+-    evictResident(sch, req.evict_entries);
++    evictResident(sch, req.evict_entries) catch |err| return failLoadRequest(sch, req, err);
+     req.evict_entries = &.{};
+ 
+     // A Neural Engine build runs on its own thread while the GPU keeps serving.
+     if (req.gguf == null and !req.ane_declined and aneWanted(req.config, req.ane)) {
+         req.entry.load_progress.start(io_util.nowMsMonotonic(sch.io));
+-        if (engines_load.aneAdmit(sch, req)) {
++        if (engines_load.aneAdmit(sch, req) catch |err| return failLoadRequest(sch, req, err)) {
+             _ = sch.ane_builds.fetchAdd(1, .acq_rel);
+             const t = std.Thread.spawn(.{}, aneBuildThread, .{ sch, req }) catch return aneBuildThread(sch, req);
+             t.detach();
+@@ -208,12 +211,29 @@ pub fn runUnloadRequest(sch: *Scheduler, req: *UnloadRequest) void {
+         entry.id,
+         @as(f64, @floatFromInt(bytes)) / 1_073_741_824.0,
+     });
++    if (model_registry_mod.cleanupUncertain(sch.io)) {
++        req.fios_failed = true;
++        req.fios_cleanup_refused = true;
++        finishUnloadRequest(sch, req);
++        return;
++    }
+     moveHotCacheViewOff(sch, entry);
+-    entry.unloadResident();
++    if (!entry.tryUnloadResident()) {
++        req.fios_failed = true;
++        req.fios_cleanup_refused = true;
++        finishUnloadRequest(sch, req);
++        return;
++    }
+     // unloadResident freed the arrays into MLX's allocator cache — clear it
+     // so the unload actually returns the memory to the OS (the whole point
+     // of the load→generate→unload flow).
+     _ = mlx.mlx_clear_cache();
++    if (model_registry_mod.cleanupUncertain(sch.io)) {
++        req.fios_failed = true;
++        req.fios_cleanup_refused = true;
++        finishUnloadRequest(sch, req);
++        return;
++    }
+     // Drop any borrowed views that pointed at this entry so post-unload reads
+     // don't dangle (gen entries leave xfm null already, but an LLM unload
+     // must clear them).
+@@ -386,3 +406,63 @@ test "fios current queued unload preserves sender and worker origins" {
+     if (!Probe.attributed) std.debug.print("FIO_CURRENT_QUEUED_UNLOAD_LOST_ORIGINS\n", .{});
+     try std.testing.expect(Probe.attributed);
+ }
++
++test "fios current unload refuses callback uncertainty without releasing accounting" {
++    const a = std.heap.page_allocator;
++    const io = std.testing.io;
++    const owners = @import("../../../fios/request_ownership.zig");
++    const served = @import("../../../host/engines/served.zig");
++    const abi = @import("../../../abi/engine.zig");
++    const fake = @import("../../../testing/fake_engine.zig");
++    owners.shared().primary_guard = false;
++    try owners.shared().initialize(io, @splat(131));
++    const registry = try model_registry_mod.ModelRegistry.init(a, io, null, 2, 0, null);
++    const model = try registry.registerStub("fixture/unload-refusal", "/fixture/never-loaded", null);
++    const root = try owners.shared().enter(io);
++    try owners.shared().bind(io, root, model.id);
++    owners.current().* = root;
++    const original = try a.create(owners.Retained);
++    original.* = (try owners.retainCurrent(io)).?;
++    owners.current().* = null;
++    const Probe = struct {
++        io: std.Io,
++        calls: usize = 0,
++        fn close(raw: *anyopaque) callconv(.c) void {
++            const self: *@This() = @ptrCast(@alignCast(raw));
++            self.calls += 1;
++            owners.shared().fence(self.io);
++        }
++    };
++    const probe = try a.create(Probe);
++    probe.* = .{ .io = io };
++    const engine_table = try a.create(abi.Engine);
++    engine_table.* = fake.own_thread;
++    engine_table.close = Probe.close;
++    const progress = try a.create(@import("../../../host/registry/load_progress.zig").Progress);
++    progress.* = .{};
++    const gauges = try a.create(served.Gauges);
++    gauges.* = .{};
++    const engine = try a.create(served.Served);
++    engine.* = .{ .gpa = a, .kind = .llama, .table = engine_table, .handle = probe, .info = undefined, .host = undefined, .progress = progress, .gauges = gauges, .metrics = null };
++    model.engine = engine;
++    model.state = .evicting;
++    // Synthetic local accounting only: no weights, model or native context.
++    model.bytes_resident = 128;
++    registry.current_resident_bytes = 128;
++    const scheduler = try a.create(Scheduler);
++    scheduler.* = std.mem.zeroInit(Scheduler, .{ .allocator = a, .io = io, .registry = registry });
++    const request = try a.create(UnloadRequest);
++    request.* = .{ .entry = model, .fios_origins = original };
++    runUnloadRequest(scheduler, request);
++    try std.testing.expect(request.done);
++    try std.testing.expectEqual(@as(usize, 1), probe.calls);
++    if (!request.fios_failed or model.state != .evicting) std.debug.print("FIO_CURRENT_UNLOAD_DROPPED_CALLBACK_REFUSAL\n", .{});
++    try std.testing.expect(request.fios_failed and model.state == .evicting);
++    try std.testing.expect(model.engine == engine);
++    try std.testing.expectEqual(@as(u64, 128), model.bytes_resident);
++    try std.testing.expectEqual(@as(u64, 128), registry.current_resident_bytes);
++    try std.testing.expect(owners.current().* == null and owners.current_group().* == null);
++    try std.testing.expect(owners.shared().knownUncertain(io));
++    try std.testing.expect(!original.releaseIfCertain(io));
++    // Retain the entire private diagnostic graph; no uncertainty reset.
++}
+diff --git a/src/engines/mlx/runtime/model_state.zig b/src/engines/mlx/runtime/model_state.zig
+index bd41c1a..dbbac17 100644
+--- a/src/engines/mlx/runtime/model_state.zig
++++ b/src/engines/mlx/runtime/model_state.zig
+@@ -66,15 +66,19 @@ pub fn freeMlx(self: *LoadedModel) void {
+ /// `.unloaded` for later listing/reload, AND by `Scheduler.deinit` so
+ /// mlx frees happen on the inference thread.
+ pub fn unloadResident(self: *LoadedModel) void {
++    const io = std.Io.Threaded.global_single_threaded.io();
++    if (registry.cleanupUncertain(io)) return;
+     // A Thunderbolt pair's model unloads on both Macs; its next load plans again.
+     if (distributed.serves(self.path)) distributed.release();
+-    self.closeEngine();
++    if (registry.cleanupUncertain(io) or !self.tryCloseEngine()) return;
+     if (self.media_plugin) |e| {
+         e.deinit();
+         self.media_plugin = null;
+     }
++    if (registry.cleanupUncertain(io)) return;
+     self.gen_busy = false;
+     freeMlx(self);
++    if (registry.cleanupUncertain(io)) return;
+     if (self.drafter_path.len > 0) {
+         self.allocator.free(self.drafter_path);
+         self.drafter_path = "";
+@@ -91,5 +95,7 @@ pub fn unloadResident(self: *LoadedModel) void {
+     // re-pins from then-current memory. `pinned_context` stays — clients
+     // budget against it for the whole session.
+     if (self.config) |c| c.pinned_prefill_chunk = 0;
+-    self.state = .unloaded;
++    // Queued callers publish .unloaded only after their remaining cleanup.
++    // This private bit records a local return, never native completion.
++    self.fios_local_unload_finished = true;
+ }
+diff --git a/src/engines/mlx/scheduler.zig b/src/engines/mlx/scheduler.zig
+index de0d45f..6c92ced 100644
+--- a/src/engines/mlx/scheduler.zig
++++ b/src/engines/mlx/scheduler.zig
+@@ -1120,6 +1120,7 @@ pub fn unloadModelIfIdle(self: *Scheduler, id_or_empty: []const u8, idle_window_
+     req.done_mu.lockUncancelable(self.io);
+     while (!req.done) req.done_cond.waitUncancelable(self.io, &req.done_mu);
+     req.done_mu.unlock(self.io);
++    if (req.fios_cleanup_refused) return error.NativeCleanupUncertain;
+     if (req.fios_failed) return error.InvalidQueuedOrigins;
+ }
+ 
+diff --git a/src/host/gpu_thread/requests.zig b/src/host/gpu_thread/requests.zig
+index 72398d8..83488c7 100644
+--- a/src/host/gpu_thread/requests.zig
++++ b/src/host/gpu_thread/requests.zig
+@@ -202,6 +202,7 @@ pub fn takeMergeable(queue: *std.ArrayList(*GenRequest), batch: []*GenRequest, n
+ pub const UnloadRequest = struct {
+     fios_origins: ?*const fios_ownership.Retained = null,
+     fios_failed: bool = false,
++    fios_cleanup_refused: bool = false,
+     entry: *model_registry_mod.LoadedModel,
+     done: bool = false,
+     done_mu: std.Io.Mutex = .init,
+diff --git a/src/host/registry/registry.zig b/src/host/registry/registry.zig
+index 72110ed..6c931c2 100644
+--- a/src/host/registry/registry.zig
++++ b/src/host/registry/registry.zig
+@@ -34,6 +34,12 @@ const log = @import("../../sdk/util/log.zig");
+ const handles = @import("../../abi/mlx_handles.zig");
+ const mlx_engine = @import("../engines/mlx.zig");
+ 
++/// Negative cleanup evidence only; never native completion or admission.
++pub fn cleanupUncertain(io: std.Io) bool {
++    const options = @import("build_options");
++    return @import("../../fios/current_cleanup_uncertainty.zig").known(io, options.fios_source_sdk, options.llama_engine);
++}
++
+ /// Bumped every time a model becomes `.ready`; readers compare against the value they last acted on.
+ pub const Generations = struct { load: std.atomic.Value(u64) = .init(0), last_unload: UnloadMark = .{} };
+ /// Load bookkeeping one copy for every compile unit (`Shared`): the generation bumped every time a model becomes
+@@ -288,6 +294,8 @@ pub const LoadedModel = struct {
+     /// Resident GPU bytes for this entry (weights + vision + drafter),
+     /// summed at load time. Zero for non-`.ready` entries.
+     bytes_resident: u64,
++    /// Local function return only; never native terminality or admission.
++    fios_local_unload_finished: bool = false,
+     /// MLX bytes the load added, measured at ready: above `bytes_resident` when the model fills its own cache
+     /// at load (a plugin's streamed-expert cache), so eviction credits what unloading frees.
+     bytes_live: u64 = 0,
+@@ -462,8 +470,16 @@ pub const LoadedModel = struct {
+     /// borrower has released.
+     /// Free only the MLX-allocating state, leaving CPU-only fields (config/tokenizer/chat_config) and the
+     /// discovery stub intact: eviction keeps the entry `.unloaded` for later listing and reload. Inference thread.
+-    pub fn unloadResident(self: *LoadedModel) void {
++    pub fn tryUnloadResident(self: *LoadedModel) bool {
++        const io = std.Io.Threaded.global_single_threaded.io();
++        if (cleanupUncertain(io) or self.refcount.load(.acquire) != 0) return false;
++        self.fios_local_unload_finished = false;
+         mlx_engine.api().unload_resident(self);
++        return !cleanupUncertain(io) and self.fios_local_unload_finished;
++    }
++
++    pub fn unloadResident(self: *LoadedModel) void {
++        if (self.tryUnloadResident()) self.state = .unloaded;
+     }
+ 
+     pub fn releaseRetainedCpuState(self: *LoadedModel) void {

@@ -1,0 +1,38 @@
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+index 9671379..a4ca1c5 100644
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -358,6 +358,9 @@ pub const Tracker = struct {
+     pub fn associate(self: *Tracker, io: std.Io, token: Token, id: CorrelationID) !void {
+         self.mutex.lockUncancelable(io);
+         defer self.mutex.unlock(io);
++        return self.associateLocked(token, id);
++    }
++    fn associateLocked(self: *Tracker, token: Token, id: CorrelationID) !void {
+         if (!self.initialized or self.uncertain) return error.CoverageUncertain;
+         const slot = try self.checked(token);
+         if (slot.phase != .ingress or slot.correlation != null) return error.InvalidCorrelationState;
+@@ -436,6 +439,23 @@ pub const Tracker = struct {
+         slot.models |= mask;
+         return key;
+     }
++    // Internal source claim only: correlate and bind a new preparation root
++    // under one mutex. Not a transport grant, advertised-model/capacity proof,
++    // native reservation or device completion. The current serving source has
++    // primary_guard=false and cannot use this guarded path.
++    pub fn claimCorrelatedPreparation(self: *Tracker, io: std.Io, model: []const u8, id: CorrelationID) !Token {
++        self.observeBackendUncertainty(io);
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.primary_guard) return error.UnsupportedSourceGuard;
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        if (std.mem.allEqual(u8,&id,0)) return error.InvalidCorrelation;
++        const token = try self.enterLocked(false);
++        errdefer self.leaveLocked(token) catch {self.uncertain = true;};
++        try self.associateLocked(token,id);
++        try self.bindLocked(token,model);
++        return token;
++    }
+     // A distinct bounded internal owner spans scheduler preparation/loading.
+     // Parent identity is read and copied into the child under this same lock;
+     // no TLS/client identity can bypass exact token/model membership checks.

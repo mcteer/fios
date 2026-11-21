@@ -1,0 +1,26 @@
+diff --git a/lib/ane/ane_bridge.m b/lib/ane/ane_bridge.m
+index 8bfbb94..983f027 100644
+--- a/lib/ane/ane_bridge.m
++++ b/lib/ane/ane_bridge.m
+@@ -447,10 +447,20 @@ uint32_t msv_ane_resident(void) {
+     }
+ }
+ 
+-/* Unloads `model`; it no longer counts as resident whatever the runtime answers. */
++/* Resident metadata is observational, never native completion/admission. */
+ static BOOL bridge_unload(id model, NSError **failure) {
++#ifdef FIOS_ANE_SOURCE
++    *failure=nil;
++    if (msv_ane_source_uncertainty()) return NO;
++    const BOOL accepted=((BOOL(*)(id, SEL, unsigned int, NSError **))objc_msgSend)(
++        model,@selector(unloadWithQoS:error:),21,failure);
++    if (accepted) bridge_mark_resident(model,false);
++    else fios_ane_fence(FIOS_ANE_UNLOAD);
++    return accepted;
++#else
+     bridge_mark_resident(model, false);
+     return ((BOOL(*)(id, SEL, unsigned int, NSError **))objc_msgSend)(model, @selector(unloadWithQoS:error:), 21, failure);
++#endif
+ }
+ 
+ /* Load `model`, again after a pause when the runtime refuses. */

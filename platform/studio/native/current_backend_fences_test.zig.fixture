@@ -1,0 +1,55 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const wire = @import("fios/control_protocol.zig");
+const current = @import("fios/current_backend_fences.zig");
+fn request() [32]u8 {
+    var result: [32]u8 = @splat(0);@memcpy(result[0..4], "FIB9");result[4] = 2;@memcpy(result[8..24], &@as([16]u8,@splat(121)));return result;
+}
+test "fios current backend fence wire unavailable is not false and legacy stays separate" {
+    const io = std.testing.io;var tracker: owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io, @splat(121));
+    var req = request();const unavailable = wire.dispatchCurrentBackendFences(&tracker, io, &req, null);
+    try std.testing.expect(unavailable[4] == 2 and unavailable[5] == 0 and unavailable[6] == 0 and unavailable[7] == 0);
+    try std.testing.expect(std.mem.allEqual(u8, unavailable[40..64], 0));
+    req[4] = 1;const legacy = wire.dispatchBackendFences(&tracker, io, &req, null);
+    try std.testing.expect(legacy[4] == 1 and legacy[5] == 0 and legacy[6] == 0);
+    const wrong = wire.dispatchCurrentBackendFences(&tracker, io, &req, null);
+    try std.testing.expectEqual(@intFromEnum(wire.Status.invalid), wrong[5]);
+}
+test "fios current backend fence wire all independent bit combinations" {
+    const io = std.testing.io;var tracker: owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io, @splat(121));
+    const Source = struct {
+        var readings: wire.CurrentBackendFenceReadings = .{};
+        fn read() wire.CurrentBackendFenceReadings {return readings;}
+    };
+    const req = request();var frame: [64]u8 = undefined;
+    for (0..128) |mask| {
+        inline for (.{ "sdk_uncertain", "llama_uncertain", "streamed_pool_uncertain", "ds4_host_uncertain", "ds4_gpu_uncertain", "ane_reported_uncertain", "ane_native_uncertain" }, 0..) |field,index| {
+            @field(Source.readings, field) = mask & (@as(usize, 1) << @as(u3,@intCast(index))) != 0;
+        }
+        frame = wire.dispatchCurrentBackendFences(&tracker, io, &req, Source.read);
+        try std.testing.expectEqual(@as(u8, 127), frame[6]);try std.testing.expectEqual(@as(u8,@intCast(mask)), frame[7]);
+        try std.testing.expectEqual(@as(u8, 0), frame[5]);
+    }
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "current-fences-native-frame.bin", .data = &frame });
+    Source.readings = .{ .sdk_uncertain = false, .ane_native_uncertain = true };
+    frame = wire.dispatchCurrentBackendFences(&tracker, io, &req, Source.read);
+    try std.testing.expectEqual(@as(u8,65), frame[6]);try std.testing.expectEqual(@as(u8,64), frame[7]);
+}
+test "fios current backend fence invalid request and instance do not call producer" {
+    const io = std.testing.io;var tracker: owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io, @splat(121));
+    const Source = struct {var calls: usize = 0;fn read() wire.CurrentBackendFenceReadings {calls += 1;return .{ .sdk_uncertain = true };}};
+    const req = request();
+    for ([_]usize{ 0,4,5,6,7,24,31 }) |index| {
+        var bad = req;bad[index] = 255;const frame = wire.dispatchCurrentBackendFences(&tracker, io, &bad, Source.read);
+        try std.testing.expectEqual(@intFromEnum(wire.Status.invalid), frame[5]);
+    }
+    var bad = req;bad[8] = 0;const frame = wire.dispatchCurrentBackendFences(&tracker, io, &bad, Source.read);
+    try std.testing.expectEqual(@intFromEnum(wire.Status.wrong_instance), frame[5]);try std.testing.expectEqual(@as(usize,0), Source.calls);
+}
+test "fios current backend fence compiled out sources remain unavailable without native calls" {
+    const io = std.testing.io;var tracker: owners.Tracker = .{ .primary_guard = false };try tracker.initialize(io, @splat(121));
+    const values = current.read();
+    inline for (@typeInfo(wire.CurrentBackendFenceReadings).@"struct".field_names) |field| try std.testing.expect(@field(values,field) == null);
+    const req = request();const frame = wire.dispatchCurrentBackendFences(&tracker, io, &req, current.read);
+    try std.testing.expectEqual(@as(u8,0), frame[6]);try std.testing.expectEqual(@as(u8,0), frame[7]);
+}

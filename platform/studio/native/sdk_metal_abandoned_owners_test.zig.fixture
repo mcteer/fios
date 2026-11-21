@@ -1,0 +1,29 @@
+// Genuine source SDK descriptor/native reference lifetime; no native proof.
+const std=@import("std");
+const owners=@import("request_ownership.zig");
+const sdk=@import("sdk_request_ownership.zig");
+extern fn fios_abandoned_owner_fixture_begin() c_int;
+extern fn fios_abandoned_owner_fixture_drop() c_int;
+test "fios genuine SDK abandoned buffer preserves native uncertainty" {
+    const io=std.testing.io;
+    try owners.shared.initialize(io,@splat(7));try sdk.initialize(io);
+    const root=try owners.shared.enter(io);
+    try owners.shared.bind(io,root,"fixture/abandoned-buffer");try owners.shared.active(io,root);
+    owners.current=root;
+    try std.testing.expectEqual(@as(c_int,1),fios_abandoned_owner_fixture_begin());
+    owners.current=null;try owners.shared.leave(io,root);
+    try std.testing.expectEqual(@as(u32,1),sdk.diagnostic().active_contexts);
+    try std.testing.expectEqual(@as(usize,1),owners.shared.snapshot(io).owned);
+    try std.testing.expectEqual(@as(c_int,1),fios_abandoned_owner_fixture_drop());
+    const status=sdk.diagnostic();
+    std.debug.print("genuine_abandoned_buffer native_contexts={d} uncertain={} retained_roots={d}\n",.{status.active_contexts,status.uncertain,owners.shared.snapshot(io).owned});
+    try std.testing.expect(status.uncertain);
+    try std.testing.expectEqual(@as(u32,1),status.active_contexts);
+    try std.testing.expectEqual(@as(usize,1),owners.shared.snapshot(io).owned);
+    try std.testing.expect(owners.shared.snapshot(io).uncertain);
+    const later=try owners.shared.enter(io);
+    try std.testing.expectError(error.CoverageUncertain,owners.shared.bind(io,later,"fixture/abandoned-buffer"));
+    try owners.shared.leave(io,later);
+    try std.testing.expect(owners.shared.hasRetainedWork(io));
+    std.debug.print("PASS: genuine SDK abandoned buffer quarantines native owners before descriptor destruction; independent uncertainty remains\n",.{});
+}

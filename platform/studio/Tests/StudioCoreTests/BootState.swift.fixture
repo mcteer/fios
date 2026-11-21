@@ -1,0 +1,21 @@
+import Foundation
+import Darwin
+
+// Trusted synthetic transport for the real manager's existing internal seam.
+// No keychain, service launch, enrollment, native endpoint or inference.
+@main struct BootStateFixture {
+    static func main() throws {
+        let args=CommandLine.arguments
+        guard geteuid() != 0,args.count==3,args[1].hasPrefix("/tmp/fios009-boot-state-"),
+              ["session","credentials","absent","unknown"].contains(args[2]) else {throw JournalError.invalid}
+        let cache=ServiceObservationCache()
+        if args[2] != "unknown" {
+            for service in ManagedService.allCases {
+                cache.publish(ServiceObservation(identity:nil,responding:false,sessionReady:args[2] != "session",
+                    credentialsReady:args[2] == "absent",nativeIdle:nil,runtimeUnmanaged:nil,
+                    sampledAt:HostResources.nowMilliseconds()),for:service)
+            }
+        }
+        try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:nil,serviceObservations:cache)
+    }
+}

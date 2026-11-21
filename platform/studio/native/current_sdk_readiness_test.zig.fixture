@@ -1,0 +1,70 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const sdk = @import("fios/sdk_request_ownership.zig");
+const protocol = @import("fios/control_protocol.zig");
+
+// Fixture adapter only: the production C++ bridge samples additional sources.
+fn readSDK() protocol.CurrentBackendFenceReadings {
+    return .{ .sdk_uncertain = sdk.fios_native_request_owners_known_uncertain() != 0 };
+}
+fn assertSDKFrame(io: std.Io, uncertain: bool) !void {
+    var request: [protocol.backend_request_size]u8 = @splat(0);
+    @memcpy(request[0..4], "FIB9");
+    request[4] = 3;
+    @memset(request[8..24], 8);
+    const frame = protocol.dispatchCurrentBackendFences(owners.shared(), io, &request, readSDK);
+    try std.testing.expectEqualSlices(u8, "FIF9", frame[0..4]);
+    try std.testing.expectEqual(@as(u8, 3), frame[4]);
+    try std.testing.expectEqual(@as(u8, 0), frame[5]);
+    try std.testing.expectEqual(@as(u8, 1), frame[6]);
+    try std.testing.expectEqual(@as(u8, @intFromBool(uncertain)), frame[7]);
+    try std.testing.expectEqual(@as(u8, 0), frame[40]); // Background coverage stays unknown.
+    std.debug.print("sdk_fixture_frame={s}\n", .{std.fmt.bytesToHex(frame, .lower)});
+}
+
+test "projected current bridge forwards pre-init failure" {
+    const io = std.testing.io;
+    sdk.fios_native_request_owners_uncertain();
+    try owners.shared().initialize(io, @splat(7));
+    try std.testing.expect(!owners.shared().knownUncertain(io));
+    try std.testing.expectError(error.Unavailable, sdk.initialize(io));
+    try std.testing.expect(owners.shared().knownUncertain(io));
+    try std.testing.expect(sdk.fios_native_request_owners_capture() == null);
+    try std.testing.expect(sdk.diagnostic().uncertain);
+    try std.testing.expect(sdk.hostEventDiagnostic().uncertain);
+    try std.testing.expect(sdk.metalEventDiagnostic().uncertain);
+}
+
+test "projected ready bridge preserves a negative diagnostic after uncertainty" {
+    const io = std.testing.io;
+    try owners.shared().initialize(io, @splat(8));
+    try sdk.initialize(io);
+    try std.testing.expect(!sdk.hostEventDiagnostic().uncertain);
+    try std.testing.expect(!sdk.metalEventDiagnostic().uncertain);
+    try assertSDKFrame(io, false);
+    const root = try owners.shared().enter(io);
+    try owners.shared().bind(io, root, "fixture/readiness");
+    try owners.shared().active(io, root);
+    owners.current().* = root;
+    const context = sdk.fios_native_request_owners_capture() orelse return error.MissingContext;
+    owners.current().* = null;
+    const frame = sdk.fios_native_request_owners_enter(context);
+    try std.testing.expect(frame != 0);
+    sdk.fios_native_request_owners_uncertain();
+    try std.testing.expectEqual(@as(c_int, 0), sdk.fios_native_request_owners_leave(frame));
+    try std.testing.expect(owners.current().* == null);
+    sdk.fios_native_request_owners_release(context);
+    try std.testing.expectEqual(@as(u32, 1), sdk.diagnostic().active_contexts);
+    try std.testing.expectEqual(@as(c_int, 1), sdk.fios_native_request_owners_known_uncertain());
+    const snapshot = owners.shared().snapshot(io);
+    try assertSDKFrame(io, true);
+    try std.testing.expect(snapshot.uncertain);
+    try std.testing.expectEqual(@as(usize, 1), snapshot.owned);
+    try std.testing.expect(owners.shared().knownUncertain(io));
+    try std.testing.expect(sdk.fios_native_request_owners_capture() == null);
+    for ([_]sdk.HostEventDiagnostic{ sdk.hostEventDiagnostic(), sdk.metalEventDiagnostic() }) |diag| {
+        try std.testing.expect(diag.uncertain);
+        try std.testing.expectEqual(@as(usize, 0), diag.active);
+        try std.testing.expectEqual(@as(u64, 0), diag.retired);
+    }
+}

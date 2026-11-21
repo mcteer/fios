@@ -1,0 +1,94 @@
+import Foundation
+import Darwin
+
+private final class LeaseDisplayRuntime:SandboxExecuting {
+    var calls=0
+    var active:Int {0}
+    func submit(job:String,command:SandboxCommand)throws {calls+=1;throw SandboxExecutionFailure.unavailable}
+    func drain()->[SandboxExecution] {[]}
+}
+func runJobLeaseStatusTests()throws {
+    let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:directory)}
+    let lateID=try exerciseJobLeaseStatus(directory:directory)
+    let reopened=try Journal(directory:directory.appendingPathComponent("state"))
+    guard let late=try reopened.jobs().first(where:{$0.id==lateID}),late.lease.revoked,
+          try reopened.unresolvedCount(job:lateID)==1,try reopened.requestCount(job:lateID)==1 else {
+        fatalError("Mailbox expiry cleared independent durable custody across reopen")
+    }
+}
+private func exerciseJobLeaseStatus(directory:URL)throws->String {
+    let journal=try Journal(directory:directory.appendingPathComponent("state"))
+    let token=TaskOwner.newToken(),owner=try TaskOwner(token:token,peerUID:geteuid()).hash
+    let job=try DurableJob(id:UUID().uuidString.lowercased(),idempotency:UUID().uuidString.lowercased(),
+        ownerHash:owner,requestHash:String(repeating:"b",count:64),created:1000)
+    _=try journal.reserveJob(job)
+    let tasks=TaskController(journal:journal,broker:ModelBroker(journal:journal)),runtime=LeaseDisplayRuntime()
+    let jobs=JobController(journal:journal,executor:runtime)
+    let artifacts=AsyncArtifacts(store:try ArtifactStore(directory:directory.appendingPathComponent("exports"),availableBytes:{50<<30}))
+    let sandbox=SandboxTaskController(journal:journal,jobs:jobs,tasks:tasks,artifacts:artifacts,socket:"/fixture/unused.sock",peerUID:geteuid())
+    let commands=TaskCommands(journal:journal,tasks:tasks,sandbox:sandbox,artifacts:artifacts,approvedImages:[],peerUID:geteuid())
+    var admission=AdmissionPolicy()
+    let sample=ResourceSample(sampledAt:1000,physical:24<<30,available:16<<30,vmAvailable:nil,diskFree:50<<30,cpu:10,pressure:.normal,thermal:.nominal,cpuSampledAt:1000)
+    func call(_ operation:String,_ now:Int64,id:String?=nil)throws->[String:Any] {
+        let request=try ControlRequest.decode(JSONSerialization.data(withJSONObject:["version":1,"id":UUID().uuidString.lowercased(),
+            "operation":operation,"payload":["owner":token,"job":id ?? job.id]]))
+        let response=try commands.handle(request,role:.task,sample:sample,admission:&admission,binding:{_ in nil},nativeCapacityProven:false,now:now,uptime:now)
+        let bytes=try JSONSerialization.data(withJSONObject:response)
+        guard let value=try JSONSerialization.jsonObject(with:bytes) as? [String:Any] else {throw JournalError.invalid}
+        return value
+    }
+    func lease(_ response:[String:Any])throws->[String:Any] {
+        guard let value=response["lease"] as? [String:Any] else {
+            throw NSError(domain:"JobLeaseStatus",code:1,userInfo:[NSLocalizedDescriptionKey:"Job status does not report its lease times"])
+        }
+        return value
+    }
+    let first=try lease(call("job.status",5000))
+    guard first["created_at"] as? Int64 == 1000,first["expires_at"] as? Int64 == 31000,
+          first["deadline_at"] as? Int64 == 901000,first["sampled_at"] as? Int64 == 5000,
+          first["revoked"] as? Bool == false else {throw JournalError.invalid}
+    let read=try lease(call("job.status",6000))
+    guard read["expires_at"] as? Int64 == 31000 else {throw JournalError.invalid}
+    let renewed=try lease(call("job.renew",20000))
+    guard renewed["expires_at"] as? Int64 == 50000,renewed["deadline_at"] as? Int64 == 901000 else {throw JournalError.invalid}
+    let cancelled=try lease(call("job.cancel",22000))
+    guard cancelled["revoked"] as? Bool == true,cancelled["expires_at"] as? Int64 == 50000,
+          runtime.calls==0 else {throw JournalError.invalid}
+    let late=try DurableJob(id:UUID().uuidString.lowercased(),idempotency:UUID().uuidString.lowercased(),
+        ownerHash:owner,requestHash:String(repeating:"c",count:64),created:23000)
+    _=try journal.reserveJob(late);try journal.transitionJob(id:late.id,to:.running)
+    let scope=InferenceScope(host:"fixture-host",endpointHash:String(repeating:"a",count:64),profileHash:String(repeating:"b",count:64),
+        managerEpoch:UUID().uuidString.lowercased(),nativeEpoch:"fixture-native",canonicalModel:"fixture/model",nativeModel:"fixture/model",sequence:1,sampledAt:24000)
+    try journal.claim(job:late.id,attempt:0,model:scope.canonicalModel,scope:scope)
+    try journal.markDispatched(job:late.id,attempt:0) // Synthetic durable claim only; no model request.
+    try commands.tick(now:24000,uptime:24000,artifactResults:[],model:[late.id:[.text(kind:"text",content:"Hello")]])
+    let delayed=try call("job.status",27001,id:late.id)
+    guard let current=try journal.jobs().first(where:{$0.id==late.id}),
+          delayed["state"] as? String == current.state.rawValue else {
+        throw NSError(domain:"JobLeaseStatus",code:2,userInfo:[NSLocalizedDescriptionKey:"Output timeout response reports an earlier job state"])
+    }
+    let second=try call("job.status",27002,id:late.id)
+    guard delayed["output_lost"] as? Bool == true,delayed["event"]==nil,second["event"]==nil,
+          delayed["unresolved_managed_requests"] as? Int==1,second["unresolved_managed_requests"] as? Int==1,
+          try journal.unresolvedCount(job:late.id)==1,try journal.requestCount(job:late.id)==1,
+          try lease(delayed)["revoked"] as? Bool == current.lease.revoked,
+          runtime.calls==0 else {throw JournalError.invalid}
+    let failed=try DurableJob(id:UUID().uuidString.lowercased(),idempotency:UUID().uuidString.lowercased(),
+        ownerHash:owner,requestHash:String(repeating:"d",count:64),created:28000)
+    _=try journal.reserveJob(failed)
+    try journal.transitionJob(id:failed.id,to:.revoking,now:28000)
+    try journal.transitionJob(id:failed.id,to:.removed,now:28000)
+    var worker=ModelWorkerProtocol(job:failed.id,attempt:0)
+    let timeout=try worker.accept(JSONSerialization.data(withJSONObject:["v":1,"job_id":failed.id,"type":"error","code":"upstream_timeout"]))
+    let orphanOutput=(0..<4).map { _ in SandboxTaskOutput(job:UUID().uuidString.lowercased(),stream:"stdout",data:Data([65])) }
+    try commands.tick(now:28000,uptime:28000,artifactResults:[],output:orphanOutput,model:[failed.id:[timeout]])
+    let failedStatus=try call("job.status",28001,id:failed.id)
+    guard let event=failedStatus["event"] as? [String:Any],event["type"] as? String == "model.done",
+          event["status"] as? String == "failed",event["code"] as? String == "upstream_timeout" else {
+        throw NSError(domain:"JobLeaseStatus",code:3,userInfo:[NSLocalizedDescriptionKey:"Owner task event lost the normal worker failure reason"])
+    }
+    guard runtime.calls==0 else {throw JournalError.invalid}
+    print("PASS: normal job status reports lease timing and the worker failure reason")
+    return late.id
+}

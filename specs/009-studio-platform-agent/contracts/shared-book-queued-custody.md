@@ -1,0 +1,28 @@
+# Shared engine request-book queued custody — partial source integration
+
+Current-state note (2026-11-16): later increments implement media queue custody,
+authenticated five-phase registry v3/v4 transport and conservative manager
+normalization. Statements below listing these as unfinished describe this
+contract's earlier checkpoint. The [current gap audit](native-capability-gap-audit.md)
+records the source mapping; positive all-client coverage/completion/capacity and
+atomic admission remain unfinished. No authority or task completion follows.
+
+Whole39/55; T020 remains open. Private source `/private/tmp/fios-009-book-queue-work-m6z11yr4/source` preserves the qualified ordinary-MLX queue parent. This increment changes shared request ownership/accounting in existing adapters; no numerical engine, model policy, wire format, native admission or installation is added.
+
+The shared book captures an independent queue ticket before publishing its copied request. The original group and correlation remain retained after the sender leaves. Selection by `Book.next` alone is not backend execution. The existing actual worker-origin entry activates the request's ticket before work; later llama batch value records preserve their original behavior.
+
+Host submission and book cleanup can already hold enclosing locks. `beginQueuedKnown` and `retireQueuedKnown` use cached source state after the caller's fixed negative checks; they invoke no dynamic backend callback under those locks. Existing unlocked tracker entry points still perform their normal probe before delegating. Failed local retirement keeps the complete original request, payload, owner and ticket quarantined. A finished event, local descriptor retirement or worker join cannot clear independent inference uncertainty or issue native completion.
+
+The exact five-file overlay includes shared book/tracker source and stronger existing worker tests for three adapters. The root checker reverses/reapplies the patch against its fixed parent projection, runs actual book/tracker/actor metadata, reproduces two missing-queue parent failures and passes five named candidate cases per Debug/ReleaseSafe mode in fresh processes. Scenarios cover actual pickup, full-queue unpublished retirement, callback-free locked cleanup, finished-callback uncertainty and untracked callers. No model/backend execution occurs.
+
+Final root checker receipt `/private/tmp/fios-009-book-queue-check-hfCggw/receipt.json`, SHA256393b5d0f3539bd04aed89de34f15f930e3c3e60285a3857d2cd409910b5c5041. Earlier u3YV1B is retained as a narrower runner-byte checkpoint. Unpatched parent source refuses before compilation (private receipt7f371d85f5b63f2316f7f59d8469ac4636def9ef93de52a01bf9e727eadeabc4). The original failing test's allocator diagnostics follow its early assertion/retained book; they are not a separately diagnosed product leak. The first candidate verdict expression failed because the ABI requires a compile-time reason; that setup log/source is retained.
+
+Default native build240.474s and160/160 fresh-process tests pass, including the real shared-book lifecycle and real adapter/book/worker fixtures with existing model-free bridges. These do not run numerical engines or establish competence/device terminality. The native unit binary is81295ac6e569156fb309552a5b1216587da6aea9bff6f17cb0ec7da7fa1c4f2f; run receipt2b1f48b2bd1d166882092d8b970263216f8e8488188fa4232e2cafe1e6b8ac98. Enabled35/35 semantic381.932s (receipt199d1d6e204ce0d9daa460d75f351476feee0ef6ea033ebd4d40c1f450a96540),32/32 link14.062s (receipte039152bd4fd4c0e083e4351151da116fa244d9343a5debad70c4528a2151872) and four empty-model correlation/activity/startup/authenticated-manager checks pass. Raw image9ab5cf048ba965bffc63a0472a9dca532cb7b9b353a9aefffba0e340f48a04f5; normalized49cc18b7667e0750d0294202bf970500c153d9fa9df2f4c8cb7fa9108c608efd; capsulee0726cbe75c3295365ac064a3c5ed5e24943776e80690ec3718b847786259ef1. Runtime receipt6ee1c81a2984954f4ba798419fe8b38132666571ee7e152000e26914bc43b990. Existing four-overlay SDK bytes remain unchanged and model prerequisites stay false. Fresh locked noneditable reinstall,188 Node/API106 installed Python, boundary and whitespace checks pass. No model request, installed lifecycle action, activation, merge or deployment occurred. Selected source/input receipts do not establish whole-repository/native provenance. Media/vision/embedding queues, authenticated five-phase transport, normalization and the independent positive all-client ceiling remain unfinished. No task checkbox changes.
+
+Reproduce the finite metadata check:
+
+```sh
+node scripts/check-platform-current-book-queue.mjs --isolated --source /private/tmp/REVIEWED_SOURCE --zig /private/tmp/PINNED_ZIG
+```
+
+This checker binds only its exact five-file parent projection, declared dependency closure and test/runner bytes. Real native worker fixtures are validated separately; neither receipt is an installation/provenance/profile grant.

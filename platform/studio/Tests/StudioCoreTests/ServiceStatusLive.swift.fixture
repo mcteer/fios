@@ -1,0 +1,156 @@
+import Foundation
+import Darwin
+import CryptoKit
+
+// Ordinary status integration only. Observations are synthetic metadata;
+// no session/native recovery adapter or lifecycle operation is configured.
+private struct ForbiddenHeldRecovery:ServiceRecoverySending {
+    var applicationHashes:[ManagedService:String] {Dictionary(uniqueKeysWithValues:ManagedService.allCases.map{($0,String(repeating:"a",count:64))})}
+    var recoveryProfileHash:String {String(repeating:"a",count:64)}
+    func supportsRecovery(for service:ManagedService)->Bool {true}
+    func accepts(_ command:ServiceLaunchCommand)->Bool {true}
+    func request(_ request:ServiceRecoveryRequest)throws->SessionLaunchResult {fatalError("Migration hold allowed a service request")}
+}
+
+private struct UnavailableStatusSource:NativeReadOnlyClientSource {
+    func resolve()throws->NativeReadOnlyClient {throw NativeControlError.unavailable}
+}
+
+@main struct ServiceStatusLive {
+    static func main() throws {
+        let args=CommandLine.arguments
+        guard args.count==3,geteuid()>0 else {throw ServiceError.invalid}
+        if ["storage_continuity","storage_continuity_reopen"].contains(args[2]) {
+            let state=URL(fileURLWithPath:args[1])
+            let home=URL(fileURLWithPath:"/private/tmp").appendingPathComponent(state.deletingLastPathComponent().lastPathComponent+"-home")
+            if args[2] == "storage_continuity" {
+                for folder in [home,home.appendingPathComponent(".orbstack"),home.appendingPathComponent(".orbstack/run")] {
+                    try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+                }
+            }
+            let endpoint=try RuntimeEndpointPolicy(home:home.path,uid:geteuid())
+            let listener=try UnixControlSocket(path:endpoint.path) // Never serves Docker requests.
+            let executable=URL(fileURLWithPath:"/usr/bin/true")
+            let digest=SHA256.hash(data:try Data(contentsOf:executable)).map{String(format:"%02x",$0)}.joined()
+            let runtime=DockerRuntime(executable:try VerifiedExecutable(path:executable.path,sha256:digest),endpoint:endpoint)
+            let hash=String(repeating:"a",count:64),image="sha256:"+hash,id=UUID().uuidString.lowercased()
+            if args[2] == "storage_continuity" {
+                let journal=try Journal(directory:state),now=HostResources.nowMilliseconds()
+                let config=try SandboxConfiguration(job:id,nonce:hash,image:image,memory:512<<20,cpus:1)
+                _=try journal.reserveSandbox(job:DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:now),configuration:config)
+                try journal.commitSandboxCreate(config,now:now)
+                try SandboxLifecycle(journal:journal).created(job:id,runtimeID:String(repeating:"b",count:64))
+                // A second durable create lost its local response. Both the
+                // saved-ID and original-name listing must refuse empty output.
+                let lostID=UUID().uuidString.lowercased()
+                let lost=try SandboxConfiguration(job:lostID,nonce:String(repeating:"c",count:64),image:image,memory:512<<20,cpus:1)
+                _=try journal.reserveSandbox(job:DurableJob(id:lostID,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:now),configuration:lost)
+                try journal.commitSandboxCreate(lost,now:now)
+                let modelID=UUID().uuidString.lowercased()
+                _=try journal.reserveJob(DurableJob(id:modelID,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:now))
+                try journal.transitionJob(id:modelID,to:.running,now:now)
+                try journal.claim(job:modelID,attempt:0,model:"fixture/model")
+                try journal.markUncertain(job:modelID,attempt:0)
+            }
+            do {
+                let journal=try Journal(directory:state)
+                let records=try journal.sandboxRecords().sorted {$0.configuration.job<$1.configuration.job}
+                guard records.count==2,records.allSatisfy({$0.createIssued && !$0.removalProven}),
+                      Set(records.map(\.configuration.name)).count==2,
+                      records.filter({$0.runtimeID==nil}).count==1 else {throw JournalError.invalid}
+                let identities=records.map {record in
+                    ["job":record.configuration.job,"name":record.configuration.name,"nonce":record.configuration.nonce,
+                     "image":record.configuration.image,"runtime_id":record.runtimeID.map{$0 as Any} ?? NSNull()] as [String:Any]
+                }
+                let bytes=try JSONSerialization.data(withJSONObject:identities,options:[.sortedKeys])
+                let receipt=state.appendingPathComponent("fixture-create-identities.json")
+                if args[2]=="storage_continuity" {try AtomicState.write(bytes,to:receipt)}
+                else {guard try Data(contentsOf:receipt)==bytes else {throw JournalError.conflict}}
+            }
+            let execution=try ManagerExecutionPorts(runtime:runtime,approvedImages:[image],vmSource:.cached,resources:{now,_ in
+                ResourceSample(sampledAt:now,physical:64<<30,available:32<<30,vmAvailable:0,diskFree:100<<30,
+                               cpu:0,pressure:.normal,thermal:.nominal,vmSampledAt:now,cpuSampledAt:now)
+            })
+            final class AssertBoundTelemetry:PlatformTelemetry,@unchecked Sendable {
+                let instrumentation="fixture"
+                private let lock=NSLock()
+                private let state:URL
+                private var resourcePublications=0
+                init(state:URL) {self.state=state}
+                func event(_ event:OperationalEvent) {}
+                func gpu(_ sample:GPUSample?,sampledAt:Int64?) {}
+                func workload(_ sample:PlatformWorkloadSample?) {}
+                func resources(_ sample:ResourceSample) {
+                    precondition(sample.vmAvailable==nil && sample.vmSampledAt==nil,"Unbound cached VM reached telemetry")
+                    precondition(sample.cpu==0 && sample.cpuSampledAt != nil,"VM omission discarded independent CPU")
+                    lock.lock();defer {lock.unlock()}
+                    resourcePublications+=1
+                    if resourcePublications<=2 {
+                        let marker=state.appendingPathComponent("fixture-resource-publications")
+                        do {try AtomicState.write(Data(String(resourcePublications).utf8),to:marker)}
+                        catch {fatalError("Unable to record private resource publication")}
+                    }
+                }
+            }
+            try withExtendedLifetime(listener) {try ManagerRuntime.run(directory:state,nativeControl:nil,execution:execution,telemetry:AssertBoundTelemetry(state:state))}
+            return
+        }
+        if args[2] == "unknown_worker_reopen" {
+            let state=URL(fileURLWithPath:args[1])
+            let seed=state.appendingPathComponent("fixture-owner.json")
+            if !FileManager.default.fileExists(atPath:seed.path) {
+                let journal=try Journal(directory:state),now=HostResources.nowMilliseconds()
+                let token=TaskOwner.newToken(),id=UUID().uuidString.lowercased()
+                let owner=try TaskOwner(token:token,peerUID:geteuid())
+                _=try journal.reserveJob(DurableJob(id:id,idempotency:UUID().uuidString.lowercased(),ownerHash:owner.hash,requestHash:String(repeating:"a",count:64),created:now))
+                try journal.transitionJob(id:id,to:.running,now:now)
+                try journal.claim(job:id,attempt:0,model:"fixture/model")
+                _=try journal.planWorkerLaunch(job:id,attempt:0)
+                try journal.markUncertain(job:id,attempt:0)
+                try AtomicState.write(JSONSerialization.data(withJSONObject:["owner":token,"job":id]),to:seed)
+            }
+            try ManagerRuntime.run(directory:state)
+            return
+        }
+        if args[2] == "native_source_gap" {
+            try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]),nativeControl:nil,nativeObserverSource:UnavailableStatusSource())
+            return
+        }
+        if args[2] == "unconfigured" {
+            try ManagerRuntime.run(directory:URL(fileURLWithPath:args[1]))
+            return
+        }
+        let cache=ServiceObservationCache(),now=HostResources.nowMilliseconds()
+        let state=URL(fileURLWithPath:args[1]),held=args[2]=="held"
+        if held && !FileManager.default.fileExists(atPath:state.path) {
+            try FileManager.default.createDirectory(at:state,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+            try AtomicState.write(Data("{}".utf8),to:state.appendingPathComponent("migration-hold.json"))
+        }
+        var mlxHealth:ServiceHealthCollector?,orbstackHealth:ServiceHealthCollector?
+        for service in ManagedService.allCases {
+            let identity=ServiceIdentity(pid:42,start:1,sha256:String(repeating:"a",count:64))
+            var sample:ServiceObservation?
+            switch args[2] {
+            case "unknown":sample=nil
+            case "future":sample=ServiceObservation(identity:identity,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now+60_000)
+            case "waiting_session":sample=ServiceObservation(identity:nil,responding:false,sessionReady:false,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "waiting_credentials":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:false,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "stopped","held":sample=ServiceObservation(identity:nil,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "ready":sample=ServiceObservation(identity:identity,responding:true,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            case "mixed","loading":sample=nil
+            case "degraded":sample=ServiceObservation(identity:identity,responding:false,sessionReady:true,credentialsReady:true,nativeIdle:nil,runtimeUnmanaged:nil,sampledAt:now)
+            default:throw ServiceError.invalid
+            }
+            if ["ready","degraded","mixed","loading"].contains(args[2]) {
+                let process=ServiceProcessSample(presence:.present(identity),sampledAt:now,
+                    reviewDigest:String(repeating:"b",count:64),uid:geteuid(),diagnostic:"fixture_present")
+                let state:ServiceHealthState=args[2]=="loading" ? (service == .mlx ? .loading:.healthy):(args[2]=="ready" || (args[2]=="mixed" && service == .mlx)) ? .healthy:.unavailable
+                let collector=ServiceHealthCollector(service:service,presence:{process},health:{state},now:{now},uptime:{1})
+                if service == .mlx {mlxHealth=collector}else {orbstackHealth=collector}
+                sample=nil // Actual manager background collection publishes it.
+            }
+            cache.publish(sample,for:service)
+        }
+        try ManagerRuntime.run(directory:state,nativeControl:nil,serviceObservations:cache,serviceHealth:mlxHealth,serviceHealthReadiness:{(true,true)},orbstackHealth:orbstackHealth,orbstackHealthReadiness:{(true,true)},serviceControl:held ? ForbiddenHeldRecovery():nil)
+    }
+}

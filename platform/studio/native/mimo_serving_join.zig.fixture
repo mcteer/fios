@@ -1,0 +1,87 @@
+// Genuine warm Metal queue with two tiny chunks behind a private three-second
+// shared-event wait. No model, source-body rewrite, fake SDK or injected error.
+const std = @import("std");
+const mlx = @import("sdk").mlx;
+const warm = @import("arch/mimo_v2/gpu_warm.zig");
+const ownership = @import("fios-request-ownership.zig");
+fn knownUncertainty() bool {return warm.fiosSourceUncertain();}
+extern fn fios_join_event_create() u64;
+extern fn fios_join_event_release(u64) void;
+extern fn fios_join_gate_create(?*anyopaque) ?*anyopaque;
+extern fn fios_join_gate_finish(?*anyopaque) c_int;
+extern fn fios_join_gate_release(?*anyopaque) void;
+fn tick() void {
+    const interval: std.c.timespec = .{ .sec = 0, .nsec = std.time.ns_per_ms };
+    _ = std.c.nanosleep(&interval, null);
+}
+test "fios ordinary serving warm worker retirement" {
+    var tracker: ownership.Tracker = .{ .primary_guard = true };
+    try tracker.initialize(std.testing.io, @splat(7));
+    if (comptime @hasDecl(ownership.Tracker, "enrollBackendUncertaintyProbe"))
+        try tracker.enrollBackendUncertaintyProbe(std.testing.io, &knownUncertainty);
+    const original = try tracker.enter(std.testing.io);
+    try tracker.bind(std.testing.io, original, "fixture/warm-owner");
+    try tracker.active(std.testing.io, original);
+
+    const event = fios_join_event_create();
+    try std.testing.expect(event != 0);
+    defer fios_join_event_release(event);
+    const device = mlx.mlx_device_new_type(.gpu, 0);
+    defer _ = mlx.mlx_device_free(device);
+    const stream = mlx.mlx_stream_new_device(device);
+    defer _ = mlx.mlx_stream_free(stream);
+    const healthy = (try warm.install(std.testing.allocator, .waits, stream, event)) orelse return error.MissingWarm;
+    try std.testing.expect(healthy.tryDestroy());
+    try std.testing.expect(!warm.fiosSourceUncertain());
+    const engine = (try warm.install(std.testing.allocator, .waits, stream, event)) orelse return error.MissingWarm;
+    // Serving construction must not grant fixture pause/retirement control.
+    try std.testing.expectError(error.FiosWarmControlUnsupported, engine.fixturePause());
+    var alive = true;
+    const gate = fios_join_gate_create(engine.backend.h) orelse {engine.destroy();return error.GateUnavailable;};
+    defer {
+        if (fios_join_gate_finish(gate) == 1) {
+            if (alive) _ = engine.tryDestroy();
+            fios_join_gate_release(gate);
+        }
+    }
+    engine.arm(1);
+    const dispatch_deadline = warm.nowNs() + std.time.ns_per_s;
+    while (engine.n_chunks.load(.acquire) < 2 and warm.nowNs() < dispatch_deadline) tick();
+    try std.testing.expectEqual(@as(u64, 2), engine.n_chunks.load(.acquire));
+    const began = warm.nowNs();
+    const destroyed = engine.tryDestroy();
+    const elapsed = warm.nowNs() - began;
+    if (destroyed) alive = false;
+    std.debug.print("genuine_warm_cleanup elapsed_ns={d} destroyed={}\n", .{elapsed,destroyed});
+    try std.testing.expect(!destroyed);
+    try std.testing.expect(elapsed >= 800 * std.time.ns_per_ms and elapsed < 1500 * std.time.ns_per_ms);
+    try std.testing.expect(warm.fiosSourceUncertain());
+    const incoming = try tracker.enter(std.testing.io);
+    try std.testing.expectError(error.CoverageUncertain, tracker.bind(std.testing.io, incoming, "fixture/warm-owner"));
+    try std.testing.expect(tracker.snapshot(std.testing.io).uncertain);
+    try std.testing.expectEqual(@as(usize, 1), tracker.snapshot(std.testing.io).active);
+
+    try std.testing.expect(!engine.fiosCanDestroy());
+    try std.testing.expect(engine.fios_closed.load(.acquire));
+    try std.testing.expectEqual(@as(c_int, 1), fios_join_gate_finish(gate));
+    const cleanup_deadline = warm.nowNs() + std.time.ns_per_s;
+    while (alive and warm.nowNs() < cleanup_deadline) {
+        if (engine.fiosCanDestroy()) {
+            try std.testing.expect(!engine.failed.load(.acquire));
+            alive = !engine.tryDestroy();
+        }
+        if (alive) tick();
+    }
+    try std.testing.expect(!alive);
+    try std.testing.expect(warm.fiosSourceUncertain());
+    try tracker.responding(std.testing.io, original);
+    try tracker.leave(std.testing.io, original);
+    try tracker.leave(std.testing.io, incoming);
+    const later = try tracker.enter(std.testing.io);
+    try std.testing.expectError(error.CoverageUncertain, tracker.bind(std.testing.io, later, "fixture/new-target"));
+    try tracker.leave(std.testing.io, later);
+    const released = tracker.snapshot(std.testing.io);
+    try std.testing.expect(released.uncertain and released.owned == 0);
+    std.debug.print("PASS: actual warm source timeout refuses new work and a later target after local cleanup preserves tracker uncertainty\n", .{});
+    std.debug.print("PASS: genuine serving warm construction retains engine on bounded original-worker join, later local cleanup succeeds and source uncertainty stays true\n", .{});
+}

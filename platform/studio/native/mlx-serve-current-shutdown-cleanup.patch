@@ -1,0 +1,31 @@
+--- a/src/engines/mlx/runtime/loop.zig
++++ b/src/engines/mlx/runtime/loop.zig
+@@ -2,6 +2,7 @@
+ 
+ const std = @import("std");
+ const cleanupUncertain = @import("../../../host/registry/registry.zig").cleanupUncertain;
++const cleanupUncertainLocked = @import("../../../host/registry/registry.zig").cleanupUncertainLocked;
+ const quarantineCleanup = @import("../scheduler.zig").quarantineCleanup;
+ const fios_slots = @import("../../../fios/current_slot_origins.zig");
+ const log = @import("../../../sdk/util/log.zig");
+@@ -169,6 +170,7 @@
+ /// stream only on this thread, not on the one that joins it (`Scheduler.deinit`, where every other model unloads as
+ /// before; "There is no Stream(gpu, 0) in current thread", mlx-c stream.cpp).
+ fn closeGlmModels(sch: *Scheduler) void {
++    if (cleanupUncertain(sch.io)) return;
+     sch.registry.mutex.lockUncancelable(sch.io);
+     defer sch.registry.mutex.unlock(sch.io);
+     var it = sch.registry.entries.valueIterator();
+@@ -176,7 +178,12 @@
+         const x = entry.*.transformer orelse continue;
+         if (!x.config.glm_stream) continue;
+         const m = x.mlx_stream_ext orelse continue;
++        // Registry lock: fixed/cached negative reads only. No source callback.
++        if (cleanupUncertainLocked(sch.io)) return;
+         mlx_stream.close(m);
++        // A void close is not a completion receipt. Retain local state and
++        // later entries if the existing native/source fence becomes known.
++        if (cleanupUncertainLocked(sch.io)) return;
+         x.mlx_stream_ext = null;
+     }
+ }

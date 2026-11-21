@@ -1,0 +1,31 @@
+// Private local ownership/Unix transport fixture. No model or device work.
+const std = @import("std");
+const owners = @import("request_ownership.zig");
+const transport = @import("control_transport.zig");
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    try owners.shared.initialize(io, @splat(1));
+    const raw = std.c.getenv("FIOS_TEST_CORRELATION") orelse return error.MissingCorrelation;
+    const correlation = try owners.parseCorrelationHex(std.mem.span(raw));
+    const root = try owners.shared.enter(io);
+    try owners.shared.associate(io, root, correlation);
+    try owners.shared.bind(io, root, "fixture/model-a");
+    const child = try owners.shared.reservePreparation(io, root, "fixture/model-a");
+    try owners.shared.active(io, root);
+    try owners.shared.responding(io, root);
+    const bridge = (try transport.Bridge.start(io, std.heap.c_allocator, "fixture-fios-source-fixture", null)) orelse return error.MissingBridge;
+    defer bridge.stop();
+    if (std.c.write(1, "ready\n", 6) != 6) return error.Output;
+    for ([_]u8{ 'r', 'd', 'f', 'q' }) |expected| {
+        var command: [1]u8 = undefined;
+        if (std.c.read(0, &command, 1) != 1 or command[0] != expected) return error.Command;
+        switch (expected) {
+            'r' => try owners.shared.leave(io, root),
+            'd' => try owners.shared.leave(io, child),
+            'f' => owners.shared.fence(io),
+            'q' => return,
+            else => unreachable,
+        }
+        if (std.c.write(1, "ok\n", 3) != 3) return error.Output;
+    }
+}

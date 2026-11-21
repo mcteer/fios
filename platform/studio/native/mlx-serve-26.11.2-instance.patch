@@ -1,0 +1,75 @@
+diff --git a/src/fios/instance_header.zig b/src/fios/instance_header.zig
+new file mode 100644
+index 0000000..f7d0ee5
+--- /dev/null
++++ b/src/fios/instance_header.zig
+@@ -0,0 +1,29 @@
++const std = @import("std");
++
++// Consistency only: an expected process instance is not a model grant.
++pub fn parse(headers: []const u8) !?[16]u8 {
++    var found: ?[16]u8 = null;
++    var lines = std.mem.splitSequence(u8, headers, "\r\n");
++    while (lines.next()) |line| {
++        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
++        if (!std.ascii.eqlIgnoreCase(line[0..colon], "x-fios-native-instance")) continue;
++        if (found != null) return error.DuplicateNativeInstance;
++        const text = std.mem.trim(u8, line[colon + 1 ..], " \t");
++        if (text.len != 32) return error.InvalidNativeInstance;
++        var instance: [16]u8 = undefined;
++        var nonzero = false;
++        for (&instance, 0..) |*byte, index| {
++            var pair: u8 = 0;
++            for (text[index * 2 ..][0..2]) |character| {
++                const digit: u8 = if (character >= '0' and character <= '9') character - '0'
++                    else if (character >= 'a' and character <= 'f') character - 'a' + 10
++                    else return error.InvalidNativeInstance;
++                pair = (pair << 4) | digit;
++            }
++            byte.* = pair;nonzero = nonzero or pair != 0;
++        }
++        if (!nonzero) return error.InvalidNativeInstance;
++        found = instance;
++    }
++    return found;
++}
+diff --git a/src/host/http/router.zig b/src/host/http/router.zig
+index 73e8e88..da8e8e9 100644
+--- a/src/host/http/router.zig
++++ b/src/host/http/router.zig
+@@ -2,6 +2,8 @@
+ 
+ const request_options = @import("../api/request_options.zig");
+ const std = @import("std");
++const fios_ownership = @import("../../fios/request_ownership.zig");
++const fios_instance_header = @import("../../fios/instance_header.zig");
+ const mlx = @import("../../mlx/ffi.zig");
+ const log = @import("../../sdk/util/log.zig");
+ const media_mod = @import("../media_jobs/gen.zig");
+@@ -266,6 +268,26 @@ pub fn handleConnection(
+         }
+     }
+ 
++    // Expected process identity precedes model resolution/proxying. It does
++    // not grant admission, enroll backend lifetimes or clear old ownership.
++    if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/v1/chat/completions")) {
++        const expected_instance = fios_instance_header.parse(request[0..header_end_pos]) catch {
++            try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_native_instance", "Invalid native instance identity", 400);
++            return;
++        };
++        if (expected_instance) |expected| {
++            const actual = fios_ownership.shared.snapshot(stream.io);
++            if (!http_server.fios_connection_tracking.load(.acquire) or !actual.initialized) {
++                try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_tracking_unavailable", "Native instance identity is unavailable", 503);
++                return;
++            }
++            if (!std.mem.eql(u8, &expected, &actual.instance)) {
++                try sendErrorResponse(allocator, stream, "409 Conflict", "native_instance_changed", "Native instance changed before dispatch", 409);
++                return;
++            }
++        }
++    }
++
+     // ── Plan 05: routes that don't depend on a loaded model (connectivity
+     //    probes + CORS preflight + listing endpoints). Handle these BEFORE
+     //    `scheduler.ensureLoaded` so they don't trigger a cold load of the

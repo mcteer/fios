@@ -1,0 +1,167 @@
+diff --git a/src/fios/control_protocol.zig b/src/fios/control_protocol.zig
+index f8029fc..9edab48 100644
+--- a/src/fios/control_protocol.zig
++++ b/src/fios/control_protocol.zig
+@@ -112,6 +112,32 @@ pub fn dispatchLineage(tracker: *ownership.Tracker, io: std.Io, request: *const
+     return response;
+ }
+ 
++// Local reference-retirement history only. A positive record is NOT native
++// completion/not-sent evidence and cannot release a durable inference claim.
++pub const retirement_response_size = 88;
++pub fn dispatchRetirement(tracker: *ownership.Tracker, io: std.Io, request: *const [64]u8) [retirement_response_size]u8 {
++    var response: [retirement_response_size]u8 = @splat(0);
++    @memcpy(response[0..4], "FIZ9"); response[4] = 1; response[7] = 1;
++    const root = std.mem.readInt(u64, request[56..64], .big);
++    if (!std.mem.eql(u8, request[0..4], "FIE9") or request[4] != 1 or
++        !std.mem.allEqual(u8, request[5..8], 0) or root == 0) {
++        response[5] = @intFromEnum(Status.invalid); return response;
++    }
++    _ = tracker.backendKnownUncertain(io);
++    const snapshot = tracker.retirementSnapshot(io, request[24..56].*, root);
++    @memcpy(response[8..24], &snapshot.instance);
++    @memcpy(response[24..56], request[24..56]);
++    std.mem.writeInt(u64, response[56..64], snapshot.sample_sequence, .big);
++    std.mem.writeInt(u64, response[64..72], root, .big);
++    if (std.mem.allEqual(u8, &snapshot.instance, 0) or !std.mem.eql(u8, request[8..24], &snapshot.instance)) {
++        response[5] = @intFromEnum(Status.wrong_instance); return response;
++    }
++    response[6] = @intFromBool(snapshot.recorded);
++    response[7] = @intFromBool(snapshot.uncertain);
++    std.mem.writeInt(u64, response[72..80], snapshot.retirement_sequence, .big);
++    return response;
++}
++
+ pub fn dispatch(tracker: *ownership.Tracker, io: std.Io, request: *const [request_size]u8) [response_size]u8 {
+     return dispatchWithBarrier(tracker, io, request, null);
+ }
+@@ -453,3 +479,27 @@ test "native owner probe rejects a model-change ticket acquired during its barri
+     }
+     std.debug.print("PASS: native owner probe blocks publication while the original model-change ticket remains held; metadata only\n", .{});
+ }
++
++test "correlated local retirement wire remains distinct from live lineage and native proof" {
++    const io = std.testing.io;
++    var tracker: ownership.Tracker = .{};
++    try tracker.initialize(io, @splat(74));
++    const root = try tracker.enter(io);
++    try tracker.associate(io, root, @splat(75));
++    var request: [64]u8 = @splat(0);
++    @memcpy(request[0..4], "FIE9"); request[4] = 1;
++    @memcpy(request[8..24], &root.instance);
++    @memset(request[24..56], 75);
++    std.mem.writeInt(u64, request[56..64], root.sequence, .big);
++    const live = dispatchRetirement(&tracker, io, &request);
++    try std.testing.expect(live[6] == 0 and live[7] == 1);
++    try tracker.leave(io, root);
++    const retired = dispatchRetirement(&tracker, io, &request);
++    try std.testing.expect(std.mem.eql(u8, retired[0..4], "FIZ9"));
++    try std.testing.expect(retired[5] == 0 and retired[6] == 1 and retired[7] == 0);
++    try std.testing.expectEqual(root.sequence, std.mem.readInt(u64, retired[64..72], .big));
++    request[8] ^= 1;
++    try std.testing.expectEqual(@intFromEnum(Status.wrong_instance), dispatchRetirement(&tracker, io, &request)[5]);
++    request[8] ^= 1; request[5] = 1;
++    try std.testing.expectEqual(@intFromEnum(Status.invalid), dispatchRetirement(&tracker, io, &request)[5]);
++}
+diff --git a/src/fios/control_transport.zig b/src/fios/control_transport.zig
+index 993ab8e..219a8e8 100644
+--- a/src/fios/control_transport.zig
++++ b/src/fios/control_transport.zig
+@@ -138,6 +138,10 @@ pub const Bridge = struct {
+             const value = protocol.dispatchWithBarrier(&ownership.shared, self.io, input[0..protocol.request_size], self.barrier);
+             @memcpy(storage[0..protocol.response_size], &value);
+             break :legacy storage[0..protocol.response_size];
++        } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIE9")) retirement: {
++            const value = protocol.dispatchRetirement(&ownership.shared, self.io, input[0..protocol.lineage_request_size]);
++            @memcpy(storage[0..protocol.retirement_response_size], &value);
++            break :retirement storage[0..protocol.retirement_response_size];
+         } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIQ9")) lineage: {
+             const value = protocol.dispatchLineage(&ownership.shared, self.io, input[0..protocol.lineage_request_size]);
+             @memcpy(storage[0..protocol.lineage_response_size], &value);
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+index ed6b086..0e0b090 100644
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -39,6 +39,21 @@ pub const CorrelationSnapshot = struct {
+     active: usize = 0,
+     responding: usize = 0,
+ };
++// Bounded history of local reference retirement, NOT backend/device terminal
++// or not-sent proof. A consumer still needs independent native evidence.
++pub const RetirementSnapshot = struct {
++    instance: [16]u8,
++    sample_sequence: u64,
++    root_sequence: u64,
++    retirement_sequence: u64 = 0,
++    recorded: bool = false,
++    uncertain: bool = true,
++};
++const Retirement = struct {
++    correlation: CorrelationID = @splat(0),
++    root_sequence: u64 = 0,
++    sequence: u64 = 0,
++};
+ pub const Phase = enum { vacant, ingress, preparing, active, responding };
+ // Native-internal lease, NOT authentication or a wire management capability.
+ // A future enrolled manager bridge must authenticate before calling these APIs.
+@@ -155,6 +170,9 @@ pub const Tracker = struct {
+     mutation_sequence: u64 = 0,
+     slots: [capacity]Slot = @splat(.{}),
+     models: [model_capacity]Model = @splat(.{}),
++    retirements: [capacity]Retirement = @splat(.{}),
++    retirement_sequence: u64 = 0,
++    retirement_cursor: usize = 0,
+     sequence: u64 = 0,
+     sample_sequence: u64 = 0,
+     instance: [16]u8 = @splat(0),
+@@ -338,6 +356,36 @@ pub const Tracker = struct {
+         result.uncertain = result.uncertain or self.uncertain or !result.found;
+         return result;
+     }
++    pub fn retirementSnapshot(self: *Tracker, io: std.Io, id: CorrelationID, root: u64) RetirementSnapshot {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        self.advanceCaptureLocked();
++        var result: RetirementSnapshot = .{ .instance = self.instance, .sample_sequence = self.sample_sequence, .root_sequence = root };
++        if (root == 0) return result;
++        for (self.retirements) |record| {
++            if (record.sequence == 0 or record.root_sequence != root or !std.mem.eql(u8, &record.correlation, &id)) continue;
++            result.recorded = true;
++            result.retirement_sequence = record.sequence;
++            result.uncertain = !self.initialized or self.uncertain;
++            break;
++        }
++        return result;
++    }
++    fn recordRetirementLocked(self: *Tracker, id: CorrelationID, root: u64) void {
++        // Called only after the original slot's final reference release. Other
++        // descendants with this root keep the local request lineage live.
++        for (self.slots) |other| {
++            const correlation = other.correlation orelse continue;
++            if (other.phase != .vacant and other.references > 0 and other.correlation_root == root and
++                std.mem.eql(u8, &correlation, &id)) return;
++        }
++        if (root == 0 or self.retirement_sequence == std.math.maxInt(u64)) { self.uncertain = true; return; }
++        self.retirement_sequence += 1;
++        self.retirements[self.retirement_cursor] = .{ .correlation = id, .root_sequence = root, .sequence = self.retirement_sequence };
++        self.retirement_cursor = (self.retirement_cursor + 1) % capacity;
++        // Eviction discards local history only. Missing records stay unknown;
++        // it never releases a manager claim or clears native uncertainty.
++    }
+     fn addModelLocked(self: *Tracker, slot: *Slot, id: []const u8) !u6 {
+         if (id.len == 0 or id.len > model_limit or !std.unicode.utf8ValidateSlice(id) or
+             std.mem.indexOfScalar(u8, id, 0) != null)
+@@ -609,8 +657,12 @@ pub const Tracker = struct {
+             model.owners -= 1;
+             if (model.owners == 0) model.* = .{};
+         }
+-        // Clear identity without clearing the uncertainty fence or allowing replay.
++        // Preserve local retirement identity before slot reuse; this is not a
++        // native completion decision and never clears the independent fence.
++        const correlation = slot.correlation;
++        const root = slot.correlation_root;
+         slot.* = .{};
++        if (correlation) |id| self.recordRetirementLocked(id, root);
+     }
+     pub fn snapshot(self: *Tracker, io: std.Io) Snapshot {
+         self.mutex.lockUncancelable(io);

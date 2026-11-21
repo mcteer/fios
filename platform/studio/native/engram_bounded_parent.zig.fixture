@@ -1,0 +1,19 @@
+fn start()!*Prefetch {const t=struct{var value=Table{};};return Prefetch.start(std.heap.c_allocator,&.{&t.value},&.{.{.at=0,.len=1,.ids=&.{7}}},1,1);}
+fn releaseReader()void {for(0..100)|_|tick();unblock.store(true,.release);}
+fn checkedStop(p:*Prefetch)bool {
+ if(comptime @hasDecl(Prefetch,"fiosStopWithin"))return p.fiosStopWithin(std.time.ns_per_ms);
+ // Parent compatibility control: invoke its actual unchanged void join.
+ p.finish();return true;
+}
+test "bounded prefetch parent control" {
+ blocked.store(true,.release);const p=try start();try waitRead();
+ const timer=try std.Thread.spawn(.{},releaseReader,.{});
+ const stopped=checkedStop(p);timer.join();
+ if(stopped){std.debug.print("ENGRAM_UNBOUNDED_PARENT_FINISH\n",.{});return error.TestUnexpectedResult;}
+ if(comptime @hasField(Prefetch,"fios_joined")) {
+  for(0..2000)|_| {if(p.fios_joined.load(.acquire))break;tick();}
+  try std.testing.expect(p.fios_joined.load(.acquire));
+  try std.testing.expectEqual(@as(u32,0),releases.load(.acquire));
+ }
+}
+@@PREFETCH@@

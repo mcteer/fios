@@ -1,0 +1,92 @@
+const std=@import("std");
+const fios_origins=host.fios_warm_request_owners;
+const fios_unproven_warm=host.fio_qwen_uncertainty.storage;
+const host=@import("mlx_host");
+const owners=host.fio_tracker;
+const sdk=host.fio_sdk;
+var reads=std.atomic.Value(u32).init(0);
+var entered=std.atomic.Value(bool).init(false);
+var release=std.atomic.Value(bool).init(false);
+var observed=std.atomic.Value(u64).init(0);
+var enabled=true;
+const posix=struct {
+ extern "c" fn open([*:0]const u8,c_int,...)c_int;
+ extern "c" fn close(c_int)c_int;
+ extern "c" fn ftruncate(c_int,i64)c_int;
+ extern "c" fn pread(c_int,[*]u8,usize,i64)isize;
+};
+fn tick()void {const ts:std.c.timespec=.{.sec=0,.nsec=std.time.ns_per_ms};_=std.c.nanosleep(&ts,null);}
+fn warmEnabled()bool{return enabled;}
+const log=struct {fn info(comptime _:[]const u8,_:anytype)void{}};
+fn asGb(x:u64)f64{return @as(f64,@floatFromInt(x))/1e9;}
+const Warm=struct {live_warm_bytes:std.atomic.Value(u64)=.init(0),live_warm_total:std.atomic.Value(u64)=.init(0)};var live=Warm{};
+fn warmBytes()*Warm{return &live;}
+const WarmProgress=struct {fn should(_: *@This(),_:u64,_:u64)bool{return false;}};
+const Pool=struct {warm_finished:std.atomic.Value(bool)=.init(false),fn destroy(_: *@This())void{}};
+const embedded_ple=struct {const Region=struct{fd:c_int,off:u64,len:u64};};
+const Embedded=struct{fn region(_: *@This(),_:usize)?embedded_ple.Region{return null;}fn close(_: *@This())void{}};
+const crt=struct {
+ fn close(fd:c_int)void{_=posix.close(fd);}
+ fn pread(fd:c_int,bytes:[*]u8,want:usize,off:i64)isize {
+  if(owners.current().*)|root|observed.store(root.sequence,.release);
+  entered.store(true,.release);
+  while(!release.load(.acquire))tick();
+  _=reads.fetchAdd(1,.acq_rel);
+  return posix.pread(fd,bytes,want,off);
+ }
+};
+const NgramTable=struct {
+ map:[]align(std.heap.page_size_min) const u8,fd:c_int=17,pool:?*Pool=null,gpu_owns_map:bool=true,embedded:?*Embedded=null,
+ fmt:enum{affine,ggml}=.affine,w_off:usize=0,rows:u64=16,row_bytes:u32=1,
+@@WARM_FIELDS@@
+@@WARM_CHUNK@@
+@@METHODS@@
+};
+
+const missing_origin=false;
+const independent_uncertainty=false;
+const active_close=false;
+var close_started=std.atomic.Value(bool).init(false);
+var close_finished=std.atomic.Value(bool).init(false);
+fn closeWorker(table:*NgramTable)void {close_started.store(true,.release);table.close();close_finished.store(true,.release);}
+test "fios qwen real IO original group" {
+ const io=std.testing.io;owners.shared().primary_guard=true;try owners.shared().initialize(io,@splat(171));try sdk.initialize(io);
+ const fd=posix.open("@@FILE@@",@as(c_int,@bitCast(std.c.O{.ACCMODE=.RDWR,.CREAT=true,.EXCL=true})),@as(c_int,0o600));
+ try std.testing.expect(fd>=0);try std.testing.expectEqual(@as(c_int,0),posix.ftruncate(fd,16<<20));
+ const map=try std.heap.page_allocator.alignedAlloc(u8,.fromByteUnits(std.heap.page_size_min),16<<20);defer std.heap.page_allocator.free(map);
+ var table=NgramTable{.map=map,.fd=fd};defer {release.store(true,.release);table.close();}
+ const root=try owners.shared().enter(io);try owners.shared().associate(io,root,@splat(27));try owners.shared().bind(io,root,"fixture/qwen-real-io");try owners.shared().active(io,root);
+ if(!missing_origin)owners.current().*=root;
+ table.startWarm();owners.current().*=null;
+ if(missing_origin){
+  try std.testing.expect(table.warm_thread==null and !entered.load(.acquire) and reads.load(.acquire)==0);
+  try std.testing.expect(sdk.diagnostic().uncertain);
+  std.debug.print("GENUINE_QWEN_IO missing_origin_refused_before_pread; no model/residency/admission proof\n",.{});
+  return;
+ }
+ var tries:usize=0;while(!entered.load(.acquire) and tries<1000):(tries+=1)tick();
+ try std.testing.expect(entered.load(.acquire));try owners.shared().leave(io,root);
+ if(observed.load(.acquire)!=root.sequence or !owners.shared().correlationSnapshot(io,@splat(27)).found){
+  std.debug.print("QWEN_REAL_ORIGINAL_ROOT_NOT_HELD\n",.{});return error.TestUnexpectedResult;
+ }
+ if(active_close){
+  const closer=try std.Thread.spawn(.{},closeWorker,.{&table});
+  tries=0;while(!close_started.load(.acquire) and tries<1000):(tries+=1)tick();
+  try std.testing.expect(close_started.load(.acquire) and !close_finished.load(.acquire));
+  try std.testing.expect(owners.shared().correlationSnapshot(io,@splat(27)).found);
+  release.store(true,.release);closer.join();
+  try std.testing.expect(close_finished.load(.acquire));
+  try std.testing.expect(!owners.shared().correlationSnapshot(io,@splat(27)).found and !sdk.diagnostic().uncertain);
+  std.debug.print("GENUINE_QWEN_IO active_close_waited_for_actual_pread_and_join; no bounded-join/model/admission proof\n",.{});
+  return;
+ }
+ release.store(true,.release);
+ if(table.warm_thread)|thread|{thread.join();table.warm_thread=null;}
+ try std.testing.expectEqual(@as(u32,2),reads.load(.acquire));try std.testing.expectEqual(@as(u64,16<<20),table.warm_bytes.load(.acquire));
+ try std.testing.expect(owners.shared().correlationSnapshot(io,@splat(27)).found);
+ if(independent_uncertainty)sdk.fios_native_request_owners_uncertain();
+ table.close();
+ if(independent_uncertainty){try std.testing.expect(owners.shared().correlationSnapshot(io,@splat(27)).found and sdk.diagnostic().uncertain);}
+ else {try std.testing.expect(!owners.shared().correlationSnapshot(io,@splat(27)).found and !sdk.diagnostic().uncertain);}try std.testing.expect(fios_unproven_warm.get().load(.acquire));
+ std.debug.print("GENUINE_QWEN_IO bytes=16777216 reads=2 original_root_retained_through_join_and_close; no residency/model/admission proof\n",.{});
+}

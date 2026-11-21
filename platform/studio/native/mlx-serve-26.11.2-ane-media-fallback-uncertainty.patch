@@ -1,0 +1,64 @@
+diff --git a/src/plugins/acestep/acestep.zig b/src/plugins/acestep/acestep.zig
+index bddb47f..976f62f 100644
+--- a/src/plugins/acestep/acestep.zig
++++ b/src/plugins/acestep/acestep.zig
+@@ -631,6 +631,7 @@ fn aceMlpGpu(a: std.mem.Allocator, w: *const Weights, pfx: []const u8, x: mlx.ml
+ }
+ 
+ fn aceMlpMaybeAne(e: *const Engine, a: std.mem.Allocator, w: *const Weights, pfx: []const u8, li: u32, x: mlx.mlx_array, s: S) !mlx.mlx_array {
++    try ane.source_guard.requireCertain();
+     const eng = e.ane_eng orelse return aceMlpGpu(a, w, pfx, x, s);
+     const idx: usize = li;
+     if (!eng.mlpReady(idx) or idx >= e.ane_rest.len) return aceMlpGpu(a, w, pfx, x, s);
+@@ -639,7 +640,8 @@ fn aceMlpMaybeAne(e: *const Engine, a: std.mem.Allocator, w: *const Weights, pfx
+     const rank_ok = (sh.len == 3 and sh[0] == 1) or sh.len == 2;
+     if (!rank_ok or sh[sh.len - 1] != @as(c_int, @intCast(eng.hidden))) return aceMlpGpu(a, w, pfx, x, s);
+     return ane.mediaMlp(s, eng, idx, "audio", x, AneSeam{ .a = a, .w = w, .pfx = pfx, .rest = &e.ane_rest[idx], .s = s }) catch |err| {
+-        // An ANE failure is never a request failure — the block runs on GPU.
++        // Known uncertainty cannot authorize a fresh GPU fallback.
++        try ane.source_guard.requireCertain();
+         log.warn("[ane] audio block {d} split failed ({s}) — GPU fallback\n", .{ idx, @errorName(err) });
+         return aceMlpGpu(a, w, pfx, x, s);
+     };
+diff --git a/src/plugins/krea/krea.zig b/src/plugins/krea/krea.zig
+index c38656c..dfcea25 100644
+--- a/src/plugins/krea/krea.zig
++++ b/src/plugins/krea/krea.zig
+@@ -1168,13 +1168,15 @@ pub const Dit = struct {
+     }
+ 
+     fn mlpMaybeAne(self: *const Dit, g: *Graph, x: Array, b: *const Block, idx: usize) !Array {
++        try ane.source_guard.requireCertain();
+         const eng = self.ane_eng orelse return b.mlp.forward(g, x);
+         if (!eng.mlpReady(idx) or idx >= self.ane_rest.len) return b.mlp.forward(g, x);
+         if (mlpLoraCount(&b.mlp) > 0) return b.mlp.forward(g, x);
+         const sh = ops.shape(x);
+         if (sh.len != 3 or sh[0] != 1 or sh[2] != @as(c_int, @intCast(eng.hidden))) return b.mlp.forward(g, x);
+         const out = ane.mediaMlp(g.s, eng, idx, "image", x, AneSeam{ .mlp = &b.mlp, .rest = &self.ane_rest[idx], .s = g.s }) catch |err| {
+-            // An ANE failure is never a request failure — the block runs on GPU.
++            // Known uncertainty cannot authorize a fresh GPU fallback.
++            try ane.source_guard.requireCertain();
+             log.warn("[ane] image block {d} split failed ({s}) — GPU fallback\n", .{ idx, @errorName(err) });
+             return b.mlp.forward(g, x);
+         };
+diff --git a/src/plugins/minimax_h3/h3.zig b/src/plugins/minimax_h3/h3.zig
+index b919047..341b330 100644
+--- a/src/plugins/minimax_h3/h3.zig
++++ b/src/plugins/minimax_h3/h3.zig
+@@ -2535,13 +2535,15 @@ pub const Model = struct {
+ 
+     /// The MLP with the ANE channel split when this block has a program.
+     fn mlpMaybeAne(self: *const Model, mw: *const MlpW, x: mlx.mlx_array, idx: usize, s: S) !mlx.mlx_array {
++        try ane.source_guard.requireCertain();
+         const eng = self.ane_eng orelse return mlpForward(mw, x, s);
+         if (!eng.mlpReady(idx) or idx >= self.ane_rest.len) return mlpForward(mw, x, s);
+         if (mw.fc1_lora.active().len > 0 or mw.fc2_lora.active().len > 0) return mlpForward(mw, x, s);
+         const sh = mlx.getShape(x);
+         if (sh.len != 2 or sh[1] != @as(c_int, @intCast(eng.hidden))) return mlpForward(mw, x, s);
+         return ane.mediaMlp(s, eng, idx, "video", x, AneSeam{ .mw = mw, .rest = &self.ane_rest[idx], .s = s }) catch |err| {
+-            // An ANE failure is never a request failure — the block runs on GPU.
++            // Known uncertainty cannot authorize a fresh GPU fallback.
++            try ane.source_guard.requireCertain();
+             log.warn("[ane] video block {d} split failed ({s}) — GPU fallback\n", .{ idx, @errorName(err) });
+             return mlpForward(mw, x, s);
+         };

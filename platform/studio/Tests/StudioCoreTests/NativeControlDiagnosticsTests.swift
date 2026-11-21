@@ -1,0 +1,143 @@
+import Foundation
+
+func runNativeControlDiagnosticsTests() throws {
+    let absent=NativeControlDiagnostics(configured:false).summary(now:1200)
+    precondition(absent["state"] as? String == "unconfigured" && absent["authoritative"] as? Bool == false)
+    var diagnostics=NativeControlDiagnostics(configured:true)
+    precondition(diagnostics.summary(now:1200)["state"] as? String == "waiting")
+    let reply=NativeIngressStatus(operation:.observe,status:.ok,instance:String(repeating:"a",count:32),
+        pauseSequence:0,owners:1,ingress:0,preparing:0,active:1,responding:0,modelIdentities:1,closed:false,uncertain:false)
+    diagnostics.completed(reply,receivedAt:1000)
+    let current=diagnostics.summary(now:1200)
+    precondition(current["state"] as? String == "received")
+    precondition(current["received_at"] as? Int64 == 1000 && current["receipt_age_ms"] as? Int64 == 200)
+    precondition(current["source_sampled_at"] is NSNull && current["source_sequence"] is NSNull)
+    let counts=current["reported_counts"] as! [String:Int]
+    precondition(counts["owners"] == 1 && counts["active"] == 1)
+    let old=diagnostics.summary(now:6200)
+    precondition(old["state"] as? String == "stale" && old["reported_counts"] is NSNull)
+    precondition(old["received_at"] as? Int64 == 1000)
+    diagnostics.failed()
+    precondition(diagnostics.summary(now:1300)["state"] as? String == "unavailable")
+    diagnostics.begin()
+    precondition(diagnostics.summary(now:1300)["state"] as? String == "waiting")
+    print("PASS: native-control receipt diagnostics, original receipt time and ordinary source availability")
+}
+
+func runNativeTimestampedControlTests() throws {
+    let now=HostResources.nowMilliseconds()
+    let request=try NativeControlWire.request(operation:.observe,instance:nil,sequence:0,version:3)
+    precondition(request.count==32 && request[4]==3)
+    var reply=Data(repeating:0,count:80)
+    reply.replaceSubrange(0..<4,with:Data("FIR9".utf8));reply[4]=3
+    reply.replaceSubrange(8..<24,with:Array(repeating:UInt8(9),count:16))
+    func write(_ value:UInt64,at:Int) {for index in 0..<8 {reply[at+index]=UInt8(truncatingIfNeeded:value >> (56-index*8))}}
+    write(42,at:64);write(UInt64(now-50),at:72)
+    let value=try NativeControlWire.reply(reply)
+    precondition(value.nativeSampleSequence==42 && value.nativeSampledAt==now-50)
+    var diagnostics=NativeControlDiagnostics(configured:true)
+    diagnostics.completed(value,receivedAt:now)
+    let summary=diagnostics.summary(now:now)
+    precondition(summary["source_sequence"] as? UInt64 == 42 && summary["source_sampled_at"] as? Int64 == now-50)
+    precondition(summary["source_age_ms"] as? Int64 == 50 && summary["receipt_age_ms"] as? Int64 == 0)
+    let capture=diagnostics.capture(now:now)
+    precondition(capture?.instance==value.instance && capture?.sequence==42 && capture?.sampledAt==now-50)
+    print("PASS: timestamped native control decoding preserves source and receipt clocks separately")
+}
+
+func runNativeControlContinuityTests() throws {
+    let instance=String(repeating:"a",count:32)
+    func sample(_ sequence:UInt64=42,_ time:Int64=1000,_ source:String?=nil,_ uncertain:Bool=false)->NativeIngressStatus {
+        var result=NativeIngressStatus(operation:.observe,status:.ok,instance:source ?? instance,pauseSequence:0,
+            owners:0,ingress:0,preparing:0,active:0,responding:0,modelIdentities:0,closed:false,uncertain:uncertain)
+        result.nativeSampleSequence=sequence;result.nativeSampledAt=time;return result
+    }
+    var replay=NativeControlDiagnostics(configured:true)
+    replay.completed(sample(),receivedAt:1000)
+    replay.failed();replay.begin()
+    replay.completed(sample(),receivedAt:1001)
+    guard replay.capture(now:1001)==nil,replay.ingressSample(now:1001)==nil else {fatalError("NATIVE_INGRESS_REPLAY_REFRESHED_CAPTURE")}
+    replay.completed(sample(43,1001),receivedAt:1002)
+    guard replay.capture(now:1002)?.sequence==43 else {fatalError("Rejected ingress replay lost original continuation")}
+    // Source identity, known native uncertainty and clocks cannot be reset by
+    // a read gap or a later healthy-looking reply from the same pinned peer.
+    for mode in 0..<4 {
+        var subject=NativeControlDiagnostics(configured:true)
+        subject.completed(sample(42,1000,nil,mode==3),receivedAt:1000)
+        let changed:NativeIngressStatus
+        let received:Int64
+        switch mode {
+        case 0:changed=sample(43,1001,String(repeating:"b",count:32));received=1001
+        case 1:changed=sample(43,999);received=1001
+        case 2:changed=sample(43,1000);received=999
+        default:changed=sample(43,1001);received=1001
+        }
+        subject.completed(changed,receivedAt:received)
+        subject.failed();subject.begin()
+        subject.completed(sample(44,1002),receivedAt:1002)
+        guard subject.capture(now:1002)==nil,subject.ingressSample(now:1002)==nil,
+              subject.summary(now:1002)["state"] as? String=="fenced" else {fatalError("NATIVE_INGRESS_CONTINUITY_FENCE_REOPENED")}
+    }
+    for invalid in [Int64.min,999,Int64.max] {
+        var subject=NativeControlDiagnostics(configured:true,backendFencesConfigured:true,primaryActivityConfigured:true)
+        guard subject.completed(sample(),receivedAt:1000),
+              !subject.completed(sample(43,1001),receivedAt:1001,now:invalid) else {fatalError("Native ingress accepted an invalid local timestamp")}
+        subject.begin()
+        let accepted=subject.completed(sample(44,1002),receivedAt:1002)
+        let summary=subject.summary(now:1002)
+        guard !accepted,subject.capture(now:1002)==nil,summary["state"] as? String=="fenced",
+              (summary["primary_activity"] as? [String:Any])?["state"] as? String=="fenced",
+              (summary["backend_fences"] as? [String:Any])?["state"] as? String=="fenced" else {
+            fatalError("Local clock discontinuity did not fence native ingress transport")
+        }
+    }
+    var transportGap=NativeControlDiagnostics(configured:true,backendFencesConfigured:true,primaryActivityConfigured:true)
+    guard transportGap.completed(sample(),receivedAt:1000) else {throw NativeControlError.invalid}
+    transportGap.failed();transportGap.begin()
+    guard transportGap.completed(sample(43,1001),receivedAt:1001),transportGap.capture(now:1001)?.sequence==43 else {
+        fatalError("Ordinary source transport gap was confused with a local clock fence")
+    }
+    var combined=NativeControlDiagnostics(configured:true,backendFencesConfigured:true,primaryActivityConfigured:true)
+    let peer=NativeControlPeer(pid:42,start:100,executable:try VerifiedExecutable(path:"/fixture/native",sha256:String(repeating:"a",count:64)))
+    let primary=NativePrimaryActivitySample(peer:peer,receivedAt:1000,activity:NativePrimaryActivity(phaseVersion:2,
+        instance:instance,sampleSequence:11,sampledAt:900,uncertain:false,owners:0,ingress:0,preparing:0,queued:0,active:0,responding:0,models:[]))
+    let backend=NativeBackendFenceSample(peer:peer,receivedAt:1000,fences:NativeBackendFences(instance:instance,sampleSequence:19,
+        sampledAt:1000,mimoWarmUncertain:false,ds4MetalUncertainty:0,ds4HostUncertainty:0))
+    guard combined.completed(sample(),receivedAt:1000,backendFences:.success(backend),primaryActivity:.success(primary)) else {throw NativeControlError.invalid}
+    for now:Int64 in [5900,5901] {
+        let view=combined.summary(now:now)
+        let primaryView=view["primary_activity"] as? [String:Any],backendView=view["backend_fences"] as? [String:Any]
+        guard combined.capture(now:now)?.sequence==42,view["authoritative"] as? Bool==false,
+              primaryView?["authority"] as? Bool==false,backendView?["authority"] as? Bool==false,
+              primaryView?["state"] as? String==(now==5900 ? "received":"stale"),backendView?["state"] as? String=="received" else {
+            fatalError("Combined diagnostics conflated source ages or projected partial zero as authority")
+        }
+    }
+    guard combined.completed(sample(43,1001),receivedAt:1001,primaryActivity:.failure(.unavailable)) else {throw NativeControlError.invalid}
+    let gap=combined.summary(now:1001)
+    guard (gap["primary_activity"] as? [String:Any])?["state"] as? String=="unavailable",
+          (gap["backend_fences"] as? [String:Any])?["state"] as? String=="received",
+          combined.capture(now:1001)?.sequence==43 else {fatalError("An independent primary gap erased unrelated diagnostics")}
+    guard combined.completed(sample(44,1002),receivedAt:1002,primaryActivity:.success(primary)),
+          (combined.summary(now:1002)["primary_activity"] as? [String:Any])?["state"] as? String=="unavailable" else {
+        fatalError("New ingress capture disguised replay of the pre-gap primary capture")
+    }
+    let nextPrimary=NativePrimaryActivitySample(peer:peer,receivedAt:1003,activity:NativePrimaryActivity(phaseVersion:2,
+        instance:instance,sampleSequence:12,sampledAt:1003,uncertain:false,owners:0,ingress:0,preparing:0,queued:0,active:0,responding:0,models:[]))
+    guard combined.completed(sample(45,1003),receivedAt:1003,backendFences:.failure(.unavailable),primaryActivity:.success(nextPrimary)) else {throw NativeControlError.invalid}
+    guard combined.completed(sample(46,1004),receivedAt:1004,backendFences:.success(backend)) else {throw NativeControlError.invalid}
+    let backendGap=combined.summary(now:1004)
+    guard (backendGap["backend_fences"] as? [String:Any])?["state"] as? String=="unavailable",
+          (backendGap["primary_activity"] as? [String:Any])?["state"] as? String=="received",
+          combined.capture(now:1004)?.sequence==46 else {fatalError("Backend outage/replay affected independent primary or ingress evidence")}
+    var legacy=sample();legacy.nativeSampleSequence=nil;legacy.nativeSampledAt=nil
+    var mixed=NativeControlDiagnostics(configured:true)
+    mixed.completed(sample(),receivedAt:1000)
+    mixed.completed(legacy,receivedAt:1001)
+    guard mixed.capture(now:1001)==nil,mixed.ingressSample(now:1001)?.sourceSampledAt==nil else {fatalError("Legacy diagnostic clock became a native capture")}
+    mixed.completed(sample(),receivedAt:1002)
+    guard mixed.capture(now:1002)==nil else {fatalError("Legacy diagnostic gap reset original native sequence")}
+    mixed.completed(sample(43,1003),receivedAt:1003)
+    guard mixed.capture(now:1003)?.sequence==43 else {fatalError("Advancing original ingress source failed after legacy gap")}
+    print("PASS: native ingress replay cannot refresh capture; instance, source/receipt rollback and uncertainty regression retain independent continuity fences")
+}

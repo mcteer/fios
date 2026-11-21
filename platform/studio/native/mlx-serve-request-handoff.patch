@@ -1,0 +1,327 @@
+diff --git a/src/fios/request_ownership.zig b/src/fios/request_ownership.zig
+--- a/src/fios/request_ownership.zig
++++ b/src/fios/request_ownership.zig
+@@ -5,6 +5,9 @@
+ pub const capacity = 256;
+ pub const model_limit = 1024;
+ pub const model_capacity = 64;
++pub const handoff_capacity = 32;
++pub const HandoffRegistration = struct { instance: [16]u8, correlation: CorrelationID, root_sequence: u64 };
++pub const HandoffState = enum { pending, handed_off, cancelled, unknown };
+ // Exact JSON-safe capture counter; exhaustion stays fenced, never wraps.
+ pub const maximum_sample_sequence: u64 = 9_007_199_254_740_991;
+ pub const Token = struct { slot: usize, sequence: u64, instance: [16]u8 };
+@@ -50,6 +53,7 @@
+     uncertain: bool = true,
+ };
+ const Retirement = struct {
++    handoff_cancelled: bool = false,
+     correlation: CorrelationID = @splat(0),
+     root_sequence: u64 = 0,
+     sequence: u64 = 0,
+@@ -77,6 +81,8 @@
+     sequence: u64 = 0,
+ };
+ const Slot = struct {
++    pending_handoff: bool = false,
++    cancelled_handoff: bool = false,
+     sequence: u64 = 0,
+     phase: Phase = .vacant,
+     primary: ?u6 = null,
+@@ -375,6 +381,74 @@
+         }
+         return &self.slots[token.slot];
+     }
++    // Native-private identity reservation only; no model/idle/admission grant.
++    // It makes the original root observable before a worker may POST.
++    pub fn registerHandoff(self: *Tracker, io: std.Io, id: CorrelationID) !HandoffRegistration {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        var pending: usize = 0;
++        for (self.slots) |slot| {
++            if (slot.pending_handoff) pending += 1;
++            if (slot.correlation) |existing| if (std.mem.eql(u8, &existing, &id)) return error.DuplicateCorrelation;
++        }
++        for (self.retirements) |record| {
++            if (record.sequence > 0 and std.mem.eql(u8, &record.correlation, &id)) return error.DuplicateCorrelation;
++        }
++        if (pending >= handoff_capacity) return error.HandoffCapacity;
++        const token = try self.enterLocked(false);
++        const slot = &self.slots[token.slot];
++        slot.correlation = id;
++        slot.correlation_root = token.sequence;
++        slot.pending_handoff = true;
++        return .{ .instance = self.instance, .correlation = id, .root_sequence = token.sequence };
++    }
++    // Only the explicit registered-root HTTP path may consume this identity.
++    // An absent/cancelled/evicted original can NEVER fall back to associate().
++    pub fn associateHandoff(self: *Tracker, io: std.Io, incoming: Token, id: CorrelationID, root: u64) !void {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain) return error.CoverageUncertain;
++        const target = try self.checked(incoming);
++        if (target.phase != .ingress or target.correlation != null or target.pending_handoff) return error.InvalidCorrelationState;
++        for (&self.slots, 0..) |*slot, index| {
++            const correlation = slot.correlation orelse continue;
++            if (!slot.pending_handoff or slot.sequence != root or !std.mem.eql(u8, &correlation, &id)) continue;
++            if (slot.phase != .ingress or slot.references != 1 or slot.primary != null or slot.models != 0 or slot.correlation_root != root) {
++                self.uncertain = true; return error.InvalidHandoffState;
++            }
++            target.correlation = id;
++            target.correlation_root = root;
++            slot.pending_handoff = false;
++            try self.leaveLocked(.{ .instance = self.instance, .slot = index, .sequence = root });
++            return;
++        }
++        return error.MissingHandoff;
++    }
++    // Atomically close only an unconsumed registration. A request which won
++    // the same mutex has already handed off and stays independently owned.
++    // This result is not exposed as native completion or admission authority.
++    pub fn cancelHandoff(self: *Tracker, io: std.Io, id: CorrelationID, root: u64) HandoffState {
++        self.mutex.lockUncancelable(io);
++        defer self.mutex.unlock(io);
++        if (!self.initialized or self.uncertain or root == 0) return .unknown;
++        for (&self.slots, 0..) |*slot, index| {
++            const correlation = slot.correlation orelse continue;
++            if (slot.correlation_root != root or !std.mem.eql(u8, &correlation, &id)) continue;
++            if (!slot.pending_handoff) return .handed_off;
++            if (slot.phase != .ingress or slot.references != 1 or slot.primary != null or slot.models != 0 or slot.sequence != root) {
++                self.uncertain = true; return .unknown;
++            }
++            slot.pending_handoff = false;
++            slot.cancelled_handoff = true;
++            self.leaveLocked(.{ .instance = self.instance, .slot = index, .sequence = root }) catch { self.uncertain = true; return .unknown; };
++            return if (self.uncertain) .unknown else .cancelled;
++        }
++        for (self.retirements) |record| {
++            if (record.sequence > 0 and record.root_sequence == root and std.mem.eql(u8, &record.correlation, &id) and record.handoff_cancelled) return .cancelled;
++        }
++        return .unknown;
++    }
+     pub fn associate(self: *Tracker, io: std.Io, token: Token, id: CorrelationID) !void {
+         self.mutex.lockUncancelable(io);
+         defer self.mutex.unlock(io);
+@@ -441,7 +515,7 @@
+         }
+         return result;
+     }
+-    fn recordRetirementLocked(self: *Tracker, id: CorrelationID, root: u64) void {
++    fn recordRetirementLocked(self: *Tracker, id: CorrelationID, root: u64, cancelled: bool) void {
+         // Called only after the original slot's final reference release. Other
+         // descendants with this root keep the local request lineage live.
+         for (self.slots) |other| {
+@@ -451,7 +525,7 @@
+         }
+         if (root == 0 or self.retirement_sequence == std.math.maxInt(u64)) { self.uncertain = true; return; }
+         self.retirement_sequence += 1;
+-        self.retirements[self.retirement_cursor] = .{ .correlation = id, .root_sequence = root, .sequence = self.retirement_sequence };
++        self.retirements[self.retirement_cursor] = .{ .correlation = id, .root_sequence = root, .sequence = self.retirement_sequence, .handoff_cancelled = cancelled };
+         self.retirement_cursor = (self.retirement_cursor + 1) % capacity;
+         // Eviction discards local history only. Missing records stay unknown;
+         // it never releases a manager claim or clears native uncertainty.
+@@ -828,6 +902,7 @@
+     }
+     fn bindLocked(self: *Tracker, token: Token, model: []const u8) !void {
+         const slot = try self.checked(token);
++        if (slot.pending_handoff) { self.uncertain = true; return error.InvalidHandoffState; }
+         if (slot.phase != .ingress) {
+             self.uncertain = true;
+             return error.InvalidPhase;
+@@ -883,6 +958,7 @@
+         self.mutex.lockUncancelable(io);
+         defer self.mutex.unlock(io);
+         const slot = try self.checked(token);
++        if (slot.pending_handoff) { self.uncertain = true; return error.InvalidHandoffState; }
+         if (slot.references == std.math.maxInt(u32)) {
+             self.uncertain = true;
+             return error.ReferenceOverflow;
+@@ -899,6 +975,7 @@
+         var seen: [capacity]bool = @splat(false);
+         for (tokens) |token| {
+             const slot = try self.checked(token);
++            if (slot.pending_handoff) { self.uncertain = true; return error.InvalidHandoffState; }
+             if (seen[token.slot]) continue;
+             if (slot.references == std.math.maxInt(u32)) { self.uncertain = true; return error.ReferenceOverflow; }
+             seen[token.slot] = true;
+@@ -970,8 +1047,9 @@
+         // native completion decision and never clears the independent fence.
+         const correlation = slot.correlation;
+         const root = slot.correlation_root;
++        const cancelled = slot.cancelled_handoff;
+         slot.* = .{};
+-        if (correlation) |id| self.recordRetirementLocked(id, root);
++        if (correlation) |id| self.recordRetirementLocked(id, root, cancelled);
+     }
+     // Capture before queue publication. Validate the entire original union
+     // before retaining any root. No backend callback runs under this mutex.
+diff --git a/src/fios/control_protocol.zig b/src/fios/control_protocol.zig
+--- a/src/fios/control_protocol.zig
++++ b/src/fios/control_protocol.zig
+@@ -253,6 +253,41 @@
+     inline for (.{snapshot.owners,snapshot.ingress,snapshot.preparing,snapshot.active,snapshot.responding}, 0..) |value,index| {
+         std.mem.writeInt(u32, response[80 + index * 4 ..][0..4], @intCast(value), .big);
+     }
++    return response;
++}
++
++// Native-private correlation handoff, not a model/admission or completion API.
++// Only a still-pending registration can be cancelled under the tracker mutex.
++pub const handoff_response_size = 88;
++pub fn dispatchHandoff(tracker: *ownership.Tracker, io: std.Io, request: *const [64]u8) [handoff_response_size]u8 {
++    var response: [handoff_response_size]u8 = @splat(0);
++    @memcpy(response[0..4], "FIK9");response[4]=1;
++    response[6]=@intFromEnum(ownership.HandoffState.unknown);response[7]=1;
++    const operation=request[5];
++    const root=std.mem.readInt(u64,request[56..64],.big);
++    if (!std.mem.eql(u8,request[0..4],"FIJ9") or request[4]!=1 or operation>1 or
++        !std.mem.allEqual(u8,request[6..8],0) or (operation==0 and root!=0) or (operation==1 and root==0)) {
++        response[5]=@intFromEnum(Status.invalid);return response;
++    }
++    response[72]=operation;
++    const before=tracker.snapshot(io);
++    @memcpy(response[8..24],&before.instance);@memcpy(response[24..56],request[24..56]);
++    std.mem.writeInt(u64,response[56..64],before.sample_sequence,.big);
++    std.mem.writeInt(u64,response[64..72],root,.big);
++    if (!before.initialized or !std.mem.eql(u8,request[8..24],&before.instance)) {
++        response[5]=@intFromEnum(Status.wrong_instance);return response;
++    }
++    if (operation==0) {
++        const registered=tracker.registerHandoff(io,request[24..56].*) catch |err| {
++            response[5]=@intFromEnum(if(err==error.Maintenance) Status.maintenance else Status.invalid);return response;
++        };
++        std.mem.writeInt(u64,response[64..72],registered.root_sequence,.big);
++        response[6]=@intFromEnum(ownership.HandoffState.pending);
++    } else response[6]=@intFromEnum(tracker.cancelHandoff(io,request[24..56].*,root));
++    const after=tracker.snapshot(io);
++    std.mem.writeInt(u64,response[56..64],after.sample_sequence,.big);
++    response[7]=@intFromBool(after.uncertain or !after.initialized);
++    if(response[7]!=0)response[6]=@intFromEnum(ownership.HandoffState.unknown);
+     return response;
+ }
+ 
+@@ -647,3 +682,22 @@
+     request[8] ^= 1; request[5] = 1;
+     try std.testing.expectEqual(@intFromEnum(Status.invalid), dispatchRetirement(&tracker, io, &request)[5]);
+ }
++
++test "handoff register cancel wire binds instance and refuses consumed or stale roots" {
++    const io = std.testing.io;
++    var tracker: ownership.Tracker = .{};
++    try tracker.initialize(io, @splat(88));
++    var request: [64]u8 = @splat(0);
++    @memcpy(request[0..4], "FIJ9");request[4]=1;
++    @memset(request[8..24],88);@memset(request[24..56],89);
++    const registered=dispatchHandoff(&tracker,io,&request);
++    try std.testing.expect(registered[5]==0 and registered[6]==@intFromEnum(ownership.HandoffState.pending));
++    const root=std.mem.readInt(u64,registered[64..72],.big);try std.testing.expect(root>0);
++    request[5]=1;std.mem.writeInt(u64,request[56..64],root,.big);
++    const cancelled=dispatchHandoff(&tracker,io,&request);
++    try std.testing.expect(cancelled[6]==@intFromEnum(ownership.HandoffState.cancelled));
++    request[8]^=1;
++    try std.testing.expectEqual(@intFromEnum(Status.wrong_instance),dispatchHandoff(&tracker,io,&request)[5]);
++    request[8]^=1;request[7]=1;
++    try std.testing.expectEqual(@intFromEnum(Status.invalid),dispatchHandoff(&tracker,io,&request)[5]);
++}
+diff --git a/src/fios/control_transport.zig b/src/fios/control_transport.zig
+--- a/src/fios/control_transport.zig
++++ b/src/fios/control_transport.zig
+@@ -160,6 +160,10 @@
+             const value = protocol.dispatchWithBarrier(ownership.shared(), self.io, input[0..protocol.request_size], self.barrier);
+             @memcpy(storage[0..protocol.response_size], &value);
+             break :legacy storage[0..protocol.response_size];
++        } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIJ9")) handoff: {
++            const value = protocol.dispatchHandoff(ownership.shared(), self.io, input[0..protocol.lineage_request_size]);
++            @memcpy(storage[0..protocol.handoff_response_size], &value);
++            break :handoff storage[0..protocol.handoff_response_size];
+         } else if (count == protocol.lineage_request_size and std.mem.eql(u8, input[0..4], "FIE9")) retirement: {
+             const value = protocol.dispatchRetirement(ownership.shared(), self.io, input[0..protocol.lineage_request_size]);
+             @memcpy(storage[0..protocol.retirement_response_size], &value);
+diff --git a/src/host/http/router.zig b/src/host/http/router.zig
+--- a/src/host/http/router.zig
++++ b/src/host/http/router.zig
+@@ -2,6 +2,7 @@
+ 
+ const request_options = @import("../api/request_options.zig");
+ const fios_correlation_header = @import("../../fios/correlation_header.zig");
++const fios_handoff_header = @import("../../fios/handoff_header.zig");
+ const std = @import("std");
+ const fios_ownership = @import("../../fios/request_ownership.zig");
+ const fios_instance_header = @import("../../fios/instance_header.zig");
+@@ -294,18 +295,36 @@
+             try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_identity", "Invalid request identity", 400);
+             return;
+         };
++        const handoff_root = fios_handoff_header.parse(request[0..header_end_pos]) catch {
++            try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_identity", "Invalid handoff identity", 400);
++            return;
++        };
++        if (handoff_root != null and (!fios_process_bound or correlation == null)) {
++            try sendErrorResponse(allocator, stream, "400 Bad Request", "invalid_request_identity", "Handoff requires bound native request identity", 400);
++            return;
++        }
+         if (correlation) |id| {
+             const ownership = fios_ownership.current().* orelse {
+                 try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_tracking_unavailable", "Native ownership tracking is unavailable", 503);
+                 return;
+             };
+-            fios_ownership.shared().associate(stream.io, ownership, id) catch |err| {
+-                if (err == error.DuplicateCorrelation or err == error.InvalidCorrelationState)
+-                    try sendErrorResponse(allocator, stream, "409 Conflict", "request_identity_conflict", "Request identity is already owned", 409)
+-                else
+-                    try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_tracking_unavailable", "Native ownership tracking is unavailable", 503);
+-                return;
+-            };
++            if (handoff_root) |root| {
++                fios_ownership.shared().associateHandoff(stream.io, ownership, id, root) catch |err| {
++                    if (err == error.MissingHandoff or err == error.InvalidCorrelationState)
++                        try sendErrorResponse(allocator, stream, "409 Conflict", "native_handoff_unavailable", "Original native handoff is unavailable", 409)
++                    else
++                        try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_tracking_unavailable", "Native ownership tracking is unavailable", 503);
++                    return;
++                };
++            } else {
++                fios_ownership.shared().associate(stream.io, ownership, id) catch |err| {
++                    if (err == error.DuplicateCorrelation or err == error.InvalidCorrelationState)
++                        try sendErrorResponse(allocator, stream, "409 Conflict", "request_identity_conflict", "Request identity is already owned", 409)
++                    else
++                        try sendErrorResponse(allocator, stream, "503 Service Unavailable", "native_tracking_unavailable", "Native ownership tracking is unavailable", 503);
++                    return;
++                };
++            }
+         }
+     }
+ 
+diff --git a/src/fios/handoff_header.zig b/src/fios/handoff_header.zig
+new file mode 100644
+--- /dev/null
++++ b/src/fios/handoff_header.zig
+@@ -0,0 +1,27 @@
++// Fixed original-root metadata for the explicit native handoff path. Neither
++// a model selector nor authentication, native admission or completion proof.
++const std = @import("std");
++pub fn parse(headers: []const u8) !?u64 {
++    var result: ?u64 = null;
++    var lines = std.mem.splitSequence(u8, headers, "\r\n");
++    while (lines.next()) |line| {
++        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
++        if (!std.ascii.eqlIgnoreCase(line[0..colon], "x-fios-handoff-root")) continue;
++        if (result != null) return error.DuplicateHandoffHeader;
++        const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
++        if (value.len == 0 or value.len > 20 or value[0] == '0') return error.InvalidHandoffHeader;
++        for (value) |byte| if (byte < '0' or byte > '9') return error.InvalidHandoffHeader;
++        result = std.fmt.parseInt(u64, value, 10) catch return error.InvalidHandoffHeader;
++    }
++    return result;
++}
++test "handoff header preserves full-width root and refuses ambiguous values" {
++    try std.testing.expectEqual(@as(?u64, null), try parse("Host: localhost\r\n"));
++    try std.testing.expectEqual(@as(?u64, std.math.maxInt(u64)), try parse("X-Fios-Handoff-Root:18446744073709551615\r\n"));
++    try std.testing.expectEqual(@as(?u64, 7), try parse("x-fios-handoff-root: \t7 \t\r\n"));
++    for ([_][]const u8{ "", "0", "01", "+1", "-1", "1 2", "18446744073709551616", "1a" }) |bad| {
++        var bytes: [128]u8 = undefined;
++        try std.testing.expectError(error.InvalidHandoffHeader, parse(try std.fmt.bufPrint(&bytes, "X-Fios-Handoff-Root:{s}\r\n", .{bad})));
++    }
++    try std.testing.expectError(error.DuplicateHandoffHeader, parse("X-Fios-Handoff-Root:1\r\nx-fios-handoff-root:2\r\n"));
++}

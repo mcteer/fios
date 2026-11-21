@@ -1,0 +1,30 @@
+const std = @import("std");
+const owners = @import("fios/request_ownership.zig");
+const sdk = @import("fios/sdk_request_ownership.zig");
+const scenario = @import("build_options").scenario;
+extern fn fios_capture_refusal_probe(scenario: c_int) c_int;
+extern "c" fn usleep(microseconds: c_uint) c_int;
+pub fn main(init: std.process.Init) !void {
+    const io=init.io;
+    try owners.shared().initialize(io,@splat(83));try sdk.initialize(io);
+    const root=try owners.shared().enter(io);try owners.shared().bind(io,root,"fixture/capture-origin");
+    owners.current().*=if (scenario==3) null else root;
+    const result=fios_capture_refusal_probe(scenario);
+    if (owners.shared().snapshot(io).owned!=1) return error.OriginalRootLost;
+    if (result==0) {
+        owners.shared().fence(io);
+        std.debug.print("FIO_SDK_PUBLISHED_WITHOUT_NATIVE_CAPTURE\n",.{});
+        return error.CaptureFenceIgnored;
+    }
+    if (result!=1) return error.UnexpectedSDKProbe;
+    if (scenario>=2) {
+        if (!owners.shared().snapshot(io).uncertain or !sdk.diagnostic().uncertain) return error.OriginalFenceLost;
+        // No release/cleanup can turn this original uncertainty into terminality.
+    } else {
+        for (0..3000) |_| { if (sdk.diagnostic().active_contexts==0) break; _=usleep(1000); }
+        if (sdk.diagnostic().active_contexts!=0 or sdk.diagnostic().uncertain or owners.shared().snapshot(io).uncertain) return error.HealthyContext;
+        owners.current().*=null;try owners.shared().leave(io,root);
+        if (owners.shared().snapshot(io).owned!=0) return error.LocalRetirement;
+    }
+    std.debug.print("PASS: SDK capture publication respects native fence/missing context while legacy and owned CPU controls remain healthy; no terminal authority\n",.{});
+}

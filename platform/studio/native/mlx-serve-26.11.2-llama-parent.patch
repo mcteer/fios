@@ -1,0 +1,356 @@
+diff --git a/lib/llama_shim/llama_shim.cpp b/lib/llama_shim/llama_shim.cpp
+index 49ac5d8..9534daa 100644
+--- a/lib/llama_shim/llama_shim.cpp
++++ b/lib/llama_shim/llama_shim.cpp
+@@ -15,6 +15,9 @@
+ #endif
+ 
+ #include <algorithm>
++#include <atomic>
++#include <limits>
++#include <new>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+@@ -38,7 +41,17 @@ float * llama_get_embeddings_nextn(struct llama_context * ctx)
+ float * llama_get_embeddings_nextn_ith(struct llama_context * ctx, int32_t i)
+     MSVC_NAME("?llama_get_embeddings_nextn_ith@@YAPEAMPEAUllama_context@@H@Z");
+ 
++// Negative-only process fence. No reset, sampled idle or terminal authority.
++static std::atomic<bool> fios_llama_uncertain{false};
++extern "C" int32_t mlx_llama_source_uncertainty(void) {
++    return fios_llama_uncertain.load(std::memory_order_acquire) ? 1 : 0;
++}
++
+ struct mlx_llama_engine {
++    std::mutex fios_mu;
++    uint64_t fios_children = 0;
++    bool fios_closing = false;
++    std::atomic<bool> fios_uncertain{false};
+     struct llama_model *model;
+     struct llama_model *mtp_model; // the sidecar head; NULL when the trunk carries its own
+     const struct llama_vocab *vocab;
+@@ -54,6 +67,7 @@ struct Row {
+ } // namespace
+ 
+ struct mlx_llama_ctx {
++    bool fios_parent_owned = false;
+     mlx_llama_engine *e;
+     struct llama_context *tgt;
+     struct llama_context *dft; // MTP head, NULL without MTP
+@@ -72,6 +86,35 @@ struct mlx_llama_ctx {
+     std::vector<Row> rows;
+ };
+ 
++// The caller already owns a stable enclosing engine/context reference.
++// Counts protect the destructive parent edge across caller/worker handoff;
++// they do not assert device completion or impose creator-thread affinity.
++static void fios_llama_mark_uncertain(mlx_llama_engine *e) {
++    if (e) e->fios_uncertain.store(true, std::memory_order_release);
++    fios_llama_uncertain.store(true, std::memory_order_release);
++}
++static bool fios_llama_retain_parent(mlx_llama_ctx *c, mlx_llama_engine *e) {
++    if (!c || !e || c->fios_parent_owned) return false;
++    std::lock_guard<std::mutex> lock(e->fios_mu);
++    if (e->fios_closing || e->fios_uncertain.load(std::memory_order_acquire) ||
++        fios_llama_uncertain.load(std::memory_order_acquire)) return false;
++    if (e->fios_children == std::numeric_limits<uint64_t>::max()) {
++        fios_llama_mark_uncertain(e); return false;
++    }
++    ++e->fios_children;
++    c->e = e;
++    c->fios_parent_owned = true;
++    return true;
++}
++static bool fios_llama_release_parent(mlx_llama_ctx *c) {
++    if (!c || !c->e || !c->fios_parent_owned) { fios_llama_mark_uncertain(c ? c->e : nullptr); return false; }
++    std::lock_guard<std::mutex> lock(c->e->fios_mu);
++    if (c->e->fios_children == 0) { fios_llama_mark_uncertain(c->e); return false; }
++    --c->e->fios_children;
++    c->fios_parent_owned = false;
++    return true; // Local release never clears either independent fence.
++}
++
+ static std::once_flag g_backend_once;
+ 
+ // llama.cpp and ggml log to stderr by default (the loader dumps every metadata key);
+@@ -118,6 +161,9 @@ extern "C" {
+ 
+ mlx_llama_engine *mlx_llama_open(const char *gguf_path, int32_t n_gpu_layers, const char *mtp_path,
+                                  bool load_mtp, char *err, size_t errlen) {
++    if (fios_llama_uncertain.load(std::memory_order_acquire)) {
++        copy_err(err, errlen, "llama source custody uncertain"); return NULL;
++    }
+     std::call_once(g_backend_once, backend_init_once);
+ 
+     struct llama_model_params mp = llama_model_default_params();
+@@ -138,7 +184,7 @@ mlx_llama_engine *mlx_llama_open(const char *gguf_path, int32_t n_gpu_layers, co
+         mtp_model = llama_model_load_from_file(mtp_path, hp);
+     }
+ 
+-    mlx_llama_engine *e = (mlx_llama_engine *)calloc(1, sizeof(*e));
++    mlx_llama_engine *e = new (std::nothrow) mlx_llama_engine();
+     if (!e) {
+         if (mtp_model) llama_model_free(mtp_model);
+         llama_model_free(model);
+@@ -153,11 +199,25 @@ mlx_llama_engine *mlx_llama_open(const char *gguf_path, int32_t n_gpu_layers, co
+     return e;
+ }
+ 
++int32_t mlx_llama_try_close(mlx_llama_engine *e) {
++    if (!e) return 0;
++    {
++        std::lock_guard<std::mutex> lock(e->fios_mu);
++        if (e->fios_children != 0 || e->fios_closing || e->fios_uncertain.load(std::memory_order_acquire) ||
++            fios_llama_uncertain.load(std::memory_order_acquire)) {
++            fios_llama_mark_uncertain(e); return 0;
++        }
++        e->fios_closing = true;
++    }
++    try {
++        if (e->mtp_model) { llama_model_free(e->mtp_model); e->mtp_model = NULL; }
++        if (e->model) { llama_model_free(e->model); e->model = NULL; }
++        delete e;
++        return 1;
++    } catch (...) { fios_llama_mark_uncertain(e); return 0; }
++}
+ void mlx_llama_close(mlx_llama_engine *e) {
+-    if (!e) return;
+-    if (e->mtp_model) llama_model_free(e->mtp_model);
+-    if (e->model) llama_model_free(e->model);
+-    free(e);
++    if (e) (void)mlx_llama_try_close(e);
+ }
+ 
+ int32_t mlx_llama_eos_token(mlx_llama_engine *e) {
+@@ -246,6 +306,9 @@ static bool attach_mtp(mlx_llama_ctx *c, struct llama_context_params cp, int32_t
+ 
+ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_llama_ctx_params *p,
+                                                char *err, size_t errlen) {
++    if (!e || !p || fios_llama_uncertain.load(std::memory_order_acquire)) {
++        copy_err(err, errlen, "llama source custody unavailable"); return NULL;
++    }
+     const int32_t n_seq = p->n_seq > 0 ? p->n_seq : 1;
+     const int32_t n_ctx = p->n_ctx > 0 ? p->n_ctx : llama_model_n_ctx_train(e->model);
+ 
+@@ -289,6 +352,12 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
+     }
+     c->e = e;
+     c->tgt = tgt;
++    if (!fios_llama_retain_parent(c, e)) {
++        // Native context already exists: retain it and its parent on refusal.
++        fios_llama_mark_uncertain(e);
++        copy_err(err, errlen, "llama parent custody unavailable"); return NULL;
++    }
++    try {
+     c->dft = NULL;
+     c->batch = llama_batch_ext_init(tgt);
+     c->dbatch = NULL;
+@@ -301,15 +370,35 @@ extern "C" mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_ll
+     c->out_idx.assign((size_t)n_seq, -1);
+     if (want_mtp) attach_mtp(c, cp, p->mtp_drafts, err, errlen);
+     return c;
++    } catch (...) {
++        fios_llama_mark_uncertain(e);
++        copy_err(err, errlen, "llama context setup uncertain"); return NULL;
++    }
++}
++
++extern "C" int32_t mlx_llama_ctx_try_free(mlx_llama_ctx *c) {
++    if (!c) return 0;
++    if (!c->e || !c->fios_parent_owned || fios_llama_uncertain.load(std::memory_order_acquire)) {
++        fios_llama_mark_uncertain(c->e); return 0;
++    }
++    // Preserve the vendor's normal destruction path. A successful local
++    // destructor is not an all-client/device terminal proof.
++    try {
++        // The vendor wait precedes any batch/context destruction. Its void
++        // result is not a correlated all-client completion/admission issuer.
++        if (c->tgt) llama_synchronize(c->tgt);
++        if (c->dft) llama_synchronize(c->dft);
++        if (c->dbatch) { llama_batch_ext_free(c->dbatch); c->dbatch = NULL; }
++        if (c->dft) { llama_free(c->dft); c->dft = NULL; }
++        if (c->batch) { llama_batch_ext_free(c->batch); c->batch = NULL; }
++        if (c->tgt) { llama_free(c->tgt); c->tgt = NULL; }
++        if (!fios_llama_release_parent(c)) return 0;
++        delete c;
++        return 1;
++    } catch (...) { fios_llama_mark_uncertain(c->e); return 0; }
+ }
+-
+ extern "C" void mlx_llama_ctx_free(mlx_llama_ctx *c) {
+-    if (!c) return;
+-    if (c->dbatch) llama_batch_ext_free(c->dbatch);
+-    if (c->dft) llama_free(c->dft);
+-    if (c->batch) llama_batch_ext_free(c->batch);
+-    if (c->tgt) llama_free(c->tgt);
+-    delete c;
++    if (c) (void)mlx_llama_ctx_try_free(c);
+ }
+ 
+ extern "C" int32_t mlx_llama_ctx_mtp_drafts(mlx_llama_ctx *c) {
+@@ -317,7 +406,7 @@ extern "C" int32_t mlx_llama_ctx_mtp_drafts(mlx_llama_ctx *c) {
+ }
+ 
+ static bool valid_seq(const mlx_llama_ctx *c, int32_t seq) {
+-    return seq >= 0 && seq < c->n_seq;
++    return c && c->fios_parent_owned && !fios_llama_uncertain.load(std::memory_order_acquire) && seq >= 0 && seq < c->n_seq;
+ }
+ 
+ static void seq_clear(mlx_llama_ctx *c, int32_t seq) {
+@@ -417,6 +506,9 @@ extern "C" int32_t mlx_llama_seq_prefill(mlx_llama_ctx *c, int32_t seq, const in
+ 
+ extern "C" int32_t mlx_llama_step(mlx_llama_ctx *c, const int32_t *seqs, const int32_t *tokens, int32_t n,
+                                   char *err, size_t errlen) {
++    if (!c || !c->fios_parent_owned || fios_llama_uncertain.load(std::memory_order_acquire)) {
++        copy_err(err, errlen, "llama context custody unavailable"); return -1;
++    }
+     c->rows.resize((size_t)n);
+     for (int32_t i = 0; i < n; i++) {
+         if (!valid_seq(c, seqs[i])) {
+@@ -433,6 +525,7 @@ extern "C" int32_t mlx_llama_step(mlx_llama_ctx *c, const int32_t *seqs, const i
+ }
+ 
+ extern "C" int32_t mlx_llama_seq_trim(mlx_llama_ctx *c, int32_t seq, int32_t n_keep) {
++    if (!valid_seq(c, seq)) return -1;
+     if (n_keep < 0) n_keep = 0;
+     if (n_keep >= c->pos[seq]) return 0; // nothing resident beyond n_keep
+     // Recurrent / hybrid memory (Mamba, GDN: qwen35, qwen3next, nemotron_h) can
+diff --git a/lib/llama_shim/llama_shim.h b/lib/llama_shim/llama_shim.h
+index 4d3afa3..a14f914 100644
+--- a/lib/llama_shim/llama_shim.h
++++ b/lib/llama_shim/llama_shim.h
+@@ -10,8 +10,10 @@
+ // Lifetimes & threading: the engine wraps a loaded model + vocab (and an
+ // optional MTP draft head); a context wraps ONE llama_context holding n_seq
+ // sequences, each with its own KV stream, decoded together. The llama backend is
+-// initialized once per process (pthread_once). A context is single-threaded:
+-// the scheduler's inference thread is its only caller.
++// initialized once per process (pthread_once). Context operations are serialized:
++// creation occurs on the loading caller, computation on its worker, destruction
++// after worker join. Callers retain stable enclosing object references; these
++// local custody checks do not attest device/all-client terminality.
+ //
+ // Logits contract: a decode leaves logits for the sequences it produced a row
+ // for, and the NEXT decode on the context discards them. Sample a sequence right
+@@ -37,6 +39,9 @@ typedef struct mlx_llama_ctx mlx_llama_ctx;
+ mlx_llama_engine *mlx_llama_open(const char *gguf_path, int32_t n_gpu_layers, const char *mtp_path,
+                                  bool load_mtp, char *err, size_t errlen);
+ void mlx_llama_close(mlx_llama_engine *e);
++// Local object custody only, never native terminal/admission proof.
++int32_t mlx_llama_try_close(mlx_llama_engine *e);
++int32_t mlx_llama_source_uncertainty(void);
+ 
+ int32_t mlx_llama_eos_token(mlx_llama_engine *e);
+ bool    mlx_llama_is_eog(mlx_llama_engine *e, int32_t token); // EOS or any end-of-generation token
+@@ -82,6 +87,7 @@ typedef struct {
+ // dropped with a log line and mlx_llama_ctx_mtp_drafts() reports 0.
+ mlx_llama_ctx *mlx_llama_ctx_create(mlx_llama_engine *e, const mlx_llama_ctx_params *p, char *err, size_t errlen);
+ void mlx_llama_ctx_free(mlx_llama_ctx *c);
++int32_t mlx_llama_ctx_try_free(mlx_llama_ctx *c);
+ // Draft tokens per MTP round this context runs, 0 when it has no MTP context.
+ int32_t mlx_llama_ctx_mtp_drafts(mlx_llama_ctx *c);
+ 
+diff --git a/src/engines/llama/bridge.zig b/src/engines/llama/bridge.zig
+index 052b383..06cef14 100644
+--- a/src/engines/llama/bridge.zig
++++ b/src/engines/llama/bridge.zig
+@@ -91,7 +91,8 @@ pub const LlamaEngine = struct {
+     }
+ 
+     pub fn close(self: *LlamaEngine) void {
+-        ffi.mlx_llama_close(self.handle);
++        // A refused C parent retains this wrapper and its owned path as well.
++        if (ffi.mlx_llama_try_close(self.handle) != 1) return;
+         self.allocator.free(self.model_path_owned);
+         self.allocator.destroy(self);
+     }
+@@ -275,8 +276,8 @@ pub fn commonPrefixLen(a: []const i32, b: []const i32) usize {
+     return i;
+ }
+ 
+-/// One llama_context holding `seqs.len` sequences. Single-threaded: only the
+-/// inference thread calls in.
++/// One llama_context holding `seqs.len` sequences. Operations are serialized:
++/// loading caller creates, worker computes, joined caller destroys.
+ pub const LlamaContext = struct {
+     allocator: std.mem.Allocator,
+     engine: *LlamaEngine,
+@@ -284,9 +285,11 @@ pub const LlamaContext = struct {
+     seqs: []LlamaSeq,
+ 
+     pub fn free(self: *LlamaContext) void {
++        // Refused native custody retains this wrapper, sequence storage and
++        // parent wrapper. A void compatibility callback is not terminal proof.
++        if (ffi.mlx_llama_ctx_try_free(self.handle) != 1) return;
+         for (self.seqs) |*s| s.resident.deinit(self.allocator);
+         self.allocator.free(self.seqs);
+-        ffi.mlx_llama_ctx_free(self.handle);
+         self.allocator.destroy(self);
+     }
+ 
+diff --git a/src/engines/llama/ffi.zig b/src/engines/llama/ffi.zig
+index 1e24392..c8bdf4b 100644
+--- a/src/engines/llama/ffi.zig
++++ b/src/engines/llama/ffi.zig
+@@ -19,6 +19,8 @@ pub extern fn mlx_llama_open(
+     errlen: usize,
+ ) ?*Engine;
+ pub extern fn mlx_llama_close(e: ?*Engine) void;
++pub extern fn mlx_llama_try_close(e: ?*Engine) c_int;
++pub extern fn mlx_llama_source_uncertainty() c_int;
+ 
+ pub extern fn mlx_llama_eos_token(e: *Engine) i32;
+ pub extern fn mlx_llama_is_eog(e: *Engine, token: i32) bool;
+@@ -69,6 +71,7 @@ pub const GgmlType = struct {
+ 
+ pub extern fn mlx_llama_ctx_create(e: *Engine, p: *const CtxParams, err: ?[*]u8, errlen: usize) ?*Ctx;
+ pub extern fn mlx_llama_ctx_free(c: ?*Ctx) void;
++pub extern fn mlx_llama_ctx_try_free(c: ?*Ctx) c_int;
+ pub extern fn mlx_llama_ctx_mtp_drafts(c: *Ctx) i32;
+ pub extern fn mlx_llama_seq_logits(c: *Ctx, seq: i32) ?[*]f32;
+ 
+diff --git a/src/fios/current_backend_uncertainty.zig b/src/fios/current_backend_uncertainty.zig
+new file mode 100644
+index 0000000..71bab44
+--- /dev/null
++++ b/src/fios/current_backend_uncertainty.zig
+@@ -0,0 +1,10 @@
++//! Read-only independent negative fences. False is never terminal/admission proof.
++pub fn known(comptime sdk_enabled: bool, comptime llama_enabled: bool) bool {
++    const Source = struct {
++        extern "c" fn fios_current_sdk_known_uncertain() c_int;
++        extern "c" fn mlx_llama_source_uncertainty() c_int;
++    };
++    const sdk = if (sdk_enabled) Source.fios_current_sdk_known_uncertain() != 0 else false;
++    const llama = if (llama_enabled) Source.mlx_llama_source_uncertainty() != 0 else false;
++    return sdk or llama;
++}
+diff --git a/src/host/http/server.zig b/src/host/http/server.zig
+index 8ea0aa2..e4c6d04 100644
+--- a/src/host/http/server.zig
++++ b/src/host/http/server.zig
+@@ -403,8 +403,8 @@ pub fn serve(
+     try @import("../../fios/current_cpu_media_origins.zig").install();
+     if (comptime @import("build_options").fios_source_sdk) {
+         try @import("../../fios/sdk_request_ownership.zig").initialize(io);
+-        try fios_ownership.shared().enrollDiagnosticUncertaintyProbe(io, &fiosKnownSdkUncertain);
+     }
++    try fios_ownership.shared().enrollDiagnosticUncertaintyProbe(io, &fiosKnownBackendUncertain);
+     // ── Phase A1: spin up the scheduler. Its inference thread does the
+     //    Transformer/vision/drafter load, JIT compile, and warmup before
+     //    `Scheduler.init` returns. From this point on, mlx ops are bound
+@@ -996,8 +996,9 @@ test "idleEvictTickMs: sweeps well inside the window without spinning" {
+     try testing.expect(idleEvictTickMs(0) >= 1000);
+ }
+ 
+-// Fixed metadata-only SDK getter; false is not completion or all-client proof.
+-fn fiosKnownSdkUncertain() bool {
+-    const Source = struct { extern "c" fn fios_current_sdk_known_uncertain() c_int; };
+-    return Source.fios_current_sdk_known_uncertain() != 0;
++// Fixed negative-only getters. The C shims link once in the executable;
++// neither a missing/false fence nor a local destructor is terminal proof.
++fn fiosKnownBackendUncertain() bool {
++    const options = @import("build_options");
++    return @import("../../fios/current_backend_uncertainty.zig").known(options.fios_source_sdk, options.llama_engine);
+ }

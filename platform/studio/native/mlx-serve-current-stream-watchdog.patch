@@ -1,0 +1,12 @@
+diff --git a/src/sdk/weights/streamed/csrc/q3_lookahead4_exl3.c b/src/sdk/weights/streamed/csrc/q3_lookahead4_exl3.c
+--- a/src/sdk/weights/streamed/csrc/q3_lookahead4_exl3.c
++++ b/src/sdk/weights/streamed/csrc/q3_lookahead4_exl3.c
+@@ -1931,6 +1931,8 @@
+             pthread_cond_timedwait(&wd_cv, &mu, &dl);
+             continue;
+         }
++        // Missing required bytes remain uncertain before exposing the forced prefix.
++        fios_q3ld_cleanup_refused();
+         g->forced = GF_WATCHDOG;
+         g->t_sat = now;
+         sc[SC_EV_WD_FORCED] += 1;

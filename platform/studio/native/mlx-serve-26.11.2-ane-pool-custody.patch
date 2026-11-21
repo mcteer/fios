@@ -1,0 +1,121 @@
+diff --git a/src/engines/ane/engine.zig b/src/engines/ane/engine.zig
+index 2efa7b8..50a2d3c 100644
+--- a/src/engines/ane/engine.zig
++++ b/src/engines/ane/engine.zig
+@@ -116,6 +116,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+         }
+ 
+         fn openOrError(o: *const abi.Open, info: *abi.Info) !*State {
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             const dir = abi.items(u8, o.model_dir);
+             const settings = parseSettings(abi.items(u8, o.settings_json)) catch return error.InvalidSettings;
+             defer settings.deinit();
+@@ -123,6 +124,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+             var cfg = try parse(dir);
+             defer cfg.deinit(gpa);
+             const arch = try B.archOf(&cfg);
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             const pool = try B.Pool.open(gpa, io, dir, arch, .{
+                 .slots = s.slots,
+                 .drafter = s.drafter,
+@@ -130,12 +132,13 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+                 .defined_vocab = s.defined_vocab,
+                 .progress = o.host,
+             }, s.cache);
+-            errdefer pool.close(gpa);
++            errdefer if (!sourceCleanupUnknown()) pool.close(gpa);
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             for (pool.engines) |eng| eng.gauges = o.host;
+             const eos = try gpa.dupe(u32, cfg.eosTokenSlice());
+-            errdefer gpa.free(eos);
++            errdefer if (!sourceCleanupUnknown()) gpa.free(eos);
+             const st = try gpa.create(State);
+-            errdefer gpa.destroy(st);
++            errdefer if (!sourceCleanupUnknown()) gpa.destroy(st);
+             const engines: u32 = @intCast(pool.engines.len);
+             st.* = .{
+                 .book = .{ .gpa = gpa, .max_waiting = @max(o.max_concurrent, 1) },
+@@ -153,8 +156,8 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+             for (st.threads, 0..) |*t, i| t.* = std.Thread.spawn(.{}, work, .{ st, i }) catch |err| {
+                 st.book.close();
+                 for (st.threads[0..i]) |u| u.join();
++                if (sourceCleanupUnknown() or !st.book.tryDeinit()) return err;
+                 gpa.free(st.threads);
+-                st.book.deinit();
+                 return err;
+             };
+             // The engine's top rung, or less where the pack was trained to less, or the host asks less.
+@@ -162,6 +165,7 @@ pub fn Adapter(comptime B: type, comptime gpa: std.mem.Allocator) type {
+             var window = if (cfg.max_position_embeddings > 0) @min(cfg.max_position_embeddings, top) else top;
+             if (o.context > 0) window = @min(window, o.context);
+             const startup = std.fmt.bufPrint(&st.startup_buf, "ane: {d} slots, {d}-token context, drafter {s}", .{ engines, window, if (st.caps.drafts) "on" else "off" }) catch "";
++            if (sourceCleanupUnknown()) return error.NativeCleanupUncertain;
+             info.* = .{
+                 .name = abi.span(u8, "ane"),
+                 .version = abi.span(u8, build_options.version),
+@@ -637,3 +641,65 @@ test "fios current ane adapter worker restores original request origins" {
+     try testing.expectEqual(@as(usize, 0), owners.shared().snapshot(testing.io).owned);
+     try testing.expect(owners.current().* == null and owners.current_group().* == null);
+ }
++
++// Existing model-free bridge only; no ANE compiler, program or device call.
++const FiosAnePoolProbe = struct {
++    pub const P = FakeLm.P;
++    pub const Engine = FakeLm.Engine;
++    pub const Sampling = FakeLm.Sampling;
++    pub const archOf = FakeLm.archOf;
++    pub const loadBytes = FakeLm.loadBytes;
++    pub const Pool = struct {
++        model: *FakeLm.Model,
++        engines: []*Engine,
++        var opens: usize = 0;
++        var closes: usize = 0;
++        pub fn open(a: std.mem.Allocator, i: std.Io, dir: []const u8, arch: FakeLm.Arch, opts: lm.Options, cache: ?lm.CacheLimits) !@This() {
++            opens += 1;
++            const pool = try FakeLm.Pool.open(a, i, dir, arch, opts, cache);
++            @import("../../fios/request_ownership.zig").shared().fence(i);
++            return .{ .model = pool.model, .engines = pool.engines };
++        }
++        pub fn close(pool: @This(), a: std.mem.Allocator) void {
++            closes += 1;
++            (FakeLm.Pool{ .model = pool.model, .engines = pool.engines }).close(a);
++        }
++        pub fn stateBytes(pool: @This()) u64 { return pool.engines.len << 10; }
++    };
++};
++fn fiosAnePoolPublication(preexisting: bool) !void {
++    const owners = @import("../../fios/request_ownership.zig");
++    try owners.shared().initialize(testing.io, @splat(252));
++    if (preexisting) owners.shared().fence(testing.io);
++    var tmp = testing.tmpDir(.{});
++    defer tmp.cleanup();
++    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
++    const path = try qwen3Pack(&tmp, &path_buf);
++    const host: abi.Host = .{ .ctx = undefined, .log = struct {
++        fn f(_: *anyopaque, _: u8, _: abi.Str) callconv(.c) void {}
++    }.f, .wake = struct { fn f(_: *anyopaque) callconv(.c) void {} }.f };
++    const open: abi.Open = .{ .model_dir = abi.span(u8, path), .model_type = .{}, .config_json = .{},
++        .context = 0, .max_concurrent = 1, .memory_budget = 0, .settings_json = .{}, .options_json = .{}, .host = &host };
++    var info: abi.Info = undefined;
++    var verdict: abi.Verdict = .{};
++    // The isolated process retains only synthetic metadata on refusal.
++    const probe_table = Adapter(FiosAnePoolProbe, std.heap.smp_allocator).table;
++    const engine = probe_table.open(&open, &info, &verdict);
++    if (engine != null) std.debug.print("FIO_CURRENT_ANE_POOL_PUBLISHED_UNCERTAINTY\n", .{});
++    try testing.expect(engine == null);
++    try testing.expectEqual(abi.Verdict.Code.failed, verdict.code);
++    try testing.expectEqualStrings("NativeCleanupUncertain", abi.items(u8, verdict.why));
++    try testing.expectEqual(@as(usize, if (preexisting) 0 else 1), FiosAnePoolProbe.Pool.opens);
++    try testing.expectEqual(@as(usize, 0), FiosAnePoolProbe.Pool.closes);
++    try testing.expect(owners.shared().knownUncertain(testing.io));
++    // A repeated open cannot replay either constructor or cleanup.
++    try testing.expect(probe_table.open(&open, &info, &verdict) == null);
++    try testing.expectEqual(@as(usize, if (preexisting) 0 else 1), FiosAnePoolProbe.Pool.opens);
++    try testing.expectEqual(@as(usize, 0), FiosAnePoolProbe.Pool.closes);
++}
++test "fios current ane pool refuses known uncertainty before construction" {
++    try fiosAnePoolPublication(true);
++}
++test "fios current ane pool retains constructor uncertainty without publication" {
++    try fiosAnePoolPublication(false);
++}

@@ -1,0 +1,147 @@
+// Appended to the complete real ds4_metal.m; links genuine built core objects.
+// No model/engine/session is opened. No opaque context or SDK is substituted.
+struct ds4_engine;
+extern int ds4_engine_close_checked(struct ds4_engine *);
+struct ds4_session;
+extern int ds4_session_free_checked(struct ds4_session *);
+#define FIOS_REQUIRE(value,marker) do {if(!(value)){fprintf(stderr,"%s\n",marker);return 77;}}while(0)
+// Finite owned release of a genuine shared event; no injected driver status.
+static void *release_fixture_event(void *opaque) {
+    @autoreleasepool {
+        id<MTLSharedEvent> event=(__bridge_transfer id<MTLSharedEvent>)opaque;
+        struct timespec remaining={3,0};
+        while (nanosleep(&remaining,&remaining)!=0 && errno==EINTR) {}
+        event.signaledValue=1;
+    }
+    return NULL;
+}
+int main(int argc,char **argv){@autoreleasepool{
+    FIOS_REQUIRE(argc==1 || (argc==2 && (strcmp(argv[1],"--pending-delay")==0 || strcmp(argv[1],"--ordinary-cleanup")==0)),"UNKNOWN_FIXTURE_MODE");
+    const int pending_case=argc==2 && strcmp(argv[1],"--pending-delay")==0;
+    const int ordinary_cleanup=argc==2 && strcmp(argv[1],"--ordinary-cleanup")==0;
+    FIOS_REQUIRE(!g_initialized&&!g_device&&g_model_fd<0,"MODULE_WAS_NOT_COLD");
+    FIOS_REQUIRE(ds4_gpu_source_uncertainty()==0 && !g_initialized && !g_device && !g_queue,
+        "SOURCE_UNCERTAINTY_READ_INITIALIZED_BACKEND");
+    FIOS_REQUIRE(ds4_engine_close_checked(NULL)&&ds4_session_free_checked(NULL)&&!g_initialized&&!g_device,"PUBLIC_NULL_CLOSE_INITIALIZED_BACKEND");
+    FIOS_REQUIRE(!ds4_gpu_wait_command_buffer(nil,"fixture absent buffer"),"FIO_DS4_ABSENT_BUFFER_ACKNOWLEDGED");
+    FIOS_REQUIRE(!ds4_gpu_fios_keepalive_try_stop()&&!g_initialized&&!g_device,"STOP_INITIALIZED_A_COLD_BACKEND");
+    FIOS_REQUIRE(ds4_gpu_init(),"GENUINE_FULL_SHADER_INIT_FAILED");
+    FIOS_REQUIRE(g_initialized&&g_device&&g_queue&&g_library&&g_model_fd<0,"GENUINE_MODULE_INIT_NOT_OBSERVED");
+    id<MTLCommandBuffer> completed = [g_queue commandBuffer];
+    FIOS_REQUIRE(completed != nil,"GENUINE_COMMAND_BUFFER_MISSING");
+    [completed commit];
+    FIOS_REQUIRE(ds4_gpu_wait_command_buffer(completed,"fixture actual buffer") && completed.status == MTLCommandBufferStatusCompleted,"GENUINE_COMPLETED_BUFFER_REFUSED");
+    uint64_t release_began=0;
+    FIOS_REQUIRE(fios_native_join_clock(&release_began),"RELEASE_CLOCK_MISSING");
+    FIOS_REQUIRE(ds4_gpu_fios_wait_release_buffer(completed,release_began) &&
+        !ds4_gpu_fios_wait_release_buffer(nil,release_began),"RELEASE_COMPLETION_STATUS_MISMATCH");
+    FIOS_REQUIRE(ds4_gpu_warm_command_queue(),"GENUINE_MODULE_WARM_FAILED");
+    FIOS_REQUIRE(atomic_load(&g_queue_keepalive_running),"GENUINE_PRODUCER_DID_NOT_START");
+    FIOS_REQUIRE(ds4_gpu_fios_keepalive_try_stop(),"GENUINE_MODULE_PRODUCER_STOP_REFUSED");
+    FIOS_REQUIRE(!atomic_load(&g_queue_keepalive_running)&&!atomic_load(&g_fios_keepalive_uncertain)&&
+        atomic_load(&g_fios_keepalive_sealed)&&!g_fios_keepalive_pending&&!g_fios_keepalive_pipeline&&!g_fios_keepalive_scratch,
+        "GENUINE_PRODUCER_RESOURCES_NOT_RETIRED");
+    // One normal idle local service lifecycle, then the same service with
+    // its finite1KiB/one-iteration producer. No exchange/slab/model is supplied.
+    for (unsigned producer=0;producer<2;++producer) {
+        if (producer==0) setenv("DS4_TP_NO_KEEPALIVE","1",1);
+        else {unsetenv("DS4_TP_NO_KEEPALIVE");setenv("DS4_TP_KEEPALIVE_TGS","1",1);setenv("DS4_TP_KEEPALIVE_ITERS","1",1);}
+        unsigned identity=producer+1;
+        FIOS_REQUIRE(ds4_gpu_tp_init(0,NULL,0,0,0,NULL,&identity),"ORDINARY_TP_SERVICE_DID_NOT_START");
+        FIOS_REQUIRE(g_tp_thread_running && g_tp_exchange_ud==&identity && !g_tp_queue_count,"ORDINARY_TP_SERVICE_CUSTODY_MISSING");
+        FIOS_REQUIRE(producer==0 ? !g_tp_keepalive_running : g_tp_keepalive_running && g_tp_keepalive_queue && g_tp_keepalive_buffer,"ORDINARY_TP_PRODUCER_CUSTODY_MISSING");
+        if (metadata_case(&g_tp_mutex,ds4_gpu_tp_shutdown_checked,0,"TP retirement waited for metadata publication")) return 77;
+        FIOS_REQUIRE(g_tp_thread_running && !g_tp_shutdown && !g_fios_tp_uncertain && !g_fios_pending_uncertain,"TP publication contention changed service custody");
+        FIOS_REQUIRE(ds4_gpu_tp_shutdown_checked(),"ORDINARY_TP_SERVICE_DID_NOT_RETIRE");
+        FIOS_REQUIRE(!g_tp_thread_running && !g_tp_keepalive_running && !g_tp_exchange_ud && !g_fios_tp_owner && !g_fios_tp_uncertain && !g_fios_pending_uncertain,"ORDINARY_TP_RETIREMENT_LOST_CUSTODY");
+        FIOS_REQUIRE(!g_fios_tp_keepalive_pending && !g_fios_tp_keepalive_pipeline && !g_fios_tp_gpu_uncertain,"ORDINARY_TP_RETIRED_WITH_GPU_CUSTODY");
+        FIOS_REQUIRE(ds4_gpu_tp_shutdown_checked(),"ORDINARY_TP_IDLE_REPEAT_REFUSED");
+    }
+    puts("PASS: actual idle TP service and finite tiny producer start and join normally, without model/exchange/distributed work");
+    // Genuine never-submitted Metal object: observe the bounded wait only.
+    // It is not inserted into the source's committed/pending ownership set.
+    id<MTLCommandBuffer> unsubmitted=[g_queue commandBuffer];
+    FIOS_REQUIRE(unsubmitted && unsubmitted.status==MTLCommandBufferStatusNotEnqueued &&
+        fios_native_join_clock(&release_began),"UNSUBMITTED_BUFFER_MISSING");
+    FIOS_REQUIRE(!ds4_gpu_fios_wait_release_buffer(unsubmitted,release_began),"UNSUBMITTED_BUFFER_ACKNOWLEDGED");
+    uint64_t release_finished=0;
+    FIOS_REQUIRE(fios_native_join_clock(&release_finished) && release_finished>=release_began &&
+        release_finished-release_began>=1000000000ULL && release_finished-release_began<2000000000ULL,
+        "CLEANUP_BUFFER_WAIT_NOT_BOUNDED");
+    // One actual empty source batch plus its completed pending buffer.
+    FIOS_REQUIRE(g_pending_cbs && ds4_gpu_begin_commands() && g_batch_cb,"EMPTY_SOURCE_BATCH_MISSING");
+    [g_pending_cbs addObject:completed];
+    FIOS_REQUIRE(ds4_gpu_prepare_release() && !g_batch_cb && ![g_pending_cbs count] && !g_fios_pending_uncertain,
+        "ORDINARY_BOUNDED_BUFFER_CLEANUP_REFUSED");
+    puts("PASS: cleanup-only shared Metal wait budget, genuine completed/unsubmitted objects and ordinary empty source batch/pending retirement");
+    if (ordinary_cleanup) {
+        ds4_gpu_cleanup();
+        FIOS_REQUIRE(!g_initialized && !g_device && !g_queue && !g_library &&
+            !g_batch_cb && !g_fios_pending_uncertain && g_model_fd<0,
+            "ORDINARY_EMPTY_PARENT_CLEANUP_INCOMPLETE");
+        ds4_gpu_cleanup();
+        FIOS_REQUIRE(!g_initialized && !g_device && !g_fios_pending_uncertain,
+            "ORDINARY_EMPTY_PARENT_REPEAT_CHANGED_STATE");
+        FIOS_REQUIRE(ds4_gpu_source_uncertainty()==0 && !g_initialized && !g_device,
+            "COLD_SOURCE_READ_AFTER_CLEANUP_CHANGED_STATE");
+        puts("PASS: actual empty parent cleanup and repeat release initialized module resources without model work");
+        return 0;
+    }
+    // An actual source batch waits on a real shared event. Parent timeout
+    // must retain its exact buffer and uncertainty even after actual completion.
+    id<MTLSharedEvent> event=[g_device newSharedEvent];
+    FIOS_REQUIRE(event,"DELAYED_EVENT_MISSING");
+    if (!pending_case) FIOS_REQUIRE(ds4_gpu_begin_commands() && g_batch_cb,"DELAYED_SOURCE_BATCH_MISSING");
+    id<MTLCommandBuffer> delayed=pending_case ? ds4_gpu_new_command_buffer():g_batch_cb;
+    FIOS_REQUIRE(delayed,"DELAYED_SOURCE_BUFFER_MISSING");
+    [delayed encodeWaitForEvent:event value:1];
+    pthread_t release_thread;
+    void *retained_event=(__bridge_retained void *)event;
+    if (pthread_create(&release_thread,NULL,release_fixture_event,retained_event)!=0) {
+        (void)(__bridge_transfer id<MTLSharedEvent>)retained_event;
+        FIOS_REQUIRE(0,"EVENT_RELEASE_THREAD_MISSING");
+    }
+    if (pending_case) {
+        [delayed commit];
+        [g_pending_cbs addObject:delayed]; // Genuine source-created committed buffer.
+    }
+    FIOS_REQUIRE(fios_native_join_clock(&release_began),"PARENT_RELEASE_CLOCK_MISSING");
+    const int delayed_result=ds4_gpu_prepare_release();
+    FIOS_REQUIRE(ds4_gpu_source_uncertainty() & DS4_GPU_SOURCE_UNCERTAIN_PENDING,
+        "SOURCE_READ_LOST_PARENT_TIMEOUT_UNCERTAINTY");
+    FIOS_REQUIRE(fios_native_join_clock(&release_finished) && release_finished>=release_began,
+        "PARENT_RELEASE_CLOCK_FAILED");
+    const int retained=!delayed_result && g_fios_pending_uncertain &&
+        (pending_case ? !g_batch_cb && [g_pending_cbs count]==1 && [g_pending_cbs containsObject:delayed]:g_batch_cb==delayed);
+    const int bounded=release_finished-release_began>=1000000000ULL &&
+        release_finished-release_began<2000000000ULL;
+    // Drain only this genuine known buffer after its finite event release.
+    // This does not clear any source state or stand in for parent terminality.
+    [delayed waitUntilCompleted];
+    FIOS_REQUIRE(pthread_join(release_thread,NULL)==0 && delayed.status==MTLCommandBufferStatusCompleted,
+        "OWN_EVENT_BUFFER_DID_NOT_COMPLETE");
+    FIOS_REQUIRE(retained && bounded && !ds4_gpu_prepare_release() &&
+        g_fios_pending_uncertain &&
+        (pending_case ? !g_batch_cb && [g_pending_cbs count]==1 && [g_pending_cbs containsObject:delayed]:g_batch_cb==delayed),
+        "PARENT_TIMEOUT_CUSTODY_OR_UNCERTAINTY_LOST");
+    id<MTLDevice> retained_device=g_device;
+    id<MTLCommandQueue> retained_queue=g_queue;
+    id<MTLLibrary> retained_library=g_library;
+    ds4_gpu_cleanup();
+    FIOS_REQUIRE(g_initialized && g_device==retained_device && g_queue==retained_queue &&
+        g_library==retained_library && g_fios_pending_uncertain &&
+        (pending_case ? !g_batch_cb && [g_pending_cbs count]==1 && [g_pending_cbs containsObject:delayed]:g_batch_cb==delayed),
+        "PARENT_CLEANUP_CLEARED_INDEPENDENT_UNCERTAINTY");
+    FIOS_REQUIRE(ds4_gpu_source_uncertainty() & DS4_GPU_SOURCE_UNCERTAIN_PENDING,
+        "SOURCE_READ_CLEARED_AFTER_LATER_COMPLETION_OR_CLEANUP");
+    puts("PASS: readonly source uncertainty preserves genuine parent timeout after later completion and cleanup refusal, without cold initialization");
+    puts(pending_case ?
+        "PASS: actual shared-event-delayed committed pending buffer times out boundedly; original vector and independent uncertainty remain after genuine later completion":
+        "PASS: actual shared-event-delayed source batch times out boundedly; original buffer and independent uncertainty remain after genuine later completion");
+    FIOS_REQUIRE(g_model_fd<0,"UNEXPECTED_MODEL_FILE");
+    // No raw whole-device cleanup is credited as completion. Initializer and
+    // checked known producer are the only tested operations; parent/device,
+    // unknown participant and model ownership contracts remain independent.
+    puts("PASS: complete genuine DS4 module/full original shader initializer, actual warm kernel and creator-bound producer retirement; no model/device/all-client authority.");
+    return 0;
+}}
