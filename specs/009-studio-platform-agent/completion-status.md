@@ -1,6 +1,8 @@
 # Spec009 completion status
 
-**39/55 whole tasks complete; 16 open.** Draft [PR #10](https://github.com/mcteer/fios/pull/10) remains the delivery branch. Exact `0f2c19d` run `44717218713` passed. `7339e3f` run `44720921984` failed the process fixture on an obsolete timestamp expectation; the corrected fixture passed locally and exact pushed repair `561b131` run `44723396321` is pending. Later commits require their own results; see [validation](validation.md). No merge, deployment or installed acceptance.
+**39/55 whole tasks complete; 16 open.** Draft [PR #10](https://github.com/mcteer/fios/pull/10) remains the delivery branch. Exact pushed head `68918c755d6e50777f840e4f413de5905b7836ee`, run `44848257994`, passed all eight prerequisites and the aggregate CI gate. See [validation](validation.md) for receipt scope. No merge, deployment or installed acceptance.
+
+**First unblock:** the operator confirmed that read-only Studio inventory was already approved. The existing strict-host-key SSH path to both canonical `.lab` hosts times out before authentication. Resume exact running-build and runtime/VM profile inventory when that path is reachable, or use equivalent reviewed inventory and corresponding source/build provenance. No renewed permission is needed for that read-only work. Qualify a candidate against authoritative all-client activity, original-request terminal/non-dispatch evidence and atomic native admission before any positive execution wiring. Protected enrollment, installation and disruptive acceptance still require separate review and approval. Spec008, the retained live VM incident, and Studio inference remain untouched. PR review/merge and observed post-merge delivery remain a separate gate; the green draft-head run supplies neither authority nor deployment.
 
 | Open task | Remaining behavior and dependency |
 | --- | --- |
