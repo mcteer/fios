@@ -154,8 +154,9 @@ private func verifyDeferredTerminalWrite()throws {
         _=try journal.reserveJob(DurableJob(id:job,idempotency:UUID().uuidString.lowercased(),ownerHash:hash,requestHash:hash,created:1000))
         try journal.transitionJob(id:job,to:.running,now:1000)
         try journal.claim(job:job,attempt:0,model:"fixture/model",requestID:job)
-        try journal.markUncertain(job:job,attempt:0)
     }
+    let nonce=try journal.planWorkerLaunch(job:id,attempt:0)
+    for job in [id,sibling] {try journal.markUncertain(job:job,attempt:0)}
     var writer:OpaquePointer?
     guard sqlite3_open_v2(directory.appendingPathComponent("state.sqlite").path,&writer,SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX,nil)==SQLITE_OK else {throw JournalError.storage}
     defer {sqlite3_close(writer)}
@@ -164,6 +165,13 @@ private func verifyDeferredTerminalWrite()throws {
     guard try journal.jobs().allSatisfy({$0.state == .running}),try journal.uncertainCount()==2 else {fatalError("Fenced terminal write changed durable state")}
     guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
     try controller.settleModelJobs(journal.jobs(),events:[:],now:1002)
+    guard try journal.jobs().first(where:{$0.id==id})?.state == .revoking,
+          try journal.activeLaunchCount()==1,try journal.uncertainCount()==2 else {
+        fatalError("Deferred terminal transition discarded local worker custody or needed event replay")
+    }
+    // The fixture never spawned the originally planned local worker.
+    try journal.recordWorkerNotStarted(job:id,attempt:0,nonce:nonce)
+    try controller.settleModelJobs(journal.jobs(),events:[:],now:1003)
     let states=Dictionary(uniqueKeysWithValues:try journal.jobs().map{($0.id,$0.state)})
     guard states[id] == .removed,states[sibling] == .running,try journal.uncertainCount()==2 else {
         fatalError("Deferred terminal transition required event replay or settled native uncertainty")
