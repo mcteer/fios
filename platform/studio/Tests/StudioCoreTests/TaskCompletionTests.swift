@@ -288,7 +288,8 @@ func runTaskCompletionTests()throws {
     guard try reopened.jobs().contains(where:{$0.id==otherID}) else {throw JournalError.invalid}
     try reopened.expireTerminalJobs(now:86_405_000)
     let jobs=try reopened.jobs()
-    guard let completed=jobs.first(where:{$0.id==id}),completed.state == .removed,completed.lease.revoked,
+    guard !jobs.contains(where:{$0.id==otherID}),
+          let completed=jobs.first(where:{$0.id==id}),completed.state == .removed,completed.lease.revoked,
           let recovered=jobs.first(where:{$0.id==stillRunning}),recovered.state == .reconciling,recovered.lease.revoked,
           try reopened.unresolvedCount()==1,try reopened.requestCount(job:id)==1 else {throw JournalError.invalid}
     print("PASS: normal interrupted worker completion closes its local job and lease; nonterminal job remains running")
