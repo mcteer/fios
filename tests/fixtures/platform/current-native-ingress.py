@@ -85,16 +85,29 @@ try:
  counts=struct.unpack(">6I",frame[32:56]);assert counts[0]==sum(counts[1:5]) and counts[5]==0
  sequence,stamp=struct.unpack(">2Q",frame[64:80]);assert 0<sequence<=9007199254740991 and -1000<=int(time.time()*1000)-stamp<=5000
  if check_background_sealed:
-  background=bytearray(32);background[:4]=b"FIB9";background[4]=3;background[8:24]=bytes.fromhex(instance)
-  channel=socket.socket(socket.AF_UNIX);channel.settimeout(2);channel.connect(str(control));channel.sendall(background);channel.shutdown(socket.SHUT_WR)
-  reply=b""
-  try:
-   while len(reply)<64:
-    part=channel.recv(64-len(reply));assert part;reply+=part
-  finally:channel.close()
-  assert reply[:6]==b"FIF9"+bytes([3,0]) and reply[8:24]==bytes.fromhex(instance),"SEALED_SOURCE_BACKGROUND_FRAME_MISMATCH"
+  def background_snapshot(version, epoch):
+   background=bytearray(32);background[:4]=b"FIB9";background[4]=version;background[8:24]=epoch
+   channel=socket.socket(socket.AF_UNIX);channel.settimeout(2)
+   try:
+    channel.connect(str(control));channel.sendall(background);channel.shutdown(socket.SHUT_WR)
+    reply=b""
+    while len(reply)<64:
+     part=channel.recv(64-len(reply));assert part;reply+=part
+    assert channel.recv(1)==b"","SEALED_SOURCE_BACKGROUND_TRAILING_BYTES"
+    return reply
+   finally:channel.close()
+  epoch=bytes.fromhex(instance)
+  reply=background_snapshot(3,epoch)
+  assert reply[:6]==b"FIF9"+bytes([3,0]) and reply[8:24]==epoch,"SEALED_SOURCE_BACKGROUND_FRAME_MISMATCH"
   assert reply[40]==1 and reply[41:]==bytes(23),"SEALED_SOURCE_BACKGROUND_NOT_EXCLUDED"
   assert reply[7]==0,"SEALED_SOURCE_CLEANUP_UNCERTAINTY"
+  legacy=background_snapshot(2,epoch)
+  assert legacy[:8]==b"FIF9"+bytes([2,0])+reply[6:8] and legacy[8:24]==epoch,"SEALED_SOURCE_BACKGROUND_CHANGED_V2"
+  assert legacy[40:]==bytes(24),"SEALED_SOURCE_BACKGROUND_V2_RESERVED_BYTES"
+  wrong_epoch=bytes([epoch[0]^1])+epoch[1:]
+  refused=background_snapshot(3,wrong_epoch)
+  assert refused[:8]==b"FIF9"+bytes([3,3,0,0]) and refused[8:24]==epoch,"SEALED_SOURCE_BACKGROUND_WRONG_EPOCH_ACCEPTED"
+  assert refused[40:]==bytes(24),"SEALED_SOURCE_BACKGROUND_REFUSAL_PUBLISHED_READING"
  def snapshot():
   connection=socket.socket(socket.AF_UNIX);connection.settimeout(2);connection.connect(str(control));connection.sendall(request);connection.shutdown(socket.SHUT_WR);value=b""
   try:
@@ -357,6 +370,7 @@ try:
  if check_background_sealed:
   receipt.update({"explicit_private_background_exclusion":True,"default_refresh_startup_refused":default_denial,
       "test_child_refresh_interval_ms":0,"source_background_untracked":False,"all_client_coverage":False,
+      "backend_frame_v2_reserved_preserved":True,"backend_frame_v3_wrong_epoch_refused":True,
       "configuration_scope":"private_child_only_not_installed_model_policy"})
  (home/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n");print(json.dumps(receipt))
 finally:

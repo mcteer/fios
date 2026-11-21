@@ -15,10 +15,10 @@ const source=readFileSync(args[1]);
 assert.equal(sha256(source),'f48a65d735a77fb2366b77d0000ff7f13794a505e66b67c1bab0dedc43500271','unexpected source archive digest');
 const native=fileURLToPath(new URL('../platform/studio/native/',import.meta.url));
 const entries=readFileSync(join(native,'mlx-serve-26.11.3-source-series.txt'),'utf8').split('\n').filter(line=>line&&!line.startsWith('#'));
-assert.equal(entries.length,69);
+assert.equal(entries.length,71);
 const seen=new Set();
 const patches=entries.map(line=>{
- const [,hash,name]=line.match(/^([0-9a-f]{64})  (mlx-serve-26\.11\.[23]-[a-z0-9-]+\.patch)$/)||[];
+ const [,hash,name]=line.match(/^([0-9a-f]{64})  (mlx-serve-(?:26\.11\.[23]-[a-z0-9-]+|current-ds4-checked-cleanup)\.patch)$/)||[];
  assert.ok(hash&&name===basename(name)&&!seen.has(name),`invalid or duplicate manifest entry: ${line}`);
  seen.add(name);
  const bytes=readFileSync(join(native,name));assert.equal(sha256(bytes),hash,`${name}: patch digest`);
@@ -64,5 +64,9 @@ try{
  assert.ok(readFileSync(join(scratch,'src/tests.zig'),'utf8').includes(
   'if (@import("build_options").fios_source_sdk) _ = @import("fios/sdk_request_ownership.zig");'),
  'instrumented unit root must export the same ownership functions as the server');
- console.log(`PASS: pinned archive, ${entries.length} ordered patch hashes, refusal scopes and shared hooks; source only`);
+ assert.match(macos,/"fios-source-background-seal",[^\n]+orelse false;\n        if \(fios_source_background_seal and !fios_source_sdk\)/,
+  'strict background exclusion must stay explicitly selected and require the real SDK');
+ const sdkBridge=readFileSync(join(scratch,'src/fios/current_sdk_owners.cpp'),'utf8');
+ assert.match(sdkBridge,/#ifdef FIOS_REQUIRE_BACKGROUND_PARTICIPANT_SEAL\n#ifdef MLX_FIOS_BACKGROUND_PARTICIPANT_SEAL[\s\S]+?fios_seal_background_participants_fixture\(\)\) std::_Exit\(78\);\n#else\n    std::_Exit\(78\);/);
+ console.log(`PASS: pinned archive, ${entries.length} ordered patch hashes, exact refusal and private seal scopes; source only`);
 }finally{rmSync(scratch,{recursive:true,force:true});}

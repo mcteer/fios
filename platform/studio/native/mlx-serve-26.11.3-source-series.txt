@@ -69,3 +69,5 @@ a94d3b785e1b11e7408082750fe8adfe5234bb7ffcaedc653401dd0da82370eb  mlx-serve-26.1
 fd9f0d3b004146bfb9c59dff785869306ba2fbb277860f80303b119cccb9a0cc  mlx-serve-26.11.2-gui-listener-ownership.patch
 938e37d3dc71785a7b239b120b063bbc21451f821c59a0ea288ea1b16f00facf  mlx-serve-26.11.3-shared-source-hooks.patch
 79f5822c7c7783bf7df768aa713bad43a56b38af92af0161ae61d869b6d36177  mlx-serve-26.11.3-submission-and-unload-fixtures.patch
+571b1a0c1fe9fc2cdf4ed37e13994ff71d09fc5d9aa59a24a64d6d7f2ccb6ead  mlx-serve-current-ds4-checked-cleanup.patch
+a8272e52501adf15e2136ab68bd99c560873a1ed656acbe3702873c5b554071b  mlx-serve-26.11.3-background-seal.patch
