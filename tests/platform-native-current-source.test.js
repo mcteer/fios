@@ -6,6 +6,11 @@ import {createHash} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 
+test('v26.11.3 source series verifies local patch bytes without upstream execution',()=>{
+  const output=execFileSync(process.execPath,['scripts/check-platform-26113-source-replay.mjs','--manifest-only'],{encoding:'utf8',timeout:5000});
+  assert.match(output,/^PASS: \d+ local patch hashes; no archive replay or native execution\n$/);
+});
+
 test('current source-SDK Jinja graph uses its exact shared source helper',()=>{
   const patch=readFileSync('platform/studio/native/mlx-serve-26.11.2-jinja-source-build.patch','utf8');
   const sections=patch.split(/(?=^diff --git )/m).filter(Boolean);

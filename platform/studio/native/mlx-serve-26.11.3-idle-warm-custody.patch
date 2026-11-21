@@ -1,0 +1,416 @@
+--- a/src/engines/mlx/runtime/loop.zig
++++ b/src/engines/mlx/runtime/loop.zig
+@@ -150,13 +150,29 @@
+         warm_requests.tick(sch);
+         if (chatPass(sch, .main) == .shutdown) break;
+     }
+-    warm_requests.stop(sch);
++    if (!warm_requests.stop(sch) or cleanupUncertain(sch.io)) return;
+     persistAtShutdown(sch);
+ }
+ 
++pub const CleanupWitness = struct {
++    address: usize,
++    result: enum { pending, retired, retained } = .pending,
++
++    fn observe(self: *CleanupWitness, address: usize, retired: bool) void {
++        if (self.result == .pending and self.address == address)
++            self.result = if (retired) .retired else .retained;
++    }
++};
++
+ /// Cleanup, vision and embed work, drained on the inference thread. Returns
+-/// whether there was any.
++/// whether there was any, not whether anything was successfully retired.
+ pub fn drainSideQueues(sch: *Scheduler) bool {
++    return drainSideQueuesWatching(sch, null);
++}
++
++/// Observe one already-queued slot during this synchronous drain only. The
++/// witness is never published to the queue and outlives the slot allocation.
++pub fn drainSideQueuesWatching(sch: *Scheduler, witness: ?*CleanupWitness) bool {
+     // 0a. Drain slots queued for cleanup. Conn threads hand finished
+     //     slots here in `complete()` — we own the mlx stream binding,
+     //     so freeing per-slot KVCache + vision_embeddings + ssm_entries
+@@ -179,22 +195,39 @@
+             cleanup_batch[cleanup_n] = sch.cleanup_queue.orderedRemove(0);
+             cleanup_n += 1;
+         }
+-        while (vision_n < vision_batch.len and sch.vision_queue.items.len > 0) {
+-            vision_batch[vision_n] = sch.vision_queue.orderedRemove(0);
+-            vision_n += 1;
++        if (witness == null) {
++            while (vision_n < vision_batch.len and sch.vision_queue.items.len > 0) {
++                vision_batch[vision_n] = sch.vision_queue.orderedRemove(0);
++                vision_n += 1;
++            }
++            while (embed_n < embed_batch.len and sch.embed_queue.items.len > 0) {
++                embed_batch[embed_n] = sch.embed_queue.orderedRemove(0);
++                embed_n += 1;
++            }
+         }
+-        while (embed_n < embed_batch.len and sch.embed_queue.items.len > 0) {
+-            embed_batch[embed_n] = sch.embed_queue.orderedRemove(0);
+-            embed_n += 1;
+-        }
+     }
+     for (cleanup_batch[0..cleanup_n]) |s| {
+-        if (cleanupUncertain(sch.io)) { quarantineCleanup(sch, s); continue; }
+-        // Lost attribution quarantines the original slot/model; never guess
+-        // that cancelled, queued or finished metadata retires native work.
+-        var fio_scope = fios_slots.retain(sch.io, @as([]const *Slot, &.{s})) catch { quarantineCleanup(sch, s); continue; };
+-        if (fio_scope) |*scope| scope.enter(sch.io) catch { quarantineCleanup(sch, s); continue; };
+-        defer if (fio_scope) |*scope| { _ = scope.finish(sch.io); };
++        const address = @intFromPtr(s);
++        const retired = retireSlot(sch, s);
++        if (retired == .allocated) quarantineCleanup(sch, s);
++        if (witness) |watch| watch.observe(address, retired == .retired);
++    }
++    if (cleanup_n > 0 and !cleanupUncertain(sch.io)) publishHotCacheResidency(sch);
++    for (vision_batch[0..vision_n]) |req| runVisionEncode(sch, req);
++    for (embed_batch[0..embed_n]) |req| runEmbedRequest(sch, req);
++    return cleanup_n + vision_n + embed_n > 0;
++}
++
++/// .allocated retains the original Slot and its model borrow. A locally
++/// destroyed slot cannot be quarantined even if the outer scope later refuses;
++/// its dependent warm cache must still stay held in that case.
++fn retireSlot(sch: *Scheduler, s: *Slot) enum { allocated, retired, retired_uncertain } {
++    if (cleanupUncertain(sch.io)) return .allocated;
++    var fio_scope = fios_slots.retain(sch.io, @as([]const *Slot, &.{s})) catch return .allocated;
++    if (fio_scope) |*scope| scope.enter(sch.io) catch return .allocated;
++    var scope_open = true;
++    defer if (scope_open) if (fio_scope) |*scope| { _ = scope.finish(sch.io); };
++    {
+         // Decode-phase cancel: `complete()` pulled this slot straight
+         // into the cleanup queue, so it never went through finishSlot
+         // and its committed KV (prompt + every emitted token) would die
+@@ -212,21 +245,33 @@
+                 if (s.model.transformer) |xf| hc.flushPendingDisk(xf.s);
+             }
+         }
+-        if (cleanupUncertain(sch.io)) { quarantineCleanup(sch, s); continue; }
++        if (cleanupUncertain(sch.io)) return .allocated;
+         recordSlotCleanup(sch.metrics, s);
+         // Second slot-end path (a decode-phase cancel never reaches finishSlot); the
+         // record must not outlive the bytes `s.tryDeinit()` frees.
+         if (s.prefix_cache) |hc| hc.releaseCheckout(@intFromPtr(s), "slot cleanup");
+-        if (cleanupUncertain(sch.io)) { quarantineCleanup(sch, s); continue; }
++        if (cleanupUncertain(sch.io)) return .allocated;
+         releasePluginSlot(s);
+-        if (cleanupUncertain(sch.io)) { quarantineCleanup(sch, s); continue; }
++        if (cleanupUncertain(sch.io)) return .allocated;
+         if (s.model.transformer) |xfm| if (xfm.qwen4Trunk()) |t| t.resetQsaPooledRope();
+-        if (cleanupUncertain(sch.io) or !s.tryDeinit()) quarantineCleanup(sch, s);
++        if (cleanupUncertain(sch.io) or !s.tryDeinit()) return .allocated;
+     }
+-    if (cleanup_n > 0 and !cleanupUncertain(sch.io)) publishHotCacheResidency(sch);
+-    for (vision_batch[0..vision_n]) |req| runVisionEncode(sch, req);
+-    for (embed_batch[0..embed_n]) |req| runEmbedRequest(sch, req);
+-    return cleanup_n + vision_n + embed_n > 0;
++    scope_open = false;
++    if (fio_scope) |*scope| if (!scope.finish(sch.io)) return .retired_uncertain;
++    return .retired;
+ }
+ 
+ // ── tests ──
++
++test "fios current warm drain witness ignores unrelated slots and never refunds refusal" {
++    var first: CleanupWitness = .{ .address = 1 };
++    first.observe(2, true);
++    try testing.expect(first.result == .pending);
++    first.observe(1, false);
++    first.observe(1, true);
++    try testing.expect(first.result == .retained);
++    var second: CleanupWitness = .{ .address = 3 };
++    second.observe(2, false);
++    second.observe(3, true);
++    try testing.expect(second.result == .retired);
++}
+--- a/src/engines/mlx/runtime/load_requests.zig
++++ b/src/engines/mlx/runtime/load_requests.zig
+@@ -116,8 +116,8 @@
+             victim.id,
+             @as(f64, @floatFromInt(victim_bytes)) / 1_073_741_824.0,
+         });
++        if (!warm_requests.forget(sch, victim)) return error.NativeCleanupUncertain;
+         moveHotCacheViewOff(sch, victim);
+-        warm_requests.forget(sch, victim);
+         if (model_registry_mod.cleanupUncertain(sch.io) or !victim.tryUnloadResident()) return error.NativeCleanupUncertain;
+         sch.registry.mutex.lockUncancelable(sch.io);
+         sch.registry.accountEvictedLocked(victim_bytes);
+@@ -317,8 +317,8 @@
+         @as(f64, @floatFromInt(bytes)) / 1_073_741_824.0,
+     });
+     if (model_registry_mod.cleanupUncertain(sch.io)) return refuseUnloadRequest(sch, req);
++    if (!warm_requests.forget(sch, entry)) return refuseUnloadRequest(sch, req);
+     moveHotCacheViewOff(sch, entry);
+-    warm_requests.forget(sch, entry);
+     if (model_registry_mod.cleanupUncertain(sch.io) or !entry.tryUnloadResident()) return refuseUnloadRequest(sch, req);
+     // unloadResident freed the arrays into MLX's allocator cache — clear it
+     // so the unload actually returns the memory to the OS (the whole point
+--- a/src/engines/mlx/warm_requests.zig
++++ b/src/engines/mlx/warm_requests.zig
+@@ -18,7 +18,9 @@
+ const Scheduler = scheduler_mod.Scheduler;
+ const Slot = @import("slot.zig").Slot;
+ const chatPass = @import("step.zig").chatPass;
+-const drainSideQueues = @import("runtime/loop.zig").drainSideQueues;
++const runtime_loop = @import("runtime/loop.zig");
++const cleanupUncertain = @import("../../host/registry/registry.zig").cleanupUncertain;
++const owners = @import("../../fios/request_ownership.zig");
+ 
+ /// A prompt of `len` synthetic ids and `gen` tokens generated from it. The ids are the start of sequence `base`,
+ /// but for the last `own`: a request with some lands on what the one before it left in the cache, and forks.
+@@ -249,9 +251,34 @@
+ /// Give the request's slot back and free it here, on the thread that owns its arrays.
+ fn release(sch: *Scheduler, slot: *Slot) void {
+     scheduler_mod.complete(sch, slot);
+-    while (drainSideQueues(sch)) {}
++    while (runtime_loop.drainSideQueues(sch)) {}
+ }
+ 
++const IdleRetirement = enum { not_handed_off, retained_after_handoff, retired };
++
++/// This scheduler thread is the only cleanup consumer. Watch the exact
++/// queued slot, never inspect it after `complete` transfers its custody.
++fn releaseIdle(sch: *Scheduler, slot: *Slot) IdleRetirement {
++    if (cleanupUncertain(sch.io) or slot.in_pass.load(.acquire) != 0) {
++        slot.cancelled.store(true, .release);
++        owners.shared().fence(sch.io);
++        return .not_handed_off;
++    }
++    const address = @intFromPtr(slot);
++    scheduler_mod.complete(sch, slot);
++    var witness: runtime_loop.CleanupWitness = .{ .address = address };
++    for (0..64) |_| {
++        const worked = runtime_loop.drainSideQueuesWatching(sch, &witness);
++        switch (witness.result) {
++            .retired => return if (cleanupUncertain(sch.io)) .retained_after_handoff else .retired,
++            .retained => return .retained_after_handoff,
++            .pending => if (!worked) break,
++        }
++    }
++    owners.shared().fence(sch.io);
++    return .retained_after_handoff;
++}
++
+ const Outcome = enum { running, ended, failed, timed_out };
+ 
+ fn outcome(slot: *Slot, asked: io_util.Stopwatch, limit_ns: u64) Outcome {
+@@ -296,6 +323,9 @@
+     /// Since a real request began to wait behind `slot`.
+     waited_on: ?io_util.Stopwatch = null,
+     spent_ns: u64 = 0,
++    // The original twin stays allocated after checked cleanup refusal. This
++    // slot pointer is not dereferenced again after an attempted handoff.
++    fios_retirement_refused: bool = false,
+ };
+ 
+ /// `entry`, just loaded, owes the minimal warm-up; `marker` is written once it has served it. Inference thread.
+@@ -314,13 +344,13 @@
+ 
+ /// A warm-up can move: its request ended, or nothing else is asked of this thread. Caller holds `queue_mu`.
+ pub fn owesStepLocked(sch: *const Scheduler) bool {
+-    return sch.warm_queue.items.len > 0 and othersLocked(sch) == 0;
++    return sch.warm_queue.items.len > 0 and !sch.warm_queue.items[0].fios_retirement_refused and othersLocked(sch) == 0;
+ }
+ 
+ /// The warm request that has not ended: a pass admits it alone and nothing beside it (`chatPass`), so a real request
+ /// never decodes in its company. Inference thread.
+ pub fn liveSlot(sch: *const Scheduler) ?*Slot {
+-    if (sch.warm_queue.items.len == 0) return null;
++    if (sch.warm_queue.items.len == 0 or sch.warm_queue.items[0].fios_retirement_refused) return null;
+     const slot = sch.warm_queue.items[0].slot orelse return null;
+     return if (slot.finished or slot.error_code != null or slot.cancelled.load(.acquire)) null else slot;
+ }
+@@ -347,6 +377,11 @@
+ pub fn tick(sch: *Scheduler) void {
+     if (sch.warm_queue.items.len == 0) return;
+     const w = sch.warm_queue.items[0];
++    if (w.fios_retirement_refused) return;
++    if (cleanupUncertain(sch.io)) {
++        holdBeforeHandoff(w);
++        return;
++    }
+     sch.queue_mu.lockUncancelable(sch.io);
+     const others = othersLocked(sch);
+     const idle = others == 0 and sch.load_queue.items.len + sch.unload_queue.items.len + sch.gen_queue.items.len == 0;
+@@ -361,8 +396,7 @@
+     switch (if (now == .running and gave_way) Outcome.timed_out else now) {
+         .running => {},
+         .ended => {
+-            endRequest(sch, w);
+-            w.step += 1;
++            if (endRequest(sch, w)) w.step += 1;
+         },
+         .failed, .timed_out => |why| {
+             log.warn("Warm request {d} of {d} {s}; the first prompts compile what is left.\n", .{ w.step - w.verify_rows + 1, w.requests, if (why == .failed) "failed" else "took too long" });
+@@ -405,40 +439,73 @@
+     }
+ }
+ 
++/// Only before any handoff, when the slot pointer still denotes our live
++/// handle. Refuse another pass without freeing or settling the original.
++fn holdBeforeHandoff(w: *Idle) void {
++    if (w.slot) |slot| slot.cancelled.store(true, .release);
++    w.fios_retirement_refused = true;
++}
++
+ /// Give back the request in flight, if any.
+-fn endRequest(sch: *Scheduler, w: *Idle) void {
++fn endRequest(sch: *Scheduler, w: *Idle) bool {
++    if (w.fios_retirement_refused) return false;
++    if (cleanupUncertain(sch.io)) {
++        holdBeforeHandoff(w);
++        return false;
++    }
+     if (w.slot) |slot| {
+         w.spent_ns += w.asked.read();
+-        release(sch, slot);
+-        w.slot = null;
++        if (!acceptRetirement(w, releaseIdle(sch, slot))) return false;
+     }
+     sch.queue_mu.lockUncancelable(sch.io);
+     sch.warm_in_flight = 0;
+     sch.queue_mu.unlock(sch.io);
++    return true;
+ }
+ 
+-/// A warm-up is over: served (`mark` it, so no later load owes it) or cut short by its model leaving.
++fn acceptRetirement(w: *Idle, result: IdleRetirement) bool {
++    // After handoff the cleanup queue owns the slot or has freed its CPU
++    // shell. Keep the twin on refusal but not a dangling access path.
++    if (result != .not_handed_off) w.slot = null;
++    if (result != .retired) w.fios_retirement_refused = true;
++    return result == .retired;
++}
++
+ fn end(sch: *Scheduler, w: *Idle, mark: bool) void {
+-    endRequest(sch, w);
++    _ = endChecked(sch, w, mark);
++}
++
++/// Do not destroy the borrowed cache until its original warm slot retired.
++fn endChecked(sch: *Scheduler, w: *Idle, mark: bool) bool {
++    if (!endRequest(sch, w)) return false;
+     if (w.twin) |*t| t.deinit();
++    if (cleanupUncertain(sch.io)) {
++        w.fios_retirement_refused = true;
++        return false;
++    }
+     if (mark) {
+         remember(w.marker_buf[0..w.marker_len :0]);
+         log.info("Warm requests complete ({d} of {d}, {d} ms).\n", .{ @min(w.step -| w.verify_rows, w.requests), w.requests, w.spent_ns / std.time.ns_per_ms });
+     }
+     _ = sch.warm_queue.orderedRemove(std.mem.indexOfScalar(*Idle, sch.warm_queue.items, w).?);
+     sch.allocator.destroy(w);
++    return true;
+ }
+ 
+ /// `entry` is about to be unloaded (every unload runs on this thread, between passes): its warm-up goes first, the
+ /// request in flight and the cache with it.
+-pub fn forget(sch: *Scheduler, entry: *const LoadedModel) void {
+-    for (sch.warm_queue.items) |w| if (w.entry == entry) return end(sch, w, false);
++pub fn forget(sch: *Scheduler, entry: *const LoadedModel) bool {
++    for (sch.warm_queue.items) |w| if (w.entry == entry) return endChecked(sch, w, false);
++    return true;
+ }
+ 
+ /// The inference thread is leaving: every warm-up owed gives back its request and its cache.
+-pub fn stop(sch: *Scheduler) void {
+-    while (sch.warm_queue.items.len > 0) end(sch, sch.warm_queue.items[0], false);
++pub fn stop(sch: *Scheduler) bool {
++    while (sch.warm_queue.items.len > 0) {
++        if (!endChecked(sch, sch.warm_queue.items[0], false)) return false;
++    }
+     sch.warm_queue.deinit(sch.allocator);
++    return true;
+ }
+ 
+ // ── tests ──
+@@ -618,7 +685,7 @@
+     }
+ 
+     fn deinit(f: *IdleFixture) void {
+-        stop(&f.sch);
++        _ = stop(&f.sch);
+         f.reg.deinit();
+         f.tmp.cleanup();
+     }
+@@ -645,17 +712,20 @@
+     try testing.expect(!owesStepLocked(&f.sch));
+ }
+ 
+-test "forget: a model being unloaded takes its warm-up with it, unmarked, wherever it stands in the queue" {
++test "fios current idle warm forget removes only the exact target and leaves the marker absent" {
++    // The instrumented registry correctly retains stubs without a source epoch.
++    // Give this positive fixture its own genuine local epoch before teardown.
++    try owners.shared().initialize(testing.io, @splat(153));
+     var f: IdleFixture = .{ .tmp = undefined, .reg = undefined };
+     try f.init();
+     defer f.deinit();
+     const other = try f.reg.registerStub("b", "/b", 1);
+     other.state = .ready;
+     owe(&f.sch, other, f.marker, 0, false);
+-    forget(&f.sch, other);
++    try testing.expect(forget(&f.sch, other));
+     try testing.expectEqual(@as(usize, 1), f.sch.warm_queue.items.len);
+     try testing.expect(f.sch.warm_queue.items[0].entry == f.entry);
+-    forget(&f.sch, f.entry);
++    try testing.expect(forget(&f.sch, f.entry));
+     try testing.expectEqual(@as(usize, 0), f.sch.warm_queue.items.len);
+     try testing.expect(!served(f.marker));
+ }
+@@ -670,11 +740,49 @@
+     try testing.expect(!served(f.marker));
+ }
+ 
+-test "stop: a warm-up still owed at shutdown is dropped unmarked" {
++test "fios current warm refusal retains its original idle and twin on forget and stop" {
++    const a = std.heap.page_allocator;
++    const io = testing.io;
++    var sch: Scheduler = undefined;
++    sch.allocator = a;
++    sch.io = io;
++    sch.warm_queue = .empty;
++    const entry = try a.create(LoadedModel);
++    const w = try a.create(Idle);
++    const slot = try a.create(Slot);
++    slot.cancelled = .init(false);
++    w.* = .{ .entry = entry, .marker_len = 0, .verify_rows = 0, .requests = 0,
++        .twin = prefix_cache_mod.HotPrefixCache.initWithMem(a, 2, 16), .slot = slot };
++    try sch.warm_queue.append(a, w);
++    try owners.shared().initialize(io, @splat(151));
++    owners.shared().fence(io);
++    try testing.expect(!forget(&sch, entry));
++    try testing.expect(w.fios_retirement_refused);
++    try testing.expect(!stop(&sch)); // no loop/replay, despite nonempty original queue
++    try testing.expectEqual(@as(usize, 1), sch.warm_queue.items.len);
++    try testing.expect(sch.warm_queue.items[0] == w and w.slot == slot and w.twin != null);
++    try testing.expect(slot.cancelled.load(.acquire));
++    try testing.expect(!owesStepLocked(&sch) and liveSlot(&sch) == null);
++    // Intentionally retain the private diagnostic graph until test process exit.
++}
++
++test "fios current idle warm handoff refusal retains the twin without a stale slot pointer" {
++    const a = testing.allocator;
++    const slot = try a.create(Slot);
++    defer a.destroy(slot); // synthetic shell; no native destructor
++    var w: Idle = .{ .entry = undefined, .marker_len = 0, .verify_rows = 0, .requests = 0,
++        .twin = prefix_cache_mod.HotPrefixCache.initWithMem(a, 2, 16), .slot = slot };
++    defer w.twin.?.deinit();
++    try testing.expect(!acceptRetirement(&w, .retained_after_handoff));
++    try testing.expect(w.fios_retirement_refused and w.twin != null and w.slot == null);
++}
++
++test "fios current idle warm stop releases a healthy unstarted item without a marker" {
++    try owners.shared().initialize(testing.io, @splat(154));
+     var f: IdleFixture = .{ .tmp = undefined, .reg = undefined };
+     try f.init();
+     defer f.deinit();
+-    stop(&f.sch);
++    try testing.expect(stop(&f.sch));
+     f.sch.warm_queue = .empty;
+     try testing.expect(!served(f.marker));
+ }

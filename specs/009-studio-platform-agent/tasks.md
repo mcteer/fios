@@ -1,6 +1,6 @@
 # Tasks: Studio Platform Management Agent
 
-**Current whole-task status (2026-11-16):39/55 complete;16 open.** T033 now has exact image-only operator approval and a matching readonly artifact/source recheck; enrollment and activation remain gated. See [approval record](sandbox-image-approval.md) and [remaining work](completion-status.md). Earlier counts below are historical checkpoints.
+**Current whole-task status (2026-11-21): 39/55 complete; 16 open.** T033 has exact image-only approval and a matching read-only artifact/source recheck; enrollment and activation remain gated. See [approval record](sandbox-image-approval.md) and [remaining work](completion-status.md). The v26.11.3 stock/source-SDK/optional-seal receipts are partial native evidence, not T002/T018–T022/T051 acceptance. Resume from the current idle-warm qualification and eager ownership barriers in [validation](validation.md). Earlier counts below are historical checkpoints.
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [contracts](contracts/control-plane.md), [quickstart.md](quickstart.md).
 **Status**: Implementation authorized. **39/55 tasks complete**; G1 resolved by constitution2.1.0/ADR0003. Authorized read-only SSH inventory completed, but T002/G2 remains unproven and blocks native activation/acceptance, not independent implementation and mock testing. See compatibility.md.008 stays parked.

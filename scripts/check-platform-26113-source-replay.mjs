@@ -8,14 +8,13 @@ import {basename,isAbsolute,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const args=process.argv.slice(2);
-if(args.length!==2||args[0]!=='--source-archive'||!isAbsolute(args[1]))throw Error('usage: --source-archive /absolute/path/to/pinned-codeload.tar.gz');
+const manifestOnly=args.length===1&&args[0]==='--manifest-only';
+if(!manifestOnly&&(args.length!==2||args[0]!=='--source-archive'||!isAbsolute(args[1])))
+ throw Error('usage: --manifest-only | --source-archive /absolute/path/to/pinned-codeload.tar.gz');
 const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
-assert.ok(statSync(args[1]).size<=80*1024*1024,'oversized source archive');
-const source=readFileSync(args[1]);
-assert.equal(sha256(source),'f48a65d735a77fb2366b77d0000ff7f13794a505e66b67c1bab0dedc43500271','unexpected source archive digest');
 const native=fileURLToPath(new URL('../platform/studio/native/',import.meta.url));
 const entries=readFileSync(join(native,'mlx-serve-26.11.3-source-series.txt'),'utf8').split('\n').filter(line=>line&&!line.startsWith('#'));
-assert.equal(entries.length,71);
+assert.equal(entries.length,72);
 const seen=new Set();
 const patches=entries.map(line=>{
  const [,hash,name]=line.match(/^([0-9a-f]{64})  (mlx-serve-(?:26\.11\.[23]-[a-z0-9-]+|current-ds4-checked-cleanup)\.patch)$/)||[];
@@ -24,6 +23,14 @@ const patches=entries.map(line=>{
  const bytes=readFileSync(join(native,name));assert.equal(sha256(bytes),hash,`${name}: patch digest`);
  return {name,bytes};
 });
+if(manifestOnly){
+ console.log(`PASS: ${entries.length} local patch hashes; no archive replay or native execution`);
+ process.exit(0);
+}
+const archive=statSync(args[1]);
+assert.ok(archive.isFile()&&archive.size>0&&archive.size<=80*1024*1024,'bounded regular source archive required');
+const source=readFileSync(args[1]);
+assert.equal(sha256(source),'f48a65d735a77fb2366b77d0000ff7f13794a505e66b67c1bab0dedc43500271','unexpected source archive digest');
 const scratch=mkdtempSync(join(tmpdir(),'fios-26113-replay-'));
 const env={PATH:'/usr/bin:/bin',HOME:scratch,GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_CEILING_DIRECTORIES:scratch};
 function run(command,args,input){
@@ -54,6 +61,10 @@ try{
  const queued=requests.split('test "fios current queued unload preserves sender and worker origins"')[1]?.split('\ntest "')[0];
  assert.ok(queued?.includes('model.fios_owner_guard = true;')&&queued.includes('expectError(error.ModelOwned,'),
   'guarded fixture must distinguish an active model owner from the administrative sender');
+ assert.match(requests,/if \(!warm_requests\.forget\(sch, victim\)\) return error\.NativeCleanupUncertain;\n        moveHotCacheViewOff/);
+ assert.match(requests,/if \(!warm_requests\.forget\(sch, entry\)\) return refuseUnloadRequest\(sch, req\);\n    moveHotCacheViewOff/);
+ const loop=readFileSync(join(scratch,'src/engines/mlx/runtime/loop.zig'),'utf8');
+ assert.match(loop,/if \(!warm_requests\.stop\(sch\) or cleanupUncertain\(sch\.io\)\) return;\n    persistAtShutdown/);
  const macos=readFileSync(join(scratch,'build/macos.zig'),'utf8');
  const shared=macos.slice(macos.indexOf('const Shared = struct'),macos.indexOf('pub fn addServer('));
  for(const bridge of ['sdk','ds4']){

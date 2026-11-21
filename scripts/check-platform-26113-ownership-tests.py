@@ -20,6 +20,13 @@ TESTS = (
     'engines.mlx.runtime.load_requests.test.fios current attempted worker eviction retains custody while untouched siblings release',
 )
 SUBMIT_REFUSAL = 'engines.mlx.scheduler.test.fios current blocking and immediate submission refuse before reading the model'
+IDLE_WARM = (
+    'engines.mlx.runtime.loop.test.fios current warm drain witness ignores unrelated slots and never refunds refusal',
+    'engines.mlx.warm_requests.test.fios current idle warm forget removes only the exact target and leaves the marker absent',
+    'engines.mlx.warm_requests.test.fios current idle warm stop releases a healthy unstarted item without a marker',
+    'engines.mlx.warm_requests.test.fios current warm refusal retains its original idle and twin on forget and stop',
+    'engines.mlx.warm_requests.test.fios current idle warm handoff refusal retains the twin without a stale slot pointer',
+)
 
 
 def require(ok, reason):
@@ -43,9 +50,15 @@ def messages(raw):
 
 
 def main():
-    if len(sys.argv) not in (4, 5) or sys.argv[1] != '--isolated' or sys.argv[4:] not in ([], ['--include-submit-refusal']):
-        raise SystemExit('usage: --isolated /private/tmp/.../test REVIEWED_SHA256 [--include-submit-refusal]')
-    selected = TESTS + (SUBMIT_REFUSAL,) if len(sys.argv) == 5 else TESTS
+    options = sys.argv[4:]
+    allowed = {'--include-submit-refusal', '--include-idle-warm'}
+    if len(sys.argv) < 4 or sys.argv[1] != '--isolated' or not set(options) <= allowed or len(options) != len(set(options)):
+        raise SystemExit('usage: --isolated /private/tmp/.../test REVIEWED_SHA256 [--include-submit-refusal] [--include-idle-warm]')
+    selected = TESTS
+    if '--include-submit-refusal' in options:
+        selected += (SUBMIT_REFUSAL,)
+    if '--include-idle-warm' in options:
+        selected += IDLE_WARM
     require(sys.platform == 'darwin' and os.geteuid() != 0, 'requires unprivileged macOS')
     binary, expected = Path(sys.argv[2]), sys.argv[3]
     require(binary.is_absolute() and binary == binary.resolve(strict=True)
