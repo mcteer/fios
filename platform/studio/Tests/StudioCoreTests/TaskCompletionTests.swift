@@ -171,7 +171,14 @@ private func verifyDeferredTerminalWrite()throws {
     }
     // The fixture never spawned the originally planned local worker.
     try journal.recordWorkerNotStarted(job:id,attempt:0,nonce:nonce)
+    guard sqlite3_exec(writer,"BEGIN IMMEDIATE",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
     try controller.settleModelJobs(journal.jobs(),events:[:],now:1003)
+    guard try journal.jobs().first(where:{$0.id==id})?.state == .revoking,
+          try journal.activeLaunchCount()==0,try journal.uncertainCount()==2 else {
+        fatalError("Final removal write refusal changed custody or durable terminality")
+    }
+    guard sqlite3_exec(writer,"ROLLBACK",nil,nil,nil)==SQLITE_OK else {throw JournalError.storage}
+    try controller.settleModelJobs(journal.jobs(),events:[:],now:1004)
     let states=Dictionary(uniqueKeysWithValues:try journal.jobs().map{($0.id,$0.state)})
     guard states[id] == .removed,states[sibling] == .running,try journal.uncertainCount()==2 else {
         fatalError("Deferred terminal transition required event replay or settled native uncertainty")
