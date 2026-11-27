@@ -1,0 +1,26 @@
+name: fios
+
+services:
+  core:
+    build: .
+    # OrbStack shares localhost with the Mac. The process binds only 127.0.0.1.
+    network_mode: host
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 32
+    volumes:
+      - type: bind
+        source: ./.fios/observations
+        target: /observations
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "-Bc", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8741/healthz', timeout=2).read()"]
+      interval: 15s
+      timeout: 4s
+      retries: 3

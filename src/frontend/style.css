@@ -1,0 +1,24 @@
+:root { color-scheme: light; font: 100%/1.5 "Inter", system-ui, sans-serif; color: #202c27; background: #f5f5ed; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+nav { display: flex; align-items: baseline; gap: 1.1rem; padding: 1rem max(5vw, 1rem); background: #17382e; color: #f5f5ed; }
+nav strong { font: bold 2rem Georgia, serif; letter-spacing: -.05em; }
+nav span { font-size: .9rem; }
+main { max-width: 75rem; margin: auto; padding: clamp(1rem, 4vw, 4rem); }
+.overview, article header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .7rem; }
+h1 { font: normal clamp(2.5rem, 6vw, 4rem)/1.1 "Baskervville", Georgia, serif; letter-spacing: -.045em; margin: 0; }
+.overview p, footer, .config, .empty, dt { color: #47574d; }
+.refresh { color: #fff; background: #245240; padding: .65rem 1rem; border-radius: .35rem; text-decoration: none; }
+.refresh:hover { background: #163c2d; }
+.refresh:focus-visible { outline: 3px solid #955617; outline-offset: 3px; }
+section { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem; margin: 1.5rem 0; }
+article { padding: 1.25rem; background: #fffefa; border: 1px solid #c8d1c6; border-top: 4px solid #46705a; border-radius: .4rem; }
+.role { font-size: .8rem; color: #465e4c; margin: 0 0 .3rem; }
+h2 { font: 600 1.35rem/1.1 "IBM Plex Mono", ui-monospace, monospace; margin: 0; }
+.state { padding: .22rem .55rem; font-size: .8rem; font-weight: 600; border-radius: 1rem; background: #e9ece6; }
+.reporting { background: #d8eddd; color: #254d2b; }
+.stale, .invalid { background: #fae5c3; color: #603e12; }
+.config { padding-bottom: 1rem; border-bottom: 1px solid #d9dfd4; }
+dl, .empty, footer, .config { font-size: .875rem; }
+dl div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .25rem; margin: .4rem 0; }
+dd { margin: 0; font-variant-numeric: tabular-nums; }

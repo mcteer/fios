@@ -1,0 +1,41 @@
+PYTHON ?= python3
+SPECIFY ?= .venv/bin/specify
+export NODE ?= fios-core
+PREVIEW_AGENT := local.fios.preview-telemetry
+
+.PHONY: check test spec-tools spec-check sample agent dashboard dashboard-stop
+check: spec-check test
+	docker compose config --quiet
+
+test:
+	PYTHONPATH=src $(PYTHON) -B -m unittest discover -s tests -v
+
+spec-tools:
+	$(PYTHON) -m venv .venv
+	.venv/bin/python -m pip --isolated install --index-url https://pypi.org/simple --only-binary=:all: --require-hashes -r .specify/requirements-macos-arm64-py315.txt
+	.venv/bin/python -m pip check
+	@if [ ! -f .specify/feature.json ]; then \
+		SPECIFY_FEATURE_DIRECTORY=specs/001-platform-foundation bash .specify/scripts/bash/check-prerequisites.sh --require-spec --require-tasks; \
+	fi
+
+spec-check:
+	$(SPECIFY) integration status
+	SPECIFY_FEATURE_NO_PERSIST=1 bash .specify/scripts/bash/check-prerequisites.sh --json --require-spec --require-tasks --include-tasks
+
+sample:
+	PYTHONPATH=src $(PYTHON) -B -m backend.host_agent --node fios-core
+
+agent:
+	PYTHONPATH=src $(PYTHON) -B -m backend.host_agent --node "$$NODE" --watch
+
+dashboard: sample
+	docker --context orbstack compose up --build --detach --wait --wait-timeout 60
+	@if ! launchctl list "$(PREVIEW_AGENT)" >/dev/null 2>&1; then \
+		launchctl submit -l "$(PREVIEW_AGENT)" -e "$(CURDIR)/.fios/telemetry.log" -- \
+			/usr/bin/env "PYTHONPATH=$(CURDIR)/src" "$(shell command -v $(PYTHON))" -B \
+			-m backend.host_agent --node fios-core --watch --directory "$(CURDIR)/.fios/observations"; \
+	fi
+
+dashboard-stop:
+	docker --context orbstack compose down
+	@if launchctl list "$(PREVIEW_AGENT)" >/dev/null 2>&1; then launchctl remove "$(PREVIEW_AGENT)"; fi

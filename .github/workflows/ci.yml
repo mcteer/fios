@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    name: Foundation checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate Spec Kit artifacts
+        env:
+          SPECIFY_FEATURE_DIRECTORY: specs/001-platform-foundation
+          SPECIFY_FEATURE_NO_PERSIST: "1"
+        run: bash .specify/scripts/bash/check-prerequisites.sh --json --require-spec --require-tasks
+
+      - name: Validate Compose and build the dashboard image
+        run: |
+          docker compose config --quiet
+          docker build --tag fios-ci .
+
+      - name: Run application tests in the dashboard image
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=8m \
+            --mount "type=bind,src=$PWD/tests,dst=/app/tests,readonly" \
+            --mount "type=bind,src=$PWD/src/agent,dst=/app/src/agent,readonly" \
+            --mount "type=bind,src=$PWD/src/backend/host_agent.py,dst=/app/backend/host_agent.py,readonly" \
+            fios-ci python -B -m unittest discover -s tests -v
