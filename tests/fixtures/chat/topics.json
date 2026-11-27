@@ -1,0 +1,17 @@
+[
+  {
+    "prompt": "Explain PostgreSQL indexing",
+    "answer": "PostgreSQL indexes let a lookup skip most rows.",
+    "subject": "PostgreSQL indexing"
+  },
+  {
+    "prompt": "Plan a coastal lighthouse tour",
+    "answer": "Start at the southern lighthouse and follow the coast north.",
+    "subject": "coastal lighthouse"
+  },
+  {
+    "prompt": "Describe a redwood hiking trail",
+    "answer": "Follow the forest path past the creek and the old-growth redwoods.",
+    "subject": "redwood hiking"
+  }
+]

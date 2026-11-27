@@ -11,7 +11,7 @@ import ssl
 import threading
 import time
 
-from .core import local_role
+from .local_access import local_role
 from .enrollment import Rejected, STUDIOS
 from .machine_tls import fingerprint
 from .wire import FrameTooLarge, read_exact, read_until, timeout
@@ -144,6 +144,11 @@ class Listener:
 def worker_handler(ledger, context, scheduler=None):
     from .job_protocol import WORKER_ROUTES, worker
 
+    data_routes = {}
+    if scheduler and scheduler.dispatch:
+        from .chat_dispatch import OPERATIONS
+        data_routes = {"/v1/inference/" + operation: operation for operation in OPERATIONS}
+
     def handle(raw, _peer, deadline):
         timeout(raw, deadline)
         try:
@@ -154,7 +159,8 @@ def worker_handler(ledger, context, scheduler=None):
         with conn:
             try:
                 method, target, headers, remaining = read_request(conn, deadline)
-                if target not in ROUTES and not (scheduler and target in WORKER_ROUTES):
+                inference = bool(scheduler and scheduler.dispatch and target in data_routes)
+                if target not in ROUTES and not (scheduler and target in WORKER_ROUTES) and not inference:
                     raise Rejected("route", 404)
                 if method != "POST":
                     raise Rejected("method", 405)
@@ -174,7 +180,27 @@ def worker_handler(ledger, context, scheduler=None):
                 if time.time() >= expires:
                     raise Rejected("identity", 403)
                 pin = fingerprint(conn.getpeercert(binary_form=True))
-                if target in WORKER_ROUTES:
+                if inference:
+                    version = data.pop("version", None)
+                    session = data.pop("session", None)
+                    data.pop("node", None)
+                    if type(version) is not int or version != 1:
+                        raise Rejected("invalid")
+                    with ledger.lock:
+                        ledger.authorize(node, pin, "inference")
+
+                    def verify_peer():
+                        if time.time() >= expires:
+                            raise Rejected("identity", 403)
+                        ledger.verify_binding(node, pin)
+
+                    # Input frames retain the original three-second deadline.
+                    # Classification can inspect both the answer and its title.
+                    result_deadline = time.monotonic() + 12
+                    result = scheduler.dispatch.handle(data_routes[target], node, session, data,
+                                                       authorize_peer=verify_peer)
+                    reply(conn, result_deadline, 200, result)
+                elif target in WORKER_ROUTES:
                     reply(conn, deadline, 200, worker(scheduler, target, node, pin, data))
                 elif target == "/v1/sessions":
                     if data.keys() != {"version", "node"} or type(data["version"]) is not int or data["version"] != 1:

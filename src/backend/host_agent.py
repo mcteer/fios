@@ -60,8 +60,15 @@ def main():
     for name in ("ca", "cert", "key"):
         parser.add_argument(f"--{name}", type=Path)
     parser.add_argument("--test-loopback", action="store_true")
+    parser.add_argument("--inference-config", type=Path)
+    parser.add_argument("--inference-socket", type=Path)
+    parser.add_argument("--runtime-state", type=Path)
     args = parser.parse_args()
     try:
+        if args.inference_config:
+            from agent.inference_worker import run_host
+            run_host(args, observe)
+            return
         if args.remote:
             from .worker import from_args
             from_args(args).run(observe)

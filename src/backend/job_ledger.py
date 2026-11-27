@@ -19,6 +19,8 @@ PROFILES = {"fake-single-v1": 1, "fake-pair-v1": 2}
 RESIDENT = "fake-model-v1"
 TOKEN_LIMIT = 4096
 ACTIVE = ("preparing", "running")
+EXECUTORS = ("fios-core", *STUDIOS)
+
 SCHEMA = """
 CREATE TABLE metadata (incarnation TEXT NOT NULL, restoring INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE jobs (
@@ -62,7 +64,7 @@ def identifier(value):
     return value
 
 
-def usage_counts(value, limit):
+def usage_counts(value, limit, *, input_limit=None):
     if not isinstance(value, dict) or value.keys() - {"input", "output"}:
         raise Rejected("invalid_usage")
     result = {}
@@ -74,21 +76,22 @@ def usage_counts(value, limit):
         if kind == "unknown" and count.keys() == {"kind"}:
             result[direction] = count
         elif kind in ("measured", "estimated") and count.keys() == {"kind", "value"}:
-            integer(count["value"], 0, limit)
+            bound = input_limit if direction == "input" and input_limit is not None else limit
+            integer(count["value"], 0, bound)
             result[direction] = count
         else:
             raise Rejected("invalid_usage")
     return result
 
 
-def usage_view(stored):
+def usage_view(stored, *, synthetic=True):
     counts = json.loads(stored)
     measured = {direction: count["value"] for direction, count in counts.items()
                 if count["kind"] == "measured"}
     partial = len(measured) < len(counts)
     # This fixed tariff applies only to the synthetic workload.
     cost = None
-    if measured:
+    if measured and synthetic:
         cost = {"amount": str(Decimal(sum(measured.values())) * Decimal("0.01")),
                 "currency": "USD", "unit": "token", "tariff": "synthetic-v1",
                 "partial": partial}
@@ -115,7 +118,7 @@ class JobLedger:
         private_path(self.path)
         self.wall = wall
         with self.transaction(write=False) as db:
-            if (db.execute("PRAGMA user_version").fetchone()[0] != 1
+            if (db.execute("PRAGMA user_version").fetchone()[0] not in (1, 2)
                     or db.execute("PRAGMA quick_check").fetchone()[0] != "ok"
                     or db.execute("PRAGMA journal_mode").fetchone()[0] != "delete"
                     or db.execute("PRAGMA foreign_key_check").fetchone() is not None):
@@ -180,18 +183,22 @@ class JobLedger:
                 if existing["intent"] != intent:
                     raise Rejected("conflict", 409)
                 return {"id": existing["id"], "state": existing["state"]}
-            if (db.execute("SELECT count(*) FROM jobs WHERE state='queued' AND owner=?",
-                           (owner,)).fetchone()[0] >= 16
-                    or db.execute("SELECT count(*) FROM jobs WHERE state='queued'").fetchone()[0] >= 32):
-                raise Rejected("queue_full", 429)
-            if db.execute("SELECT count(*) FROM jobs").fetchone()[0] >= 10000:
-                raise Rejected("ledger_full", 503)
-            job = secrets.token_hex(16)
-            db.execute("INSERT INTO jobs(id,owner,request_key,intent,expires,state,reason) "
-                       "VALUES (?,?,?,?,?,'queued','waiting_capacity')",
-                       (job, owner, key, intent, self.wall() + deadline))
-            self.transition(db, job, "queued", "waiting_capacity")
-            return {"id": job, "state": "queued"}
+            return self.enqueue(db, owner, key, intent, deadline)
+
+    def enqueue(self, db, owner, key, intent, deadline):
+        """Insert a validated job using the caller's write transaction."""
+        if (db.execute("SELECT count(*) FROM jobs WHERE state='queued' AND owner=?",
+                       (owner,)).fetchone()[0] >= 16
+                or db.execute("SELECT count(*) FROM jobs WHERE state='queued'").fetchone()[0] >= 32):
+            raise Rejected("queue_full", 429)
+        if db.execute("SELECT count(*) FROM jobs").fetchone()[0] >= 10000:
+            raise Rejected("ledger_full", 503)
+        job = secrets.token_hex(16)
+        db.execute("INSERT INTO jobs(id,owner,request_key,intent,expires,state,reason) "
+                   "VALUES (?,?,?,?,?,'queued','waiting_capacity')",
+                   (job, owner, key, intent, self.wall() + deadline))
+        self.transition(db, job, "queued", "waiting_capacity")
+        return {"id": job, "state": "queued"}
 
     @staticmethod
     def owned(db, owner, job):
@@ -207,7 +214,8 @@ class JobLedger:
         result["intent"] = json.loads(row["intent"])
         result["slots"] = [r[0] for r in db.execute(
             "SELECT slot FROM holds WHERE job=? ORDER BY slot", (row["id"],))]
-        result["usage"] = usage_view(row["usage"]) if row["usage"] else None
+        result["usage"] = (usage_view(row["usage"], synthetic=result["intent"]["resource_class"] == "synthetic")
+                           if row["usage"] else None)
         return result
 
     def get(self, owner, job):
@@ -227,6 +235,27 @@ class JobLedger:
                 "SELECT position,state,reason,at FROM events WHERE job=? AND position>? "
                 "ORDER BY position LIMIT 50", (job, after))]
 
+    def migrate(self):
+        """Upgrade under the offline service lock, retaining all existing holds."""
+        with self.transaction() as db:
+            if db.execute("PRAGMA user_version").fetchone()[0] == 2:
+                return
+            db.execute("ALTER TABLE holds RENAME TO holds_v1")
+            db.execute("""
+                CREATE TABLE holds (
+                    slot TEXT PRIMARY KEY CHECK(slot IN ('fios-core','studio-a','studio-b')),
+                    job TEXT REFERENCES jobs(id), session TEXT, grant TEXT, epoch TEXT,
+                    lease REAL, ready INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL,
+                    revision TEXT
+                )
+            """)
+            db.execute("""
+                INSERT INTO holds(slot,job,session,grant,epoch,lease,ready,kind,revision)
+                SELECT slot,job,session,grant,epoch,lease,ready,kind,revision FROM holds_v1
+            """)
+            db.execute("DROP TABLE holds_v1")
+            db.execute("PRAGMA user_version=2")
+
     def backup(self, target):
         target = Path(target)
         private_path(target.parent, directory=True)
@@ -240,13 +269,24 @@ class JobLedger:
 
     def restore(self, snapshot):
         """Caller holds the offline service lock throughout staging and activation."""
+        with self.transaction(write=False) as db:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
         snapshot = JobLedger(snapshot, wall=self.wall)
         with tempfile.TemporaryDirectory(prefix="job-restore-", dir=self.path.parent) as folder:
             staged = Path(folder) / self.path.name
             snapshot.backup(staged)
             candidate = JobLedger(staged, wall=self.wall)
+            with candidate.transaction(write=False) as db:
+                version = max(version, db.execute("PRAGMA user_version").fetchone()[0])
+            executors = STUDIOS
+            if version == 2:
+                candidate.migrate()
+                executors = EXECUTORS
             with candidate.transaction() as db:
-                db.execute("UPDATE metadata SET incarnation=?,restoring=1", (secrets.token_hex(16),))
+                # v1 used a global barrier. v2's durable holds fence each
+                # possible executor until that executor proves it is idle.
+                db.execute("UPDATE metadata SET incarnation=?,restoring=?",
+                           (secrets.token_hex(16), int(version == 1)))
                 rows = db.execute("SELECT id FROM jobs WHERE state IN "
                                   "('queued','preparing','running','stopping')").fetchall()
                 for (job,) in rows:
@@ -254,8 +294,11 @@ class JobLedger:
                     candidate.transition(db, job, "stopping" if held else "failed",
                                          "restore_history_unknown", outcome="failed" if held else None)
                 db.execute("UPDATE holds SET kind='cleanup',grant=NULL,session=NULL,epoch=NULL")
+                # A snapshot can predate an operator withdrawal or a failed trial.
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='model_aliases'").fetchone():
+                    db.execute("DELETE FROM model_aliases")
                 db.executemany("INSERT OR IGNORE INTO holds(slot,kind) VALUES (?,'cleanup')",
-                               [(slot,) for slot in STUDIOS])
+                               [(slot,) for slot in executors])
             JobLedger(staged, wall=self.wall)
             os.replace(staged, self.path)
             # Make the directory entry durable before acknowledging activation.

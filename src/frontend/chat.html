@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="chat-csrf" content="$csrf">
+  <title>Private chat · fios</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/chat.js"></script>
+</head>
+<body>
+<main class="chat-workspace">
+  <header>
+    <a href="/">Cluster overview</a>
+    <h1>Private chat</h1>
+  </header>
+  <aside aria-label="Conversation history">
+    <button id="new" type="button">New conversation</button>
+    <ul id="history"></ul>
+    <button id="more" type="button" hidden>More conversations</button>
+  </aside>
+  <section aria-labelledby="title">
+    <h2 id="title">New conversation</h2>
+    <div id="thread" aria-label="Conversation" aria-live="off"></div>
+    <p id="status" role="status"></p>
+    <form id="composer">
+      <label for="alias">Model</label>
+      <select id="alias" name="alias">
+        <option value="general-chat">General chat</option>
+        <option value="coding">Coding</option>
+      </select>
+      <label><input id="inventory" type="checkbox"> Include cluster status</label>
+      <label for="prompt">Message</label>
+      <textarea id="prompt" name="prompt" rows="4" required maxlength="16384"></textarea>
+      <button id="send" type="submit" disabled>Send</button>
+      <button id="stop" type="button" disabled>Stop</button>
+      <button id="delete" type="button" disabled>Delete conversation</button>
+    </form>
+  </section>
+</main>
+</body>
+</html>

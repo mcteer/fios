@@ -50,6 +50,8 @@ def offline(args):
         path = directory / "jobs.sqlite"
         if args.action == "job-init":
             JobLedger.initialize(path)
+        elif args.action == "job-migrate":
+            JobLedger(path).migrate()
         elif args.action == "job-backup":
             JobLedger(path).backup(args.target)
         else:
@@ -57,7 +59,7 @@ def offline(args):
 
 
 def cli(sub):
-    for name in ("job-init", "job-backup", "job-restore"):
+    for name in ("job-init", "job-migrate", "job-backup", "job-restore"):
         parser = sub.add_parser(name)
         parser.add_argument("--state-dir", type=Path, required=True)
         if name == "job-backup":
@@ -101,24 +103,47 @@ def operator(scheduler, action, data):
     return {"job": scheduler.cancel(OWNER, job)}
 
 
+def local(scheduler, operation, data):
+    if operation == "session" and not data:
+        return {"session": scheduler.open_local_session()}
+    return worker_operation(scheduler, operation, "fios-core", data, local_peer=True)
+
+
 def worker(scheduler, route, node, pin, data):
     operation = WORKER_ROUTES[route]
+    with scheduler.enrollment.lock:
+        scheduler.enrollment.authorize(node, pin, "scheduling")
+        return worker_operation(scheduler, operation, node, data)
+
+
+def worker_operation(scheduler, operation, node, data, *, local_peer=False):
+    if operation not in WORKER_FIELDS:
+        raise Rejected("invalid")
     required = WORKER_FIELDS[operation] | {"version", "node", "session"}
+    if operation == "capacity" and scheduler.catalog is not None:
+        required |= {"pressure"}
+        if local_peer:
+            required |= {"memory_bytes"}
     fields = data.keys()
     if operation == "finish" and "usage" in fields:
         fields = fields - {"usage"}
-    if fields != required or type(data["version"]) is not int or data["version"] != 1:
+    if (fields != required or type(data["version"]) is not int or data["version"] != 1
+            or data["node"] != node):
         raise Rejected("invalid")
     session = identifier(data["session"])
-    enrollment = scheduler.enrollment
-    with enrollment.lock:
-        enrollment.authorize(node, pin, "scheduling")
+    with scheduler.enrollment.lock:
         if session != scheduler.session(node):
             raise Rejected("session", 409)
         scheduler.sweep()
         if operation == "capacity":
+            if local_peer:
+                return scheduler.local_capacity(session, {key: data[key] for key in
+                                                required - {"version", "node", "session"}})
             return scheduler.set_capacity(node, session, data)
-        with scheduler.jobs.transaction() as db:
+        dispatch = getattr(scheduler, "dispatch", None)
+        transaction = (dispatch.conversations.transaction if dispatch is not None
+                       and operation == "finish" else scheduler.jobs.transaction)
+        with transaction() as db:
             if operation == "poll":
                 return scheduler.poll(db, node, session)
             if operation != "cleaned":

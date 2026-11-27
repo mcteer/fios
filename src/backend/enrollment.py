@@ -137,16 +137,18 @@ class Ledger:
             self.observations.pop(node, None)
             self.budgets.pop(node, None)
 
-    def authorize(self, node, pin, route):
+    def verify_binding(self, node, pin):
         with closing(self.connect()) as db:
             active = db.execute("SELECT 1 FROM bindings WHERE node=? AND pin=? AND state='active'",
                                 (node, pin)).fetchone()
         if not active:
             raise Rejected("identity", 403)
+    def authorize(self, node, pin, route):
+        self.verify_binding(node, pin)
         now = self.clock()
         key = node, route
         recent = [at for at in self.budgets.get(key, ()) if now - at < 10]
-        if len(recent) >= {"session": 4, "heartbeat": 12, "scheduling": 30}[route]:
+        if len(recent) >= {"session": 4, "heartbeat": 12, "scheduling": 30, "inference": 100}[route]:
             raise Rejected("limited", 429)
         self.budgets[key] = recent + [now]
 

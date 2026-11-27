@@ -3,7 +3,7 @@ SPECIFY ?= .venv/bin/specify
 export NODE ?= fios-core
 PREVIEW_AGENT := local.fios.preview-telemetry
 
-.PHONY: check test enrollment-test enrollment-acceptance scheduling-test scheduling-acceptance spec-tools spec-check sample agent dashboard dashboard-stop
+.PHONY: check test enrollment-test enrollment-acceptance scheduling-test scheduling-acceptance chat-test chat-acceptance spec-tools spec-check sample agent dashboard dashboard-stop
 check: spec-check test
 	docker compose config --quiet
 
@@ -21,6 +21,14 @@ scheduling-test:
 
 scheduling-acceptance:
 	PYTHONPATH=src:tests $(PYTHON) -B tests/macos/verify_scheduling.py
+
+chat-test:
+	PYTHONPATH=src $(PYTHON) -B -m unittest discover -s tests -p "test_chat*.py" -v
+	PYTHONPATH=src $(PYTHON) -B -m unittest discover -s tests -p "test_mini_inference.py" -v
+	PYTHONPATH=src $(PYTHON) -B -m unittest discover -s tests -p "test_model_catalog.py" -v
+
+chat-acceptance:
+	PYTHONPATH=src:tests $(PYTHON) -B tests/macos/verify_chat.py
 
 spec-tools:
 	$(PYTHON) -m venv .venv
