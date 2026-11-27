@@ -23,12 +23,15 @@ jobs:
         env:
           SPECIFY_FEATURE_NO_PERSIST: "1"
         run: |
-          for feature in specs/001-platform-foundation specs/002-studio-enrollment; do
+          for feature in specs/001-platform-foundation specs/002-studio-enrollment specs/003-job-ledger-scheduling; do
             SPECIFY_FEATURE_DIRECTORY="$feature" bash .specify/scripts/bash/check-prerequisites.sh --json --require-spec --require-tasks
           done
 
       - name: Run portable machine enrollment tests
         run: make enrollment-test
+
+      - name: Run portable scheduler tests
+        run: make scheduling-test
 
       - name: Validate Compose and build the dashboard image
         run: |

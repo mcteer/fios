@@ -146,7 +146,7 @@ class Ledger:
         now = self.clock()
         key = node, route
         recent = [at for at in self.budgets.get(key, ()) if now - at < 10]
-        if len(recent) >= (4 if route == "session" else 12):
+        if len(recent) >= {"session": 4, "heartbeat": 12, "scheduling": 30}[route]:
             raise Rejected("limited", 429)
         self.budgets[key] = recent + [now]
 
