@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.fios.worker</string>
+    <key>UserName</key>
+    <string>REPLACE_UNPRIVILEGED_SERVICE_USER</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>/Library/Application Support/fios/src</string>
+    </dict>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>-B</string>
+        <string>-m</string>
+        <string>backend.host_agent</string>
+        <string>--node</string>
+        <string>REPLACE_STUDIO_ID</string>
+        <string>--remote</string>
+        <string>REPLACE_CORE_MANAGEMENT_IPV4</string>
+        <string>--server-name</string>
+        <string>REPLACE_CORE_SAN</string>
+        <string>--ca</string>
+        <string>/Library/Application Support/fios/worker/roots.pem</string>
+        <string>--cert</string>
+        <string>/Library/Application Support/fios/worker/leaf.pem</string>
+        <string>--key</string>
+        <string>/Library/Application Support/fios/worker/leaf.key</string>
+    </array>
+</dict>
+</plist>

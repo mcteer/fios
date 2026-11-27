@@ -12,9 +12,9 @@ Start the native sampler for this login session and the detached OrbStack servic
 make dashboard
 ```
 
-Open [the local dashboard](http://127.0.0.1:8741/). Select **Refresh status** to read the latest observations. The Mini publishes a sample every five seconds. A sample becomes stale after thirty seconds. The two Studio names are inventory aliases. They show **Awaiting sample** until observations are available.
+Open [the local dashboard](http://127.0.0.1:8741/). Select **Refresh status** to read the latest observations. The Mini publishes a sample every five seconds. A sample becomes stale after thirty seconds. The Studio cards show **Telemetry unavailable** until the native enrollment service is running. The two Studio names are inventory aliases.
 
-The process binds to IPv4 loopback inside OrbStack host networking. This bootstrap assumes one trusted local operator and trusted processes on the Mini. Keep public ingress, port forwarding and reverse proxies off. The local admin can read inventory. A future authenticated agent channel will carry administrative operations.
+The process binds to IPv4 loopback inside OrbStack host networking. This bootstrap assumes one trusted local operator and trusted processes on the Mini. Keep public ingress, port forwarding and reverse proxies off. The local admin can read inventory and manage worker trust through the native CLI.
 
 In OrbStack, open the `fios` Compose project and select `fios-core-1`. Use `make dashboard-stop` to stop the sampler and remove the service. Observations remain under the Git-ignored `.fios/observations/` directory. The UI mounts only that directory, read-only. The supplied `.env.local` is excluded from Git and the Docker build. These commands do not load it.
 
@@ -41,7 +41,28 @@ make check
 
 For a native-only UI check, run `make sample` followed by `PYTHONPATH=src python3 -B -m backend.core` while the container is stopped. Both servers use the same loopback port. `GET /healthz` measures the UI process. `GET /api/v1/cluster` returns versioned observations and freshness.
 
-On a Studio, run `make agent NODE=studio-a` or `make agent NODE=studio-b` for a foreground sampler. It writes locally without listening on the network. Authenticated remote collection is the next development slice.
+## Enroll Studio workers
+
+Run `make enrollment-test` for disposable SQLite and mutual TLS tests. Run `make enrollment-acceptance` on `fios-core` with OrbStack and the operator's macOS login session running. The acceptance runner uses a separate Compose project and disposable launchd jobs, and checks the existing preview after teardown. See the [qualification and rollout guide](specs/002-studio-enrollment/quickstart.md).
+
+Before live rollout, approve the worker-to-slot mapping, the management route and the core SAN, and verify the approved root fingerprint independently. Use a dedicated offline CA. Generate the leaf key and CSR on each consuming host under the corresponding unprivileged service identity. Sign with the approved certificate profile, ignoring CSR-requested extensions. Configure `CA:FALSE`, `digitalSignature`, and an explicit EKU of `clientAuth` for workers or `serverAuth` for the core. The worker leaf has a single DNS SAN equal to its approved machine name. The core leaf has a DNS or IP SAN matching the worker's configured core name. Use 30-day leaves and rotate before expiry. Distribute the public root and signed leaf. Keep each key on its own host, mode 0600 in a service-owned mode-0700 directory. Keep the CA signing key offline. OpenSSL 3 or 4 is supported for issuance and public leaf verification.
+
+On the Mini, run the following once as the trusted local operator, with `PYTHONPATH` pointing to the qualified native source. Create the private parent beforehand. The state directory itself must be new.
+
+```sh
+python3 -B -m backend.enroll init --state-dir '/Library/Application Support/fios/enrollment/state'
+```
+
+Render the [launchd templates](ops/launchd/) for each approved host using absolute paths and the approved management address. Set `UserName` to the local operator on the Mini and the designated unprivileged service identity on each Studio. Install the qualified source and each rendered plist with administrator-controlled ownership. Use `plutil -lint` before loading an authorized system job. The worker sends outbound reports only. The native service accepts reports on the configured management IP and serves the container's read-only snapshot over loopback. The dashboard continues to mount only the Mini's existing observation directory.
+
+Use the local operator socket to approve, inspect, rotate or revoke. Use the current public leaf fingerprint with `--expected` for rotation, revocation and re-enrollment. For example, on the Mini:
+
+```sh
+python3 -B -m backend.enroll --socket '/Library/Application Support/fios/enrollment/state/operator.sock' \
+  approve studio-a --machine edge-a --leaf /path/to/edge-a-public-leaf.pem
+```
+
+For planned root rotation, stage the verified new public root beside the old on both sides, restart with the dual bundle, replace the core leaf and rotate one worker at a time. After confirming both workers report with the new chain, remove the old root everywhere and restart the services. For a compromised root, stop the listener, remove the compromised root on all endpoints, issue new leaves offline and reapprove them via the independent provisioning channel. For a failed Studio rollout, revoke the affected binding, unload that worker's system job and remove its staged artifact. Preserve the verified current ledger and its retired pins. The other worker can keep reporting.
 
 ## Development record
 

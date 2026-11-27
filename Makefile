@@ -3,12 +3,18 @@ SPECIFY ?= .venv/bin/specify
 export NODE ?= fios-core
 PREVIEW_AGENT := local.fios.preview-telemetry
 
-.PHONY: check test spec-tools spec-check sample agent dashboard dashboard-stop
+.PHONY: check test enrollment-test enrollment-acceptance spec-tools spec-check sample agent dashboard dashboard-stop
 check: spec-check test
 	docker compose config --quiet
 
 test:
 	PYTHONPATH=src $(PYTHON) -B -m unittest discover -s tests -v
+
+enrollment-test:
+	PYTHONPATH=src $(PYTHON) -B -m unittest discover -s tests -p 'test_*enrollment*.py' -v
+
+enrollment-acceptance:
+	PYTHONPATH=src:tests $(PYTHON) -B tests/macos/verify_enrollment.py
 
 spec-tools:
 	$(PYTHON) -m venv .venv

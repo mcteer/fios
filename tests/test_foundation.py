@@ -94,7 +94,7 @@ class FoundationTests(unittest.TestCase):
         self.assertIn("elf", presets["image"]["species"])
 
     def start_http_server(self):
-        server = core.create_server(self.directory, port=0)
+        server = core.create_server(self.directory, port=0, snapshot_port=0)
         self.addCleanup(server.server_close)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -122,7 +122,8 @@ class FoundationTests(unittest.TestCase):
 
         body = overview(self.now)
         self.assertIn(b"0 of 3 hosts reporting", body)
-        self.assertEqual(body.count(b">Awaiting sample</span>"), 3)
+        self.assertEqual(body.count(b">Awaiting sample</span>"), 1)
+        self.assertEqual(body.count(b">Telemetry unavailable</span>"), 2)
         self.assertNotIn(b"<dt>Observed</dt>", body)
 
         host_agent.publish(self.directory, self.sample)
@@ -138,7 +139,7 @@ class FoundationTests(unittest.TestCase):
                 body = overview(self.now + age)
                 self.assertIn(count + b" of 3 hosts reporting", body)
                 self.assertEqual(body.count(b">" + label + b"</span>"), 1)
-                self.assertEqual(body.count(b">Awaiting sample</span>"), 2)
+                self.assertEqual(body.count(b">Telemetry unavailable</span>"), 2)
                 for measurement in measurements:
                     self.assertIn(measurement, body)
 
@@ -146,7 +147,7 @@ class FoundationTests(unittest.TestCase):
         body = overview(self.now)
         self.assertIn(b"0 of 3 hosts reporting", body)
         self.assertEqual(body.count(b">Invalid sample</span>"), 1)
-        self.assertEqual(body.count(b">Awaiting sample</span>"), 2)
+        self.assertEqual(body.count(b">Telemetry unavailable</span>"), 2)
         self.assertNotIn(b"<dl>", body)
 
     def test_http_entry_points(self):

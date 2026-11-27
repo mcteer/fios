@@ -16,6 +16,11 @@ def timestamp(seconds):
     return datetime.fromtimestamp(seconds, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def state_label(host):
+    return {"not_enrolled": "Not enrolled", "revoked": "Revoked",
+            "unknown": "Telemetry unavailable"}.get(host.get("enrollment"), STATES[host["state"]])
+
+
 def render(nodes, now):
     cards = []
     for host in nodes:
@@ -34,7 +39,7 @@ def render(nodes, now):
         cards.append(
             f"<article><header><div><p class='role'>{escape(host['role'])}</p>"
             f"<h2>{escape(host['id'])}</h2></div>"
-            f"<span class='state {host['state']}'>{STATES[host['state']]}</span></header>"
+            f"<span class='state {host['state']}'>{state_label(host)}</span></header>"
             f"<p class='config'>{escape(host['hardware'])} · {escape(host['chip'])} · "
             f"{host['configured_gb']} GB configured</p>{measurements}</article>"
         )
