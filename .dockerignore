@@ -1,0 +1,14 @@
+**
+!src/
+src/**
+!src/backend/
+src/backend/**
+!src/backend/__init__.py
+!src/backend/core.py
+!src/backend/inventory.py
+!src/frontend/
+src/frontend/**
+!src/frontend/__init__.py
+!src/frontend/dashboard.py
+!src/frontend/overview.html
+!src/frontend/style.css

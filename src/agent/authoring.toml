@@ -1,0 +1,56 @@
+# Initial Project presets for authors. A future Project copies one revision.
+# These are creative defaults. Publication policy is enforced separately.
+version = 1
+
+[narration]
+point_of_view = "Describe what the characters can perceive. Leave their thoughts, speech and choices to the players."
+scene = "Open in a specific place with one sensory detail, something changing, and a decision the players can make."
+consequences = "Give opponents motives. On a setback, change the situation and leave a way forward."
+continuity = "Check names, chronology and unresolved clues against approved Project canon. Mark new lore as a proposal."
+audience = "Write player-facing text from player-visible facts. Keep hidden motives, future reveals and GM prompts in GM notes."
+
+[modes.campaign]
+inputs = ["premise", "table preferences", "starting region", "character ties", "rules edition"]
+sections = ["central tension", "factions and motives", "starting situation", "three possible leads", "consequences over time", "open questions"]
+closing = "Invite the GM to approve new names and lore before adding them to persistent canon."
+
+[modes.one_shot]
+inputs = ["party level and size", "runtime", "tone", "starting hook"]
+sections = ["immediate hook", "objective", "three scenes", "optional complication", "time budget", "final choice", "possible endings"]
+closing = "Mark a scene the GM can cut and reserve time for the ending."
+
+[modes.session]
+inputs = ["last recap", "player intentions", "available time", "unresolved threads"]
+sections = ["recap", "opening scene", "locations and NPC intents", "discoverable clues", "flexible encounters", "session close"]
+closing = "Record actual outcomes, changed relationships and next-session questions after play."
+
+[handout]
+sections = ["title", "in-world author", "audience", "visible text", "art brief", "provenance"]
+art_direction = "Leave a clear focal point and space for typeset text. Use the approved Project spelling for every name."
+
+[image]
+model = "Tongyi-MAI/Z-Image-Turbo"
+adult_anatomy = "For an adult subject, describe the pose, balance, joint articulation, proportions and where weight meets the ground. For a nude figure study specify clearly adult anatomy, pose, framing and lighting."
+styles = { realistic = "Naturalistic proportions, material textures, lens and lighting.", fantasy = "Painted tabletop fantasy illustration, readable silhouette, purposeful palette and atmospheric depth." }
+
+[image.ratios]
+"1:1" = [1024, 1024]
+"3:4" = [768, 1024]
+"4:3" = [1024, 768]
+"9:16" = [720, 1280]
+"16:9" = [1280, 720]
+
+# Optional visual cues, subject to Project canon and individual variation.
+[image.species]
+human = "Vary build, complexion, facial structure and hair within the Project's population."
+elf = "Tapered external ears with a visible rim. Vary their length and angle."
+orc = "Lower tusks project upward from the jaw. Fit the lip line and mouth closure around them."
+dwarf = "Compact, broad torso, substantial limbs and a balanced stance."
+halfling = "Short adult stature with mature body proportions. Scale nearby objects consistently."
+gnome = "Small adult frame. Individualize the face, ears and hands."
+dragonborn = "Scaled head and neck with a draconic muzzle. Align jaw, teeth and crest with the skull."
+tiefling = "Show where horns meet the skull and how a tail articulates at the pelvis."
+aasimar = "Humanlike anatomy, with celestial markings or a luminous feature chosen by the GM."
+goliath = "Tall, broad frame. Scale reach, equipment and clothing to the figure."
+half_elf = "Blend traits individually, such as subtly tapered ears, following campaign canon."
+half_orc = "Vary tusk size and jaw shape. Give each character individual proportions and features."
