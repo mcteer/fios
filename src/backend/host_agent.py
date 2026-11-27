@@ -54,8 +54,18 @@ def main():
     parser.add_argument("--node", required=True, choices=NODES)
     parser.add_argument("--directory", type=Path, default=OBSERVATIONS)
     parser.add_argument("--watch", action="store_true", help="Repeat every five seconds")
+    parser.add_argument("--remote", help="Approved management IPv4 address")
+    parser.add_argument("--server-name", help="Approved core certificate SAN")
+    parser.add_argument("--port", type=int, default=8742)
+    for name in ("ca", "cert", "key"):
+        parser.add_argument(f"--{name}", type=Path)
+    parser.add_argument("--test-loopback", action="store_true")
     args = parser.parse_args()
     try:
+        if args.remote:
+            from .worker import from_args
+            from_args(args).run(observe)
+            return
         while True:
             publish(args.directory, observe(args.node))
             if not args.watch:

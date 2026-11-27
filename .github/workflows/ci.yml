@@ -21,9 +21,14 @@ jobs:
 
       - name: Validate Spec Kit artifacts
         env:
-          SPECIFY_FEATURE_DIRECTORY: specs/001-platform-foundation
           SPECIFY_FEATURE_NO_PERSIST: "1"
-        run: bash .specify/scripts/bash/check-prerequisites.sh --json --require-spec --require-tasks
+        run: |
+          for feature in specs/001-platform-foundation specs/002-studio-enrollment; do
+            SPECIFY_FEATURE_DIRECTORY="$feature" bash .specify/scripts/bash/check-prerequisites.sh --json --require-spec --require-tasks
+          done
+
+      - name: Run portable machine enrollment tests
+        run: make enrollment-test
 
       - name: Validate Compose and build the dashboard image
         run: |
@@ -38,4 +43,4 @@ jobs:
             --mount "type=bind,src=$PWD/tests,dst=/app/tests,readonly" \
             --mount "type=bind,src=$PWD/src/agent,dst=/app/src/agent,readonly" \
             --mount "type=bind,src=$PWD/src/backend/host_agent.py,dst=/app/backend/host_agent.py,readonly" \
-            fios-ci python -B -m unittest discover -s tests -v
+            fios-ci python -B -m unittest discover -s tests -p test_foundation.py -v

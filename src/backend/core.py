@@ -9,7 +9,8 @@ import time
 
 from frontend.dashboard import STYLE, render
 
-from .inventory import NODES, OBSERVATIONS, read_node
+from .inventory import OBSERVATIONS, read_node
+from .studio_inventory import studio_nodes
 
 
 def permitted(role, operation):
@@ -73,7 +74,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path not in {"/", "/api/v1/cluster"}:
             return self.reply(404, b"Unknown resource\n")
         now = int(time.time())
-        nodes = [read_node(self.server.directory, node, now) for node in NODES]
+        nodes = [read_node(self.server.directory, "fios-core", now)]
+        nodes.extend(studio_nodes(self.server.snapshot_port))
         if self.path == "/":
             return self.reply(200, render(nodes, now), "text/html; charset=utf-8")
         body = dict(version=1, observed_at=now, nodes=nodes)
@@ -85,17 +87,20 @@ class Handler(BaseHTTPRequestHandler):
     do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = do_HEAD = method_denied
 
 
-def create_server(directory, port=8741):
+def create_server(directory, port=8741, snapshot_port=8743):
     server = HTTPServer(("127.0.0.1", port), Handler)
     server.directory = directory
+    server.snapshot_port = snapshot_port
     return server
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", type=Path, default=OBSERVATIONS)
+    parser.add_argument("--port", type=int, default=8741)
+    parser.add_argument("--snapshot-port", type=int, default=8743)
     args = parser.parse_args()
-    with create_server(args.directory) as server:
+    with create_server(args.directory, args.port, args.snapshot_port) as server:
         print(f"fios listening on http://127.0.0.1:{server.server_port}", flush=True)
         try:
             server.serve_forever()

@@ -6,6 +6,8 @@ src/backend/**
 !src/backend/__init__.py
 !src/backend/core.py
 !src/backend/inventory.py
+!src/backend/studio_inventory.py
+!src/backend/wire.py
 !src/frontend/
 src/frontend/**
 !src/frontend/__init__.py
