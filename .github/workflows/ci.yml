@@ -23,7 +23,7 @@ jobs:
         env:
           SPECIFY_FEATURE_NO_PERSIST: "1"
         run: |
-          for feature in specs/001-platform-foundation specs/002-studio-enrollment specs/003-job-ledger-scheduling; do
+          for feature in specs/001-platform-foundation specs/002-studio-enrollment specs/003-job-ledger-scheduling specs/004-private-chat-coding; do
             SPECIFY_FEATURE_DIRECTORY="$feature" bash .specify/scripts/bash/check-prerequisites.sh --json --require-spec --require-tasks
           done
 
@@ -32,6 +32,20 @@ jobs:
 
       - name: Run portable scheduler tests
         run: make scheduling-test
+
+      - name: Run portable private chat tests
+        run: make chat-test
+
+      - name: Validate the dedicated management and chat container definitions
+        env:
+          FIOS_INVENTORY_ID: fios-core
+          FIOS_OBSERVATIONS_DIR: .fios/observations
+          FIOS_CHAT_BRIDGE_PORT: "8744"
+          FIOS_CHAT_BRIDGE_KEY_FILE: /dev/null
+        run: |
+          docker compose -f compose.management.yaml config --quiet
+          docker compose -f compose.yaml -f compose.chat.yaml config --quiet
+          PYTHONPATH=src python3 -B -m unittest discover -s tests -p test_management_agent.py -v
 
       - name: Validate Compose and build the dashboard image
         run: |

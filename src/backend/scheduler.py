@@ -12,8 +12,11 @@ MIB = 1024**2
 
 
 class Scheduler:
-    def __init__(self, jobs, enrollment):
+    def __init__(self, jobs, enrollment, *, catalog=None):
         self.jobs, self.enrollment = jobs, enrollment
+        self.catalog = catalog
+        self.dispatch = None
+        self.local_session = None
         self.clock = enrollment.clock
         initial_wall, initial_elapsed = enrollment.wall(), self.clock()
 
@@ -33,11 +36,37 @@ class Scheduler:
                 self.stop(db, row, "failed", "core_restart")
             db.execute("UPDATE holds SET kind='cleanup',grant=NULL,session=NULL,epoch=NULL")
 
+    def open_local_session(self):
+        """Called by the private channel after checking the Mini worker's OS identity."""
+        if self.catalog is None:
+            raise Rejected("scheduling_unavailable", 503)
+        with self.enrollment.lock:
+            self.local_session = secrets.token_hex(16)
+            self.capacity.pop("fios-core", None)
+            return self.local_session
+
+    def local_capacity(self, session, data):
+        with self.enrollment.lock:
+            if self.local_session is None or session != self.local_session:
+                raise Rejected("session", 409)
+            if data.keys() != {"sequence", "sampled_at", "available_bytes", "resident_revision",
+                               "memory_bytes", "pressure"}:
+                raise Rejected("invalid")
+            memory = integer(data["memory_bytes"], 1, 2**63 - 1)
+            return self.store_capacity("fios-core", session, data, memory)
+
     def session(self, slot):
+        if slot == "fios-core":
+            return self.local_session
         return self.enrollment.sessions.get(slot, (None, 0, 0))[0]
 
     def fresh(self, slot):
         evidence = self.capacity.get(slot)
+        if slot == "fios-core":
+            if (evidence and self.local_session == evidence["session"]
+                    and self.clock() <= evidence["expires"]):
+                return evidence
+            return None
         heartbeat, deadline = self.enrollment.observations.get(slot, (None, 0))
         session, highest, _ = self.enrollment.sessions.get(slot, (None, 0, 0))
         now = self.clock()
@@ -56,6 +85,20 @@ class Scheduler:
         """Commit fencing independently of any subsequent rejected worker request."""
         with self.enrollment.lock, self.jobs.transaction() as db:
             now, wall = self.clock(), self.wall()
+            if self.catalog is not None:
+                rows = db.execute("SELECT * FROM jobs WHERE state IN ('queued','preparing','running')")
+                for row in rows.fetchall():
+                    intent = json.loads(row["intent"])
+                    if intent["resource_class"] == "inference" and not self.inference_profile(db, intent):
+                        self.stop(db, row, "failed", "profile_unavailable")
+                expired_streams = db.execute("""
+                    SELECT jobs.*, a.ticket FROM chat_attachments a
+                    JOIN jobs ON jobs.id=a.job WHERE a.expires<=?
+                    AND jobs.state IN ('queued','preparing','running')
+                """, (wall,)).fetchall()
+                for row in expired_streams:
+                    reason = "stream_disconnected" if row["ticket"] else "stream_unattached"
+                    self.stop(db, row, "cancelled", reason)
             for row in db.execute("SELECT * FROM jobs WHERE state='queued' AND expires<=?",
                                   (wall,)).fetchall():
                 self.stop(db, row, "expired", "job_deadline")
@@ -75,15 +118,24 @@ class Scheduler:
                     self.stop(db, row, outcome, reason)
 
     def set_capacity(self, slot, session, data):
-        seq = integer(data["sequence"], 1, 2**63 - 1)
-        now, wall = self.clock(), int(self.enrollment.wall())
-        sampled = integer(data["sampled_at"], max(1, wall - 30), wall + 5)
         sample, _ = self.enrollment.observations.get(slot, (None, 0))
         if not sample or not self.enrollment.sessions[slot][1]:
             raise Rejected("missing_heartbeat", 409)
-        available = integer(data["available_bytes"], 0, sample["memory_bytes"])
+        return self.store_capacity(slot, session, data, sample["memory_bytes"])
+
+    def store_capacity(self, slot, session, data, memory):
+        seq = integer(data["sequence"], 1, 2**63 - 1)
+        now, wall = self.clock(), int(self.enrollment.wall())
+        sampled = integer(data["sampled_at"], max(1, wall - 30), wall + 5)
+        available = integer(data["available_bytes"], 0, memory)
         revision = data["resident_revision"]
-        if revision not in (None, RESIDENT):
+        pressure = data.get("pressure")
+        if self.catalog is None:
+            if revision not in (None, RESIDENT):
+                raise Rejected("invalid")
+        elif (pressure not in ("normal", "warning", "critical")
+              or (revision is not None and (not isinstance(revision, str) or len(revision) != 64
+                                             or any(char not in "0123456789abcdef" for char in revision)))):
             raise Rejected("invalid")
         prior = self.capacity.get(slot)
         same_session = prior and prior["session"] == session
@@ -92,13 +144,35 @@ class Scheduler:
         same_resident = (same_session and prior["revision"] == revision
                          and now <= prior["expires"])
         self.capacity[slot] = dict(session=session, sequence=seq, available=available,
-                                   revision=revision, sampled_at=sampled, received=now,
+                                   revision=revision, pressure=pressure, sampled_at=sampled, received=now,
                                    expires=now + 30 - max(0, wall - sampled),
                                    idle=prior["idle"] if same_resident else now)
         return {}
 
+    def inference_profile(self, db, intent):
+        if self.catalog is None:
+            return None
+        profile = self.catalog.active(db, intent["alias"])
+        expected_policy = self.dispatch.policy_revision if self.dispatch else None
+        if (profile and profile["revision"] == intent["profile"] and profile["output"] == intent["tokens"]
+                and (expected_policy is None or expected_policy == profile["policy"])):
+            return profile
+        return None
+
     def eligible(self, db, intent, *, check_holds=True):
         held = {row[0] for row in db.execute("SELECT slot FROM holds")} if check_holds else set()
+        if intent["resource_class"] == "inference":
+            profile = self.inference_profile(db, intent)
+            if not profile:
+                return []
+            fit = []
+            for slot, peak in profile["peaks"].items():
+                cap = self.fresh(slot)
+                if slot not in held and cap and cap["pressure"] == "normal" and cap["available"] >= peak:
+                    fit.append((cap["revision"] != profile["revision"], slot))
+            return [min(fit)[1]] if fit else []
+        if self.catalog is not None:
+            return []
         fit = []
         for slot in STUDIOS:
             cap = self.fresh(slot)
@@ -176,12 +250,15 @@ class Scheduler:
         row = db.execute("SELECT * FROM jobs WHERE id=?", (hold["job"],)).fetchone()
         if slot in json.loads(row["receipts"]):
             return {"action": "wait", "delay": 2}
-        return {"action": "start" if row["state"] == "running" else "prepare",
-                "job": row["id"], "generation": row["generation"], "grant": hold["grant"],
+        result = {"action": "start" if row["state"] == "running" else "prepare",
+                  "job": row["id"], "generation": row["generation"], "grant": hold["grant"],
                 "epoch": self.epoch, "profile": json.loads(row["intent"])["profile"],
                 "reporter": row["reporter"] == slot,
                 "remaining": max(0, min(hold["lease"] - self.clock(),
                                         row["expires"] - self.wall()))}
+        if self.catalog is not None:
+            result["job_remaining"] = max(0, row["expires"] - self.wall())
+        return result
 
     def challenge(self, slot, session):
         challenge = self.challenges.get(slot)
@@ -220,6 +297,30 @@ class Scheduler:
                 self.jobs.transition(db, job["id"], job["outcome"], job["reason"])
         return {"clean_ack": (session, token, sequence)}
 
+    def require_grant(self, hold, row, session, grant):
+        if (not hold or hold["kind"] != "job" or hold["session"] != session
+                or hold["grant"] != grant or hold["epoch"] != self.epoch
+                or self.clock() >= hold["lease"] or self.wall() >= row["expires"]
+                or row["state"] not in ACTIVE):
+            raise Rejected("fenced", 409)
+
+    def authorize_payload(self, db, slot, session, data):
+        job = identifier(data["job"])
+        row = db.execute("SELECT * FROM jobs WHERE id=?", (job,)).fetchone()
+        if (not row or row["state"] != "running" or data["epoch"] != self.epoch
+                or integer(data["generation"], 1, 2**63 - 1) != row["generation"]
+                or session != self.session(slot)):
+            raise Rejected("fenced", 409)
+        intent = json.loads(row["intent"])
+        if intent["resource_class"] != "inference":
+            raise Rejected("fenced", 409)
+        profile = self.inference_profile(db, intent)
+        if not profile or slot not in profile["peaks"]:
+            raise Rejected("fenced", 409)
+        hold = db.execute("SELECT * FROM holds WHERE slot=? AND job=?", (slot, job)).fetchone()
+        self.require_grant(hold, row, session, identifier(data["grant"]))
+        return profile
+
     def assignment(self, db, operation, slot, session, data):
         job, grant = identifier(data["job"]), identifier(data["grant"])
         generation = integer(data["generation"], 1, 2**63 - 1)
@@ -228,28 +329,36 @@ class Scheduler:
         row = db.execute("SELECT * FROM jobs WHERE id=?", (job,)).fetchone()
         if row is None or row["generation"] != generation:
             raise Rejected("fenced", 409)
+        intent = json.loads(row["intent"])
+        profile = None
+        if intent["resource_class"] == "inference":
+            profile = self.inference_profile(db, intent)
+            if not profile or slot not in profile["peaks"]:
+                raise Rejected("fenced", 409)
         receipts = json.loads(row["receipts"])
         hold = db.execute("SELECT * FROM holds WHERE slot=? AND job=?", (slot, job)).fetchone()
         settlement = None
         if operation == "finish":
-            if data["result"] not in ("ok", "failed"):
+            allowed = ("ok", "failed", "withheld") if profile else ("ok", "failed")
+            if data["result"] not in allowed:
                 raise Rejected("invalid")
             if "usage" in data and row["reporter"] != slot:
                 raise Rejected("usage_authority", 403)
-            counts = usage_counts(data.get("usage", {}), json.loads(row["intent"])["tokens"])
+            input_limit = profile["context"] - profile["output"] if profile else None
+            counts = usage_counts(data.get("usage", {}), intent["tokens"], input_limit=input_limit)
             settlement = dict(session=session, grant=grant, epoch=self.epoch,
                               result=data["result"], usage=counts)
             if slot in receipts:
                 if receipts[slot] != settlement:
                     raise Rejected("conflict", 409)
                 return {"accepted": True}
-        if (not hold or hold["kind"] != "job" or hold["session"] != session
-                or hold["grant"] != grant or hold["epoch"] != self.epoch
-                or self.clock() >= hold["lease"] or self.wall() >= row["expires"]
-                or row["state"] not in ACTIVE):
-            raise Rejected("fenced", 409)
-        if operation in ("ready", "renew") and not self.fresh(slot):
-            raise Rejected("stale_capacity", 409)
+        self.require_grant(hold, row, session, grant)
+        if operation in ("ready", "renew"):
+            capacity = self.fresh(slot)
+            if not capacity or (profile and capacity["pressure"] != "normal"):
+                raise Rejected("stale_capacity", 409)
+            if profile and operation == "ready" and capacity["available"] < profile["peaks"][slot]:
+                raise Rejected("stale_capacity", 409)
         if operation == "ready":
             db.execute("UPDATE holds SET ready=1 WHERE slot=?", (slot,))
             peers = db.execute("SELECT slot,ready,lease FROM holds WHERE job=?", (job,)).fetchall()
@@ -265,14 +374,23 @@ class Scheduler:
         else:
             if row["state"] != "running":
                 raise Rejected("not_started", 409)
+            if profile and settlement["result"] == "ok":
+                if (self.dispatch is None or not db.execute(
+                        "SELECT 1 FROM content.segments WHERE job=? AND policy=?",
+                        (job, profile["policy"])).fetchone()):
+                    raise Rejected("unpublished", 409)
             receipts[slot] = settlement
             db.execute("UPDATE jobs SET receipts=? WHERE id=?", (encoded(receipts), job))
             if row["reporter"] == slot:
                 db.execute("UPDATE jobs SET usage=? WHERE id=?", (encoded(settlement["usage"]), job))
             if settlement["result"] == "failed":
                 self.stop(db, row, "failed", "worker_failed")
-            elif len(receipts) == PROFILES[json.loads(row["intent"])["profile"]]:
+            elif settlement["result"] == "withheld":
+                self.stop(db, row, "denied", "publication_withheld")
+            elif len(receipts) == (1 if profile else PROFILES[intent["profile"]]):
                 self.jobs.transition(db, job, "succeeded", "completed")
+                if profile:
+                    self.dispatch.conversations.reconcile(db)
                 db.execute("UPDATE holds SET kind='cleanup',grant=NULL WHERE job=?", (job,))
             return {"accepted": True}
         return {}

@@ -1,0 +1,28 @@
+name: fios-management
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.management
+    command: ["--node", "${FIOS_INVENTORY_ID:?set fios-core, studio-a, or studio-b}"]
+    network_mode: host
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 16
+    volumes:
+      - type: bind
+        source: "${FIOS_OBSERVATIONS_DIR:?set the native observation directory}"
+        target: /observations
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "-Bc", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8745/healthz', timeout=2).read()"]
+      interval: 15s
+      timeout: 4s
+      retries: 3

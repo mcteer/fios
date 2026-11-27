@@ -13,8 +13,8 @@ from .wire import read_reply
 
 
 class CoreConnection(http.client.HTTPConnection):
-    def __init__(self, address, port, server_name, tls):
-        super().__init__(address, port, timeout=2)
+    def __init__(self, address, port, server_name, tls, *, timeout=2):
+        super().__init__(address, port, timeout=timeout)
         self.server_name, self.tls = server_name, tls
 
     def connect(self):
@@ -29,10 +29,10 @@ class Reporter:
         self.session = None
         self.sequence = 0
 
-    def request(self, path, body):
-        connection = CoreConnection(*self.target)
+    def request(self, path, body, *, timeout=2):
+        connection = CoreConnection(*self.target, timeout=timeout)
         try:
-            deadline = time.monotonic() + 2
+            deadline = time.monotonic() + timeout
             connection.request("POST", path, json.dumps(body, allow_nan=False).encode("ascii"),
                                {"Content-Type": "application/json", "Connection": "close"})
             return read_reply(connection.sock, deadline, 4096)

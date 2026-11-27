@@ -1,0 +1,21 @@
+# Opt-in browser access. The native services are managed independently.
+services:
+  core:
+    command:
+      - python
+      - -B
+      - -m
+      - backend.core
+      - --directory
+      - /observations
+      - --chat-port
+      - "${FIOS_CHAT_BRIDGE_PORT:?set the native loopback chat bridge port}"
+      - --chat-key
+      - /run/fios/chat.key
+    volumes:
+      - type: bind
+        source: "${FIOS_CHAT_BRIDGE_KEY_FILE:?set the path to the UI-only bridge key}"
+        target: /run/fios/chat.key
+        read_only: true
+        bind:
+          create_host_path: false

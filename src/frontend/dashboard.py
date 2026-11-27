@@ -21,7 +21,7 @@ def state_label(host):
             "unknown": "Telemetry unavailable"}.get(host.get("enrollment"), STATES[host["state"]])
 
 
-def render(nodes, now):
+def render(nodes, now, *, chat=False):
     cards = []
     for host in nodes:
         sample = host["observation"]
@@ -45,4 +45,5 @@ def render(nodes, now):
         )
     count = sum(host["state"] == "reporting" for host in nodes)
     return PAGE.substitute(cards="".join(cards), reporting=count, total=len(nodes),
-                           checked=timestamp(now)).encode()
+                           checked=timestamp(now),
+                           chat='<a href="/chat">Private chat</a>' if chat else "").encode()

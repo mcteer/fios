@@ -14,3 +14,9 @@ src/frontend/**
 !src/frontend/dashboard.py
 !src/frontend/overview.html
 !src/frontend/style.css
+
+!src/backend/chat_bridge.py
+!src/frontend/chat.html
+!src/frontend/chat.js
+!src/backend/management_agent.py
+!src/backend/local_access.py
