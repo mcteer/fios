@@ -64,6 +64,14 @@ python3 -B -m backend.enroll --socket '/Library/Application Support/fios/enrollm
 
 For planned root rotation, stage the verified new public root beside the old on both sides, restart with the dual bundle, replace the core leaf and rotate one worker at a time. After confirming both workers report with the new chain, remove the old root everywhere and restart the services. For a compromised root, stop the listener, remove the compromised root on all endpoints, issue new leaves offline and reapprove them via the independent provisioning channel. For a failed Studio rollout, revoke the affected binding, unload that worker's system job and remove its staged artifact. Preserve the verified current ledger and its retired pins. The other worker can keep reporting.
 
+## Qualify the job scheduler
+
+Run `make scheduling-test` for deterministic ledger and scheduler tests. On `fios-core`, run `make scheduling-acceptance` for the native operator CLI and two synthetic workers over mutual TLS. It uses disposable state and checks the existing preview before and after the run.
+
+Synthetic scheduling requires `--test-loopback --synthetic-scheduling` on `backend.enroll serve` and a private ledger initialized with `backend.enroll job-init --state-dir PATH`. Use the existing `--socket PATH` operator interface. Read `job-context`, then pass its incarnation with the original key and request to `job-submit`. Reuse that complete envelope on retry and stop on `ledger_changed`. The per-operator waiting queue holds 16 jobs. A full queue returns a five-second retry hint.
+
+Use `job-backup --state-dir PATH --target FILE` and `job-restore --state-dir PATH --snapshot FILE` with the native service stopped. Both paths must be private and owned by the operator. Restore rotates the ledger incarnation, quarantines both slots and invalidates snapshot jobs that may have already executed. Resume admission only after each worker authenticates, confirms cleanup and supplies fresh capacity. Review the history before explicitly scheduling replacement work. To disable scheduling, cancel or settle active jobs, confirm cleanup, and restart the enrollment service without the synthetic scheduling flag. [Spec 3 interfaces](specs/003-job-ledger-scheduling/contracts/dispatch.md)
+
 ## Development record
 
 - [Feature specification](specs/001-platform-foundation/spec.md) defines the initial delivery and the product journeys.

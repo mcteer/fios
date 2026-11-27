@@ -1,0 +1,37 @@
+# Implementation plan for the core job ledger and scheduler
+
+**Feature** · 003-job-ledger-scheduling · 2026-11-27 · [Specification](spec.md)
+
+## Summary
+
+On fios-core, extend the native enrollment process with an opt-in local job service. A durable ledger accepts bounded fake jobs from the operator, atomically assigns one or both synthetic workers, and records transitions and usage. Each worker pulls a typed assignment whose generation and lease limit its authority. Acceptance runs entirely on the Mini.
+
+## Technical context and structure
+
+Reuse Python 3.11+, SQLite, unittest, the operator Unix socket in `src/backend/enroll.py`, the enrollment authority in `src/backend/enrollment.py`, TLS request handling in `src/backend/heartbeat.py` and client transport in `src/backend/worker.py`. Extend enrollment with a narrow current-session validation operation. Keep job and worker code in `src/backend/`. The dashboard and AI harness require no new privileges.
+
+New `job_ledger.py` owns schema, normalized requests, events, reservations and usage. `scheduler.py` owns placement, lease transitions, time and reconciliation. `job_protocol.py` maps local and worker operations to those methods. `tests/fixtures/scheduling_worker.py` implements the fake executor. See [research](research.md), [entities](data-model.md), [interfaces](contracts/dispatch.md) and [qualification](quickstart.md).
+
+## Transactions, admission and time
+
+1. Explicitly initialize a separately versioned job database in the private service state directory. Validate ownership and schema. Enable foreign keys on every connection. On missing or incompatible scheduling storage, close scheduling and keep enrollment available. A single native service owns both boundaries. Use the enrollment lock first, then a short job transaction. Never perform worker I/O inside either. A 250 ms busy timeout returns a retryable failure without a grant.
+2. Issue a durable ledger incarnation through job-context. Compare the caller’s expected incarnation inside the write transaction before consulting submission keys. A stale envelope gets a non-retryable ledger_changed conflict. Commit normalized intent, unique owner/key and creation event together. Default to 16 queued jobs per owner and 32 globally. Initial synthetic profiles define single and paired topology with fixed immutable revisions. Relative deadlines range from 1 to 3,600 seconds, token limits from 1 to the profile maximum. Return the existing job on a matching retry within that incarnation, including after a timeout or ordinary restart. Serve stored state and compute waiting reason on read or admission.
+3. On poll, select oldest eligible queued job by creation position. Prefer already resident revision, then stable slot ID. Skip jobs blocked on topology or memory so eligible work can progress. Paired jobs can wait under sustained single-host demand. Use unique active holds per slot, including during cleanup/unload. Commit all selected slots, attempt, grants and event before returning any instruction. The second worker discovers its own prepared reservation by polling.
+4. Fence at equality with the lease deadline or job deadline. Run expiry on a bounded one-second maintenance tick and before each mutating operation. Worker and core track elapsed lease time locally without comparing remote elapsed clocks. Persist absolute job expiry for restart. Do not persist monotonic timestamps as restart evidence. On ordinary startup keep the ledger incarnation and assign a new process epoch, retain queued jobs subject to their original deadlines, fence all nonterminal issued grants and reconcile all active holds. New sessions or revoked identities invalidate grants before the next operation. No external side effects can be atomically committed with SQLite. Uncertain work terminates failed after reconciliation and requires a new explicit submission to run again.
+5. Mark idle unload as an exclusive slot hold within the same transaction and lock ordering as admission. Bind the unload to the observed resident revision, session and a fresh command ID. Require worker acknowledgment plus fresh capacity before reuse. Recheck grant, epoch and stopped state immediately before the fake executor applies any instruction. Resident changes or disconnects invalidate the previous idle timer.
+6. For the preview, cap retained jobs at 10,000. Keep events to actual transitions and accepted terminal metering, excluding poll/renew churn. Deny new submissions at the cap. On storage exhaustion stop issuing new work, fence expiring grants and require reconciliation after recovery. No live ledger deletion, automatic retry of uncertain work or unverified restoration.
+
+## Threat review and acceptance
+
+| Risk | Control and evidence |
+| --- | --- |
+| Forged owner, role, slot or lease | OS peer for operator, mutual TLS and current bound session for worker, per-participant grants and immutable owner. Exercise all unauthorized methods, cross-slot completion and cross-owner reads. |
+| Duplicate commits, clock changes or split pair | Unique keys, transaction rollback, epoch fencing, per-slot holds and start barrier. Inject busy/failed commit, lost replies and crash at grant/start/finish. |
+| Stale memory or competing idle command | Fresh measured headroom, conditional reservation, exclusive unload and post-cleanup capacity. Test exact expiry boundaries and simultaneous poll/unload. |
+| Runaway work, sensitive logs or inflated usage | Typed fake profiles, bounded queue/report limits, fixed diagnostics, unique metering reporter, exact units and scoped history. Deduplicate tagged counts at settlement. Separate estimated and unknown directions from measured totals and charges, and label partial totals. Redacted records must survive restart. |
+
+**Rollout and recovery.** Default scheduling off. On fios-core start a separate test service, database and two synthetic peers. Run [acceptance](quickstart.md) and record results in tasks. Close admission and fence/reconcile assignments before disabling the feature. Rehearse SQLite backup/restore in a disposable directory. Restore offline into a private staging database. In one transaction generate a fresh random incarnation, invalidate restored queued and issued work as specified in the data model, and persist quarantine holds for both slots. Close and validate the staged database before atomically activating it with the service stopped. Never start the service directly on a raw backup. On failure before activation, leave the original ledger intact. On restart after activation, honor the committed quarantine and incarnation. Discard old sessions and grants, require fresh proof of quiescence before admission, and surface that history after the snapshot is unknown. Restoring the same snapshot twice generates two distinct incarnations. Never infer safe replay from the snapshot. Preserve the preview and enrollment database.
+
+## Constitution check
+
+Pre-design and post-design checks pass for scope. Configured hardware, fresh observations and held resources remain distinct. Only the core grants work. The worker validates each typed operation locally. The private trust boundary has denial and recovery scenarios. All qualification uses fios-core, with scoped teardown on normal exit and interrupt. Live Studio rollout, model execution and workload publication remain under their existing later gates.

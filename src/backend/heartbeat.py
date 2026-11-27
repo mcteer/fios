@@ -141,7 +141,9 @@ class Listener:
         self.pool.shutdown()
 
 
-def worker_handler(ledger, context):
+def worker_handler(ledger, context, scheduler=None):
+    from .job_protocol import WORKER_ROUTES, worker
+
     def handle(raw, _peer, deadline):
         timeout(raw, deadline)
         try:
@@ -152,7 +154,7 @@ def worker_handler(ledger, context):
         with conn:
             try:
                 method, target, headers, remaining = read_request(conn, deadline)
-                if target not in ROUTES:
+                if target not in ROUTES and not (scheduler and target in WORKER_ROUTES):
                     raise Rejected("route", 404)
                 if method != "POST":
                     raise Rejected("method", 405)
@@ -172,7 +174,9 @@ def worker_handler(ledger, context):
                 if time.time() >= expires:
                     raise Rejected("identity", 403)
                 pin = fingerprint(conn.getpeercert(binary_form=True))
-                if target == "/v1/sessions":
+                if target in WORKER_ROUTES:
+                    reply(conn, deadline, 200, worker(scheduler, target, node, pin, data))
+                elif target == "/v1/sessions":
                     if data.keys() != {"version", "node"} or type(data["version"]) is not int or data["version"] != 1:
                         raise Rejected("invalid")
                     session = ledger.open_session(node, pin)

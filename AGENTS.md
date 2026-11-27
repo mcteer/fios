@@ -66,7 +66,13 @@ After understanding the complete scope, choose the first option that fully works
 - Design cohesive, deep modules: narrow public interfaces that conceal implementation complexity and concentrate invariants. Extract abstractions for real variation, shared knowledge, consequential side effects, or explicit contracts—not speculative flexibility. A wrapper must reduce complexity for its callers.
 - Prefer explicit data flow, strong typing where supported, immutability where practical, pure logic where useful, and isolated side effects. Inject dependencies at meaningful seams. Avoid gratuitous layers, factories, configuration, services, and premature distribution.
 - Use consistent domain language. Resolve overloaded terms through scenarios; update the glossary when terminology changes. Record material architecture decisions in ADRs (context, alternatives, decision, consequences). Create documentation only for durable information.
-- Preserve public contracts and existing architecture; favor backward compatibility. Explain non-obvious rationale in comments. Document intentional shortcuts with their limit and concrete revisit trigger; never defer mandatory security controls.
+- Preserve public contracts and existing architecture. Favor backward compatibility. Document intentional shortcuts with their limit and concrete revisit trigger. Never defer mandatory security controls.
+
+### Code comments and docstrings
+
+- Write comments as part of each change. Place them beside code that relies on a non-obvious invariant, ordering constraint, unit, timeout, ownership rule, or failure assumption. Give special attention to authorization, concurrency, retries, and recovery.
+- Use docstrings or the language's documentation convention for new public interfaces whose callers need to know side effects, error behavior, or usage constraints. Keep routine code readable through clear names and structure. Skip comments that merely restate the code.
+- Review comments and docstrings with the implementation. Update or remove any that become stale, and verify that descriptions of security and reliability guarantees match the code and tests.
 
 ## 5. Implement and test in tight loops
 

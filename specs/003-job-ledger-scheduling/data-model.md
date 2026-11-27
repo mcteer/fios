@@ -1,0 +1,26 @@
+# Ledger, worker state and invariants
+
+Job data, attempts, participant reservations, metering and events live in the job database. Enrollment pins and revocation records stay in the Spec 2 store. A core process epoch invalidates grants across restarts. Durable slot holds survive epochs.
+
+| Field | Rule |
+| --- | --- |
+| `Ledger.incarnation` | Fresh random 128-bit identifier on initialization and each snapshot restore. Durable across ordinary restarts. Used to validate submissions independently of the process epoch that fences worker grants. |
+| `Job.id` | Core-generated opaque unique identifier. |
+| `Job.owner` | Server-derived principal. Bootstrap uses one stable local operator ID. |
+| `Job.request_key` | 1–64 ASCII letters, digits, underscores or hyphens. Unique with owner for the lifetime of the retained job. |
+| `Job.intent` | Immutable normalized request including approved profile revision, optional owner-scoped Project reference, resource class, requested limits and deadline. Same key with different intent conflicts. Project references are disabled until ownership can be verified. |
+| `Job.state` | queued, preparing, running, stopping, succeeded, failed, cancelled or expired. Terminal states never transition. |
+| `Attempt.generation` | Positive increasing integer scoped to the job. Each grant includes the new process epoch and generation. |
+| `Reservation.slot` | studio-a or studio-b, exclusive across active attempts, reconciliation holds and idle unloads. One participant row per slot per attempt. |
+| `Reservation.grant` | Random per-participant capability bound to slot, job, generation, epoch and current authenticated session. Persist its verifier or a protected re-deliverable grant. Exclude from client reads, events and logs. |
+| `Capacity.evidence` | Matching current certificate/session, fresh v1 heartbeat and strictly advancing capacity sequence. Measurement age at most 30 s, future skew at most 5 s, using Spec 2 expiry semantics. Includes worker-observed available bytes and resident revision. Require a new report after cleanup. |
+| `Usage.counts` | Each direction is independently tagged measured, estimated or unknown. Measured and estimated carry a nonnegative integer, including zero. Unknown carries no value. Normalize an omitted direction to unknown. One immutable settlement per attempt from its designated reporter. Both tags and values must agree on replay. |
+| `Event.position` | Durable increasing cursor. Record owner-scoped job ID, state transition, fixed reason and time in the same transaction. |
+
+**Admission.** A fixed profile table on core defines topology, per-host weight bytes, incremental workspace/KV demand, reserve margin, token limits and allowed revision. Available bytes are current free headroom after existing allocations, including resident weights. Subtract the configured safety margin and only incremental demand. Charge weights on a cold host, zero incremental weight for the exact resident revision. Never add expected future unload savings. Synthetic reports must fit physical RAM. A missing, inconsistent or stale report gives zero capacity.
+
+**State transitions.** Submission creates queued. Admission creates preparing plus all holds. Each participant can acknowledge readiness independently. All ready permits running. A final valid successful completion from all participants makes the job succeeded. Queued cancellation/timeout goes directly terminal. From preparing/running, cancellation, timeout, participant failure, trust change or core restart fences execution and enters stopping with a durable intended outcome. Each slot stays held until authenticated cleanup confirmation and fresh capacity evidence. Once all holds clear, stopping becomes cancelled, expired or failed according to the recorded cause. Even after success, retain a per-slot cleanup hold until cleanup and new capacity arrive. Operator cancellation racing an already terminal job returns its recorded state. Absent positive cleanup evidence the hold persists across restarts.
+
+**Restore boundary.** Only the explicit offline restore procedure activates a snapshot. Before activation, rotate the incarnation, fence grants, quarantine both slots and record restore invalidation of every nonterminal snapshot job. Queued jobs become failed with reason `restore_history_unknown`. Issued jobs enter or remain in stopping with that outcome pending cleanup. Preserve terminal history and never automatically requeue invalidated jobs.
+
+**Usage and history.** Raw content, results, certificates and lease secrets are excluded from history. Store optional tariff revision and integer per-unit prices in an explicit currency. Sum measured counts by direction. Show estimates separately. Mark measured totals partial when any contributing direction lacks measurement. Price only measured directions with an approved tariff using exact decimal arithmetic. Display a measured subtotal as partial when a priced direction is estimated or unknown, and leave cost unknown when there is no priced measurement. For paired workloads designate one aggregate reporter at grant time. Retain finalized records and idempotency keys together. On ledger size limit refuse new work with a visible reason, while reserving space for settlement. Never purge an active obligation.
