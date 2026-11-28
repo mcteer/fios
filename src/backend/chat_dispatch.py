@@ -21,11 +21,12 @@ OPERATIONS = {
 
 
 class Dispatch:
-    def __init__(self, scheduler, conversations, checker, *, policy_revision=None):
+    def __init__(self, scheduler, conversations, checker, *, policy_revision=None, long_context=False):
         self.scheduler = scheduler
         self.conversations = conversations
         self.checker = checker
         self.policy_revision = policy_revision
+        self.policy_deadline = 63 if long_context else 12
 
     def handle(self, operation, slot, session, data, *, authorize_peer):
         if operation not in OPERATIONS or data.keys() != OPERATIONS[operation]:

@@ -10,8 +10,8 @@ import subprocess
 
 from backend.enrollment import Rejected, STUDIOS, private_path
 from backend.job_ledger import integer
-from backend.pair_trial import digest
-from .macos_memory import footprint
+from backend.pair_trial import GIB, LARGE_FLOOR, PAIR_ONLY, digest
+from .macos_memory import footprint, headroom
 from .native_runtime import NativeRuntime
 
 
@@ -23,9 +23,21 @@ class PairedRuntime(NativeRuntime):
         if len(raw) > 64 * 1024:
             raise ValueError("Paired runtime configuration exceeds its limit")
         config = json.loads(raw)
-        if not isinstance(config, dict) or config.keys() != {"runtime", "devices", "coordinator", "port", "fixtures"}:
+        fields = {"runtime", "devices", "coordinator", "port", "fixtures"}
+        if not isinstance(config, dict) or config.keys() not in (fields, fields | {"large_stage"}):
             raise ValueError("Invalid paired runtime configuration")
-        super().__init__(Path(config["runtime"]), state, purpose="inference")
+        self.large_stage = config.get("large_stage")
+        probe = None
+        if "large_stage" in config:
+            if (not isinstance(self.large_stage, dict) or self.large_stage.keys() != {"stage", "artifact"}
+                    or self.large_stage["stage"] not in ("probe", "full")):
+                raise ValueError("Invalid large-model stage")
+            if self.large_stage["stage"] == "probe":
+                probe = digest(self.large_stage["artifact"])
+        super().__init__(Path(config["runtime"]), state, purpose="inference", probe_artifact=probe,
+                         pair_only=self.large_stage is not None)
+        if self.large_stage and self.large_stage["artifact"] != self.staged_artifact:
+            raise ValueError("Pinned large-model stage does not match staged files")
         if self.entry != "mlx_lm.server" or node not in STUDIOS:
             raise ValueError("Paired runtime requires a Studio and a verified MLX-LM environment")
         self.rank = STUDIOS.index(node)
@@ -52,11 +64,14 @@ class PairedRuntime(NativeRuntime):
                 raise ValueError("Unexpected reviewed fixture digest")
             data = json.loads(fixture)
             if (not isinstance(data, dict) or set(data) != {"prompt", "expected"}
-                    or any(not isinstance(value, str) or not value for value in data.values())):
+                    or not isinstance(data["prompt"], str) or not data["prompt"]
+                    or (data["expected"] is not None
+                        and (not isinstance(data["expected"], str) or not data["expected"]))):
                 raise ValueError("Invalid reviewed fixture")
             self.fixtures[checksum] = data
         self.prepared = None
         self.trial_ceiling = None
+        self.resource_budget = None
         self.link_required = False
 
     def prepare(self, offer):
@@ -65,16 +80,31 @@ class PairedRuntime(NativeRuntime):
         trial = offer.get("trial")
         if trial and (trial["engine"] != "mlx-lm" or trial["fixture"] not in self.fixtures):
             raise Rejected("invalid_recipe", 409)
+        if self.large_stage:
+            self.check_large_offer(trial or offer.get("pair"))
+        elif trial and "placement" in trial:
+            raise Rejected("invalid_recipe", 409)
         assignment = trial or offer["pair"]
         if assignment["device"] != self.device_fingerprint:
             raise Rejected("profile_changed", 409)
         self.link_required = not trial or trial["world_size"] == 2
         self.check_link()
-        self.trial_ceiling = trial["budget"]["ceiling"] if trial else None
+        self.trial_ceiling = (trial or assignment)["budget"]["ceiling"] if trial or self.large_stage else None
+        self.resource_budget = None
         rank = assignment["rank"]
         if rank != self.rank and not (trial and trial["world_size"] == 1 and rank == 0):
             raise Rejected("fenced", 409)
         self.prepared = (offer["job"], offer["generation"], offer["grant"], trial, offer.get("pair"))
+
+    def check_large_offer(self, trial):
+        if (not trial or trial.get("placement") != PAIR_ONLY or trial.get("world_size") != 2
+                or trial.get("rank") != self.rank
+                or trial.get("stage") != self.large_stage["stage"]
+                or trial.get("artifact") != self.profile_document["artifact"]
+                or trial.get("staged_artifact") != self.staged_artifact):
+            raise Rejected("large_trial_placement", 409)
+        floor = integer(trial["budget"]["floor"], LARGE_FLOOR, 256 * GIB)
+        integer(trial["budget"]["ceiling"], 1, 256 * GIB - floor)
 
     def check_link(self):
         if not self.link_required:
@@ -111,6 +141,8 @@ class PairedRuntime(NativeRuntime):
             fixture = self.fixtures[trial["fixture"]]
             messages = [{"role": "user", "content": fixture["prompt"]}] if rank == 0 else None
             expected = fixture["expected"]
+            if (expected is None) != ("review" in trial):
+                raise Rejected("invalid_recipe", 409)
             output_limit = min(output_limit, trial["tokens"])
         elif payload is None:
             messages = None
@@ -142,11 +174,42 @@ class PairedRuntime(NativeRuntime):
         work = dict(rank=rank, world_size=world, messages=messages, expected=expected,
                     input_limit=input_limit, output_limit=output_limit, identity=identity,
                     no_thinking=self.no_thinking, temperature=self.temperature)
-        child = self.spawn("agent.jaccl_executor", (str(self.model),), env, capture=True)
-        stdout, _ = child.communicate(json.dumps(work).encode("utf-8"), timeout=remaining)
+        if self.large_stage:
+            budget = (trial or pair)["budget"]
+            from .moe_watchdog import swap_used
+
+            self.resource_budget = dict(
+                memory=int(subprocess.check_output(["/usr/sbin/sysctl", "-n", "hw.memsize"],
+                                                   timeout=1)), baseline=swap_used(),
+                floor=budget["floor"], ceiling=budget["ceiling"])
+            available, pressure = headroom(self.resource_budget["memory"])
+            if pressure != "normal" or available < sum(budget.values()):
+                raise Rejected("unsafe_rank_resources", 409)
+            work["watchdog"] = self.resource_budget
+            work["staged_artifact"] = self.staged_artifact
+            if trial and "review" in trial:
+                work["review"] = True
+        if self.large_stage:
+            from .rank_monitor import supervised_rank
+
+            def start(observer):
+                return self.spawn("agent.jaccl_executor", (str(self.model),), env, capture=True,
+                                  observers=(observer,))
+
+            child, stdout, observation = supervised_rank(start, work, remaining)
+        else:
+            child = self.spawn("agent.jaccl_executor", (str(self.model),), env, capture=True)
+            stdout, _ = child.communicate(json.dumps(work).encode("utf-8"), timeout=remaining)
+        if child.returncode == 65 and self.large_stage:
+            raise Rejected("context_limit", 413)
+        if child.returncode == 78 and self.large_stage:
+            raise Rejected("unsafe_rank_resources", 409)
         if child.returncode or len(stdout) > 96 * 1024:
             raise Rejected("runtime_failure", 503)
-        return json.loads(stdout)
+        result = json.loads(stdout)
+        if self.large_stage:
+            result["diagnostics"]["phase_observation"] = observation
+        return result
 
     def check_budget(self):
         with self.lock:
@@ -161,9 +224,17 @@ class PairedRuntime(NativeRuntime):
                 return
             if peak >= self.trial_ceiling:
                 raise Rejected("trial_budget", 409)
+            if self.resource_budget:
+                from .moe_watchdog import swap_used
+
+                available, pressure = headroom(self.resource_budget["memory"])
+                if (pressure != "normal" or available < self.resource_budget["floor"]
+                        or swap_used() > self.resource_budget["baseline"]):
+                    raise Rejected("unsafe_rank_resources", 409)
 
     def run_trial(self, offer, deadline):
-        return self.launch_rank(offer, None, deadline)["diagnostics"]
+        result = self.launch_rank(offer, None, deadline)
+        return (result["answer"], result["diagnostics"]) if "review" in offer["trial"] else result["diagnostics"]
 
     def run_chat(self, offer, payload, deadline):
         result = self.launch_rank(offer, payload, deadline)

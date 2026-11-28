@@ -20,10 +20,11 @@ def require_approved(check, purpose, text):
 class LoopbackPolicy:
     """Call a separately qualified local policy service using a fixed contract."""
 
-    def __init__(self, port):
+    def __init__(self, port, *, long_context=False):
         if type(port) is not int or not 1 <= port <= 65535:
             raise ValueError("Invalid policy port")
         self.port = port
+        self.timeout = 30.25 if long_context else 5.25
 
     def __call__(self, purpose, text, revision):
         if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{64}", revision):
@@ -32,7 +33,7 @@ class LoopbackPolicy:
                           ensure_ascii=True).encode("ascii")
         if len(body) > 1024 * 1024:
             return False
-        client = HTTPConnection("127.0.0.1", self.port, timeout=5.25)
+        client = HTTPConnection("127.0.0.1", self.port, timeout=self.timeout)
         try:
             client.request("POST", "/v1/classify", body, {"Content-Type": "application/json"})
             with client.getresponse() as response:

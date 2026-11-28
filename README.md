@@ -107,3 +107,9 @@ Run `make chat-test` for portable verification. On fios-core, `make chat-accepta
 Spec 005 uses a private JACCL link between the two Studios. Paired jobs acquire both reservations before starting. The reporter alone retrieves conversation text and submits an answer. The Mini commits the answer after both ranks complete and their transport records agree.
 
 Use `make pair-test` for the portable suite and `make pair-acceptance` on fios-core for the disposable native services. The hardware guide covers the matched model workload, authenticated leases, failure tests and release checks. Disable a paired alias with `model-withdraw` and its expected revision. The workers fence and clean both rank processes before either slot is reused. [Spec 005 hardware validation](specs/005-paired-studio-inference/quickstart.md)
+
+### Large MoE qualification
+
+Spec 006 reserves both Studios for a large mixture-of-experts model. Fios-core coordinates requests and publication. The private **Large MoE** choice requires an approved hardware report for the exact weights, runtime, tokenizer, checker and Studio pair. Its limit is 8,192 total tokens, including up to 1,024 generated tokens.
+
+Use `make moe-test` for placement, budget and evidence tests, and `make moe-acceptance` on fios-core for the disposable services and WebKit check. The hardware procedure covers the separate probe and full-pack approvals, rank and link interruptions, actual browser timings, withdrawal and cleanup. [Spec 006 qualification guide](specs/006-large-moe-qualification/quickstart.md)

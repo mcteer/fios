@@ -176,7 +176,7 @@ class JobLedger:
                           "resource_class": "synthetic", "project": None})
         return self.submit_intent(owner, expected, key, intent, deadline)
 
-    def submit_intent(self, owner, expected, key, intent, deadline):
+    def submit_intent(self, owner, expected, key, intent, deadline, *, validate=None):
         """Deduplicate a validated intent before consuming queue capacity."""
         with self.transaction() as db:
             if expected != self.incarnation(db):
@@ -187,6 +187,8 @@ class JobLedger:
                 if existing["intent"] != intent:
                     raise Rejected("conflict", 409)
                 return {"id": existing["id"], "state": existing["state"]}
+            if validate is not None:
+                validate(db)
             return self.enqueue(db, owner, key, intent, deadline)
 
     def enqueue(self, db, owner, key, intent, deadline):
@@ -275,6 +277,10 @@ class JobLedger:
         """Caller holds the offline service lock throughout staging and activation."""
         with self.transaction(write=False) as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
+            has_large_candidates = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='large_candidates'").fetchone()
+            pair_only = (db.execute("SELECT revision,artifact,manifest FROM large_candidates").fetchall()
+                         if has_large_candidates else ())
         snapshot = JobLedger(snapshot, wall=self.wall)
         with tempfile.TemporaryDirectory(prefix="job-restore-", dir=self.path.parent) as folder:
             staged = Path(folder) / self.path.name
@@ -301,6 +307,13 @@ class JobLedger:
                 # A snapshot can predate an operator withdrawal or a failed trial.
                 if db.execute("SELECT 1 FROM sqlite_master WHERE name='model_aliases'").fetchone():
                     db.execute("DELETE FROM model_aliases")
+                if pair_only:
+                    # Restoring an older ledger must not erase the placement
+                    # classification of artifacts registered since the snapshot.
+                    from .model_catalog import Catalog
+
+                    Catalog.initialize_tables(db)
+                    db.executemany("INSERT OR IGNORE INTO large_candidates VALUES (?,?,?)", pair_only)
                 db.executemany("INSERT OR IGNORE INTO holds(slot,kind) VALUES (?,'cleanup')",
                                [(slot,) for slot in executors])
             JobLedger(staged, wall=self.wall)

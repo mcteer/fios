@@ -57,3 +57,18 @@ class JacclTransportTests(unittest.TestCase):
         self.assertEqual(observer.operations, 0)
         with self.assertRaisesRegex(ValueError, "No completed"):
             observer.evidence(attempt="one", candidate="a" * 64, device="b" * 64)
+
+    def test_large_path_checks_gather_and_collective_order(self):
+        def report(rank, order):
+            core, group, evaluated, output = self.core(rank)
+            core.distributed.all_gather = core.distributed.all_sum
+            observer = JacclTransport(core, rank)
+            with observer.observe_forward_passes(observe_all_gather=True):
+                for method in order:
+                    getattr(core.distributed, method)(SimpleNamespace(nbytes=32), group=group)
+            self.assertEqual(evaluated, [output] * 2)
+            return observer.evidence(attempt="one", candidate="a" * 64, device=str(rank) * 64)
+
+        order = ["all_sum", "all_gather"]
+        self.assertTrue(paired_rdma(report(0, order), report(1, order)))
+        self.assertFalse(paired_rdma(report(0, order), report(1, order[::-1])))

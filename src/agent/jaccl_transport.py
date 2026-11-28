@@ -15,34 +15,40 @@ class JacclTransport:
         self.sequence = sha256()
 
     @contextmanager
-    def observe_forward_passes(self):
-        """Observe this process's tensor-parallel all-reduces, excluding initialization."""
+    def observe_forward_passes(self, *, observe_all_gather=False):
+        """Count completed model collectives on the assigned group."""
         core = self.core
-        original = core.distributed.all_sum
+        names = ("all_sum", "all_gather") if observe_all_gather else ("all_sum",)
+        originals = {name: getattr(core.distributed, name) for name in names}
 
-        def observed(array, *, group=None, stream=None):
-            if group is not self.group:
-                raise ValueError("Unapproved collective group during inference")
-            result = original(array, group=group, stream=stream)
-            # MLX is lazy. Returning an unevaluated result would count a call
-            # whose payload might never reach the peer or might fail later.
-            core.eval(result)
-            if array.nbytes:
-                self.sequence.update(array.nbytes.to_bytes(8, "big"))
-                self.operations += 1
-                self.input_bytes += array.nbytes
-            return result
+        def instrument(name, original):
+            def observed(array, *, group=None, stream=None):
+                if group is not self.group:
+                    raise ValueError("Unapproved collective group during inference")
+                result = original(array, group=group, stream=stream)
+                # MLX is lazy. Count only a transfer that completed.
+                core.eval(result)
+                if array.nbytes:
+                    if observe_all_gather:
+                        self.sequence.update(name.encode("ascii"))
+                    self.sequence.update(array.nbytes.to_bytes(8, "big"))
+                    self.operations += 1
+                    self.input_bytes += array.nbytes
+                return result
+            return observed
 
-        core.distributed.all_sum = observed
         try:
+            for name, original in originals.items():
+                setattr(core.distributed, name, instrument(name, original))
             yield
         finally:
-            core.distributed.all_sum = original
+            for name, original in originals.items():
+                setattr(core.distributed, name, original)
 
     def evidence(self, *, attempt, candidate, device):
         if not self.operations:
             raise ValueError("No completed JACCL model traffic")
-        # A two-member all-reduce exchanges payload in both directions.
+        # Two-member all-reduce and all-gather exchange payload in both directions.
         # The ordered sizes match across ranks without exposing model data.
         transfer_id = self.sequence.hexdigest()[:40]
         return dict(attempt=attempt, candidate=candidate, device=device, transfers=[

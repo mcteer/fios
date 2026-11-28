@@ -130,7 +130,8 @@ def execute(argv):
                 child.wait(timeout=5)
 
 
-def compare(local, candidate, *, leases=False, leases_only=False, link_window=False, web_only=False):
+def compare(local, candidate, *, leases=False, leases_only=False, link_window=False, web_only=False,
+            qualification_ledger=None, checker_port=None, checker_revision=None):
     remote_dir = "/private/tmp/fios-jaccl-model-" + secrets.token_hex(8)
     port = str(47000 + secrets.randbelow(10000))
     created = set()
@@ -239,12 +240,21 @@ def compare(local, candidate, *, leases=False, leases_only=False, link_window=Fa
         matches = sum(a == b for a,b in zip(tokens(baseline), tokens(ranks[0]), strict=True))
         print(f"Matched single/pair token sequences: {matches} of 9", flush=True)
         verify_serving_entry()
+        if any(not entry["correct"] for report in [baseline, *ranks] for entry in report["records"]):
+            raise ValueError("Candidate failed one or more quality or context checks")
+        comparison = None
+        if qualification_ledger:
+            if matches != 9:
+                raise ValueError("Comparable qualification requires matching generated tokens")
+            seconds = max(record["first_s"] for report in [baseline, *ranks]
+                          for record in report["records"] if record.get("first_s") is not None)
+            comparison = dict(worst_latency_ms=round(seconds * 1000), latency_limit_ms=15_000)
         if leases:
             from jaccl_lease_trial import run_leases
             run_leases(HOSTS, OPTIONS, remote, remote_dir, int(port) + 2, candidate == "qwen3",
-                       link_window=link_window, web_only=web_only)
-        if any(not entry["correct"] for report in [baseline, *ranks] for entry in report["records"]):
-            raise ValueError("Candidate failed one or more quality or context checks")
+                       link_window=link_window, web_only=web_only,
+                       qualification_ledger=qualification_ledger, checker_port=checker_port,
+                       checker_revision=checker_revision, comparison=comparison)
     finally:
         def clean(host):
             if host in created:
@@ -266,7 +276,13 @@ if __name__ == "__main__":
         parser.add_argument("--leases-only", action="store_true")
         parser.add_argument("--link-window", action="store_true")
         parser.add_argument("--web-only", action="store_true")
+        parser.add_argument("--qualification-ledger", type=Path)
+        parser.add_argument("--checker-port", type=int)
+        parser.add_argument("--checker-revision")
         args = parser.parse_args()
+        if args.qualification_ledger and (not args.leases or not args.link_window or args.leases_only
+                                         or args.web_only or not args.checker_port or not args.checker_revision):
+            parser.error("Export requires the complete comparison, physical link trial and real checker")
         if args.stage_weights:
             stage_weights(args.stage_weights, args.candidate)
         else:
@@ -283,6 +299,9 @@ if __name__ == "__main__":
                 (local / "devices.json").write_text(json.dumps([[None, ["rdma_en5"]], [["rdma_en5"], None]]))
                 if args.leases or args.leases_only or args.web_only:
                     shutil.copytree(ROOT / "src", local / "src", ignore=shutil.ignore_patterns("__pycache__"))
-                    shutil.copyfile(Path(__file__).with_name("jaccl_lease_trial.py"), local / "jaccl_lease_trial.py")
+                    for name in ("jaccl_lease_trial.py", "arm_jaccl_link.sh"):
+                        shutil.copyfile(Path(__file__).with_name(name), local / name)
                 compare(local, args.candidate, leases=args.leases, leases_only=args.leases_only or args.web_only,
-                        link_window=args.link_window, web_only=args.web_only)
+                        link_window=args.link_window, web_only=args.web_only,
+                        qualification_ledger=args.qualification_ledger,
+                        checker_port=args.checker_port, checker_revision=args.checker_revision)
