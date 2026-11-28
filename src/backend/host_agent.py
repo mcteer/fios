@@ -61,9 +61,15 @@ def main():
         parser.add_argument(f"--{name}", type=Path)
     parser.add_argument("--test-loopback", action="store_true")
     parser.add_argument("--inference-config", type=Path)
+    parser.add_argument("--pair-config", type=Path)
     parser.add_argument("--inference-socket", type=Path)
     parser.add_argument("--runtime-state", type=Path)
+    parser.add_argument("--recover-orbstack", action="store_true")
     args = parser.parse_args()
+    if args.recover_orbstack and (not args.watch or args.remote or args.inference_config):
+        parser.error("OrbStack recovery requires the native telemetry watch process")
+    if args.pair_config and (not args.inference_config or not args.remote or args.node == "fios-core"):
+        parser.error("Paired execution requires an enrolled native Studio worker")
     try:
         if args.inference_config:
             from agent.inference_worker import run_host
@@ -73,10 +79,20 @@ def main():
             from .worker import from_args
             from_args(args).run(observe)
             return
+        recovery = None
+        state = None
+        if args.recover_orbstack:
+            from .orbstack_recovery import OrbStackRecovery
+            recovery = OrbStackRecovery(Path("/usr/local/bin/orb"), Path("/usr/local/bin/docker"))
         while True:
             publish(args.directory, observe(args.node))
             if not args.watch:
                 break
+            if recovery:
+                current = recovery.check()
+                if current != state:
+                    print(f"OrbStack dependency {current}", flush=True)
+                    state = current
             time.sleep(5)
     except KeyboardInterrupt:
         pass

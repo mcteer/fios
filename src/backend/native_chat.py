@@ -75,21 +75,24 @@ def browser_handler(scheduler, secret, inventory=None):
     from .heartbeat import read_request, reply
     from .job_ledger import identifier
     from .job_protocol import OWNER
+    from .model_catalog import ALIASES
     from .wire import read_exact
 
     store = scheduler.dispatch.conversations
 
     def action_result(action, data):
         fields = {
-            "catalog": (), "history": ("before",), "conversation": ("id",),
+            "catalog": (), "pair-status": (), "history": ("before",), "conversation": ("id",),
             "create": ("key",), "delete": ("id",), "stop": ("job",),
             "stream": ("id", "job", "ticket"),
             "submit": ("id", "incarnation", "key", "parent", "alias", "prompt", "inventory"),
         }
         if not isinstance(action, str) or action not in fields or data.keys() != set(fields[action]):
             raise Rejected("invalid")
+        if action == "pair-status":
+            return scheduler.pair_status()
         with scheduler.enrollment.lock, scheduler.jobs.transaction(write=False) as db:
-            profiles = {alias: scheduler.catalog.active(db, alias) for alias in ("general-chat", "coding")}
+            profiles = {alias: scheduler.catalog.active(db, alias) for alias in ALIASES}
             policies = {item["policy"] for item in profiles.values() if item}
             policy = scheduler.dispatch.policy_revision
             if policy is None and len(policies) == 1:

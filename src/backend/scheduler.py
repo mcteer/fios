@@ -5,6 +5,7 @@ import secrets
 
 from .enrollment import Rejected, STUDIOS
 from .job_ledger import ACTIVE, PROFILES, RESIDENT, encoded, identifier, integer, usage_counts
+from .pair_trial import digest, paired_rdma, recipe_name, recipes, transport_observation, trial_measurement
 
 LEASE = 15
 IDLE = 60
@@ -12,9 +13,11 @@ MIB = 1024**2
 
 
 class Scheduler:
-    def __init__(self, jobs, enrollment, *, catalog=None):
+    def __init__(self, jobs, enrollment, *, catalog=None, trial_recipes=None, trial_hardware=False):
         self.jobs, self.enrollment = jobs, enrollment
         self.catalog = catalog
+        self.trial_hardware = trial_hardware
+        self.trial_recipes = recipes({} if trial_recipes is None else trial_recipes)
         self.dispatch = None
         self.local_session = None
         self.clock = enrollment.clock
@@ -89,7 +92,9 @@ class Scheduler:
                 rows = db.execute("SELECT * FROM jobs WHERE state IN ('queued','preparing','running')")
                 for row in rows.fetchall():
                     intent = json.loads(row["intent"])
-                    if intent["resource_class"] == "inference" and not self.inference_profile(db, intent):
+                    if intent["resource_class"] == "pair_trial" and not self.trial_recipe(intent):
+                        self.stop(db, row, "failed", "profile_unavailable")
+                    elif intent["resource_class"] == "inference" and not self.inference_profile(db, intent):
                         self.stop(db, row, "failed", "profile_unavailable")
                 expired_streams = db.execute("""
                     SELECT jobs.*, a.ticket FROM chat_attachments a
@@ -145,9 +150,31 @@ class Scheduler:
                          and now <= prior["expires"])
         self.capacity[slot] = dict(session=session, sequence=seq, available=available,
                                    revision=revision, pressure=pressure, sampled_at=sampled, received=now,
+                                   pair_capable=data.get("version") == 2,
                                    expires=now + 30 - max(0, wall - sampled),
                                    idle=prior["idle"] if same_resident else now)
         return {}
+
+    def submit_trial(self, owner, data):
+        name, candidate = recipe_name(data["recipe"]), digest(data["candidate"])
+        approved = self.trial_recipes.get(name)
+        if self.catalog is None or not approved or approved["candidate"] != candidate:
+            raise Rejected("trial_unavailable", 409)
+        intent = encoded(dict(resource_class="pair_trial", profile=candidate,
+                              recipe=name, review=approved, tokens=approved["tokens"],
+                              hardware=self.trial_hardware))
+        return self.jobs.submit_intent(owner, identifier(data["incarnation"]), recipe_name(data["key"]),
+                                       intent, approved["deadline"])
+
+    def trial_recipe(self, intent):
+        reviewed = self.trial_recipes.get(intent["recipe"])
+        return reviewed if reviewed == intent["review"] else None
+
+    def trial_capacity(self, slot, budget, *, preparing):
+        cap = self.fresh(slot)
+        required = budget["floor"] + (budget["ceiling"] if preparing else 0)
+        return (cap and cap["pair_capable"] and cap["pressure"] == "normal"
+                and cap["available"] >= required)
 
     def inference_profile(self, db, intent):
         if self.catalog is None:
@@ -170,7 +197,16 @@ class Scheduler:
                 cap = self.fresh(slot)
                 if slot not in held and cap and cap["pressure"] == "normal" and cap["available"] >= peak:
                     fit.append((cap["revision"] != profile["revision"], slot))
+            if "devices" in profile:
+                return list(STUDIOS) if (len(fit) == len(STUDIOS)
+                                         and all(self.fresh(slot)["pair_capable"] for slot in STUDIOS)) else []
             return [min(fit)[1]] if fit else []
+        if intent["resource_class"] == "pair_trial":
+            approved = self.trial_recipe(intent)
+            if approved and all(slot not in held and self.trial_capacity(slot, budget, preparing=True)
+                                for slot, budget in approved["budgets"].items()):
+                return sorted(approved["budgets"])
+            return []
         if self.catalog is not None:
             return []
         fit = []
@@ -185,7 +221,45 @@ class Scheduler:
         count = PROFILES[intent["profile"]]
         return [slot for _, slot in sorted(fit)[:count]] if len(fit) >= count else []
 
-    def describe(self, owner, *, job=None, after=0):
+    def pair_status(self):
+        """Return bounded operator diagnostics without conversation or lease identifiers."""
+        self.sweep()
+        with self.enrollment.lock, self.jobs.transaction(write=False) as db:
+            active = self.catalog.active(db, "paired-coding") if self.catalog else None
+            row = db.execute("""
+                SELECT jobs.* FROM jobs
+                WHERE json_extract(intent,'$.resource_class')='pair_trial'
+                   OR json_extract(intent,'$.alias')='paired-coding'
+                ORDER BY CASE WHEN state IN ('preparing','running','stopping') THEN 0
+                              WHEN state='queued' THEN 1 ELSE 2 END, position DESC
+                LIMIT 1
+            """).fetchone()
+            state, reason = ("unavailable", "unqualified") if not active else ("available", "ready")
+            if active and not self.eligible(db, dict(resource_class="inference", alias="paired-coding",
+                                                    profile=active["revision"], tokens=active["output"])):
+                state, reason = "unavailable", "waiting_capacity"
+            ranks = [{"slot": slot, "fresh": bool(self.fresh(slot)), "phase": "idle"} for slot in STUDIOS]
+            if row:
+                current, reason = row["state"], row["reason"]
+                states = dict(queued="queued", preparing="preparing", running="running",
+                              stopping="cleaning", failed="degraded", expired="degraded")
+                state = states.get(current, state)
+                holds = {entry["slot"]: entry for entry in
+                         db.execute("SELECT slot,kind,ready FROM holds WHERE job=?", (row["id"],))}
+                receipts = json.loads(row["receipts"])
+                for rank in ranks:
+                    slot = rank["slot"]
+                    hold = holds.get(slot)
+                    if hold:
+                        rank["phase"] = "cleaning" if hold["kind"] == "cleanup" else (
+                            "ready" if hold["ready"] else "reserved")
+                    if slot in receipts:
+                        transfers = receipts[slot].get("transport_evidence", {}).get("transfers", [])
+                        if transfers:
+                            rank["transport"] = ",".join(sorted({entry["transport"] for entry in transfers}))
+            return dict(state=state, reason=reason, ranks=ranks)
+
+    def describe(self, owner, *, job=None, after=0, diagnostics=False):
         """Compute queue reasons against one snapshot of evidence and holds."""
         with self.enrollment.lock, self.jobs.transaction(write=False) as db:
             rows = ([self.jobs.owned(db, owner, job)] if job else db.execute(
@@ -202,18 +276,29 @@ class Scheduler:
                         view["reason"] = "waiting_worker_poll"
                     elif self.eligible(db, intent, check_holds=False):
                         view["reason"] = "waiting_slots"
+                if diagnostics and view["intent"]["resource_class"] == "pair_trial":
+                    # Receipts also store credentials for idempotent replay.
+                    # The operator view only needs results and transport evidence.
+                    view["ranks"] = {
+                        slot: {key: receipt[key] for key in ("result", "transport_evidence", "trial_measurement")
+                               if key in receipt}
+                        for slot, receipt in json.loads(row["receipts"]).items()
+                    }
                 views.append(view)
             return views
 
-    def allocate(self, db, caller):
+    def allocate(self, db, caller, *, pair_capable=False):
         # Only grant for the chosen slot's poll. An ineligible caller cannot move
         # the queue or create a reservation on another worker's behalf.
         rows = db.execute("SELECT * FROM jobs WHERE state='queued' AND expires>? ORDER BY position",
                           (self.wall(),)).fetchall()
         for row in rows:
             intent = json.loads(row["intent"])
+            if intent["resource_class"] == "pair_trial" and not pair_capable:
+                continue
             slots = self.eligible(db, intent)
-            if caller not in slots:
+            if caller not in slots or (len(slots) > 1 and intent["resource_class"] == "inference"
+                                       and not pair_capable):
                 # A younger job may use a different eligible slot.
                 continue
             job = row["id"]
@@ -227,10 +312,10 @@ class Scheduler:
             self.jobs.transition(db, job, "preparing", "reserved")
             return
 
-    def poll(self, db, slot, session):
+    def poll(self, db, slot, session, *, pair_capable=False):
         hold = db.execute("SELECT * FROM holds WHERE slot=?", (slot,)).fetchone()
         if hold is None and self.fresh(slot) and not self.jobs.restoring(db):
-            self.allocate(db, slot)
+            self.allocate(db, slot, pair_capable=pair_capable)
             hold = db.execute("SELECT * FROM holds WHERE slot=?", (slot,)).fetchone()
             cap = self.fresh(slot)
             if hold is None and cap["revision"] and self.clock() - cap["idle"] >= IDLE:
@@ -256,6 +341,22 @@ class Scheduler:
                 "reporter": row["reporter"] == slot,
                 "remaining": max(0, min(hold["lease"] - self.clock(),
                                         row["expires"] - self.wall()))}
+        intent = json.loads(row["intent"])
+        if intent["resource_class"] == "pair_trial":
+            approved = self.trial_recipe(intent)
+            if not pair_capable or not approved:
+                raise Rejected("protocol_version", 409)
+            result["trial"] = dict(recipe=intent["recipe"], fixture=approved["fixture"],
+                                   engine=approved["engine"], budget=approved["budgets"][slot],
+                                   device=approved["devices"][slot], tokens=approved["tokens"],
+                                   world_size=len(approved["budgets"]),
+                                   rank=sorted(approved["budgets"]).index(slot))
+        if intent["resource_class"] == "inference":
+            profile = self.inference_profile(db, intent)
+            if profile and "devices" in profile:
+                if not pair_capable:
+                    raise Rejected("protocol_version", 409)
+                result["pair"] = dict(rank=STUDIOS.index(slot), device=profile["devices"][slot])
         if self.catalog is not None:
             result["job_remaining"] = max(0, row["expires"] - self.wall())
         return result
@@ -315,13 +416,23 @@ class Scheduler:
         if intent["resource_class"] != "inference":
             raise Rejected("fenced", 409)
         profile = self.inference_profile(db, intent)
-        if not profile or slot not in profile["peaks"]:
+        if not profile or slot not in profile["peaks"] or row["reporter"] != slot:
             raise Rejected("fenced", 409)
         hold = db.execute("SELECT * FROM holds WHERE slot=? AND job=?", (slot, job)).fetchone()
         self.require_grant(hold, row, session, identifier(data["grant"]))
+        if "devices" in profile:
+            peer_slot = STUDIOS[1]
+            peer = db.execute("SELECT * FROM holds WHERE job=? AND slot=?", (job, peer_slot)).fetchone()
+            receipt = json.loads(row["receipts"]).get(peer_slot)
+            if not peer or peer["kind"] != "job" or peer["session"] != self.session(peer_slot):
+                raise Rejected("fenced", 409)
+            if not receipt:
+                self.require_grant(peer, row, self.session(peer_slot), peer["grant"])
+            elif receipt["result"] != "ok":
+                raise Rejected("fenced", 409)
         return profile
 
-    def assignment(self, db, operation, slot, session, data):
+    def assignment(self, db, operation, slot, session, data, *, pair_capable=False):
         job, grant = identifier(data["job"]), identifier(data["grant"])
         generation = integer(data["generation"], 1, 2**63 - 1)
         if data["epoch"] != self.epoch:
@@ -335,6 +446,14 @@ class Scheduler:
             profile = self.inference_profile(db, intent)
             if not profile or slot not in profile["peaks"]:
                 raise Rejected("fenced", 409)
+        paired = profile and "devices" in profile
+        if paired and not pair_capable:
+            raise Rejected("protocol_version", 409)
+        trial = None
+        if intent["resource_class"] == "pair_trial":
+            trial = self.trial_recipe(intent)
+            if not pair_capable or not trial or slot not in trial["budgets"]:
+                raise Rejected("fenced", 409)
         receipts = json.loads(row["receipts"])
         hold = db.execute("SELECT * FROM holds WHERE slot=? AND job=?", (slot, job)).fetchone()
         settlement = None
@@ -342,12 +461,30 @@ class Scheduler:
             allowed = ("ok", "failed", "withheld") if profile else ("ok", "failed")
             if data["result"] not in allowed:
                 raise Rejected("invalid")
-            if "usage" in data and row["reporter"] != slot:
+            if "usage" in data and (trial or row["reporter"] != slot):
                 raise Rejected("usage_authority", 403)
             input_limit = profile["context"] - profile["output"] if profile else None
             counts = usage_counts(data.get("usage", {}), intent["tokens"], input_limit=input_limit)
             settlement = dict(session=session, grant=grant, epoch=self.epoch,
                               result=data["result"], usage=counts)
+            if "trial_measurement" in data:
+                if not trial:
+                    raise Rejected("trial_measurement_authority", 403)
+                settlement["trial_measurement"] = trial_measurement(
+                    data["trial_measurement"], ceiling=trial["budgets"][slot]["ceiling"],
+                    deadline=trial["deadline"], tokens=trial["tokens"])
+            if "failure" in data:
+                if (not (trial or paired) or data["result"] != "failed"
+                        or data["failure"] != "transport_unavailable"):
+                    raise Rejected("invalid_failure")
+                settlement["failure"] = data["failure"]
+            evidence = data.get("transport_evidence")
+            pair = profile if paired else trial if trial and len(trial["budgets"]) == 2 else None
+            if pair and data["result"] == "ok":
+                settlement["transport_evidence"] = transport_observation(
+                    evidence, candidate=intent["profile"], device=pair["devices"][slot], attempt=job)
+            elif "transport_evidence" in data:
+                raise Rejected("invalid_transport")
             if slot in receipts:
                 if receipts[slot] != settlement:
                     raise Rejected("conflict", 409)
@@ -357,6 +494,9 @@ class Scheduler:
             capacity = self.fresh(slot)
             if not capacity or (profile and capacity["pressure"] != "normal"):
                 raise Rejected("stale_capacity", 409)
+            if trial and not self.trial_capacity(slot, trial["budgets"][slot],
+                                                preparing=row["state"] == "preparing"):
+                raise Rejected("stale_capacity", 409)
             if profile and operation == "ready" and capacity["available"] < profile["peaks"][slot]:
                 raise Rejected("stale_capacity", 409)
         if operation == "ready":
@@ -364,6 +504,12 @@ class Scheduler:
             peers = db.execute("SELECT slot,ready,lease FROM holds WHERE job=?", (job,)).fetchall()
             if row["state"] == "preparing" and all(
                     peer["ready"] and self.fresh(peer["slot"]) and self.clock() < peer["lease"]
+                    and (not paired or (
+                        self.fresh(peer["slot"])["pair_capable"]
+                        and self.fresh(peer["slot"])["pressure"] == "normal"
+                        and self.fresh(peer["slot"])["available"] >= profile["peaks"][peer["slot"]]))
+                    and (not trial or self.trial_capacity(peer["slot"], trial["budgets"][peer["slot"]],
+                                                         preparing=True))
                     for peer in peers):
                 self.jobs.transition(db, job, "running", "all_ready")
         elif operation == "renew":
@@ -374,26 +520,47 @@ class Scheduler:
         else:
             if row["state"] != "running":
                 raise Rejected("not_started", 409)
-            if profile and settlement["result"] == "ok":
+            if profile and row["reporter"] == slot and settlement["result"] == "ok":
                 if (self.dispatch is None or not db.execute(
                         "SELECT 1 FROM content.segments WHERE job=? AND policy=?",
                         (job, profile["policy"])).fetchone()):
                     raise Rejected("unpublished", 409)
             receipts[slot] = settlement
             db.execute("UPDATE jobs SET receipts=? WHERE id=?", (encoded(receipts), job))
-            if row["reporter"] == slot:
+            if not trial and not paired and row["reporter"] == slot:
                 db.execute("UPDATE jobs SET usage=? WHERE id=?", (encoded(settlement["usage"]), job))
             if settlement["result"] == "failed":
-                self.stop(db, row, "failed", "worker_failed")
+                self.stop(db, row, "failed", settlement.get("failure", "worker_failed"))
             elif settlement["result"] == "withheld":
                 self.stop(db, row, "denied", "publication_withheld")
-            elif len(receipts) == (1 if profile else PROFILES[intent["profile"]]):
+            elif (paired and len(receipts) == 2) or (trial and len(receipts) == len(trial["budgets"])):
+                self.complete_pair_work(db, row, receipts, trial=bool(trial))
+            elif not trial and not paired and len(receipts) == (1 if profile else PROFILES[intent["profile"]]):
                 self.jobs.transition(db, job, "succeeded", "completed")
                 if profile:
                     self.dispatch.conversations.reconcile(db)
                 db.execute("UPDATE holds SET kind='cleanup',grant=NULL WHERE job=?", (job,))
             return {"accepted": True}
         return {}
+
+    def complete_pair_work(self, db, row, receipts, *, trial):
+        if len(receipts) == 2 and not paired_rdma(
+                *(receipts[slot]["transport_evidence"] for slot in STUDIOS)):
+            self.stop(db, row, "failed", "transport_mismatch")
+            return
+        if trial:
+            passed = all(receipt.get("trial_measurement", {}).get("fixture_passed", True)
+                         for receipt in receipts.values())
+            self.stop(db, row, "succeeded" if passed else "failed",
+                      "trial_completed" if passed else "fixture_failed")
+            return
+        # The final receipt and approved content become visible in the same
+        # transaction. A reporter-first result cannot settle usage by itself.
+        job = row["id"]
+        db.execute("UPDATE jobs SET usage=? WHERE id=?", (encoded(receipts[row["reporter"]]["usage"]), job))
+        self.jobs.transition(db, job, "succeeded", "completed")
+        self.dispatch.conversations.reconcile(db)
+        db.execute("UPDATE holds SET kind='cleanup',grant=NULL WHERE job=?", (job,))
 
     def cancel(self, owner, job):
         with self.enrollment.lock:

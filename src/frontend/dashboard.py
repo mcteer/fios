@@ -21,7 +21,7 @@ def state_label(host):
             "unknown": "Telemetry unavailable"}.get(host.get("enrollment"), STATES[host["state"]])
 
 
-def render(nodes, now, *, chat=False):
+def render(nodes, now, *, chat=False, pair=None):
     cards = []
     for host in nodes:
         sample = host["observation"]
@@ -43,7 +43,19 @@ def render(nodes, now, *, chat=False):
             f"<p class='config'>{escape(host['hardware'])} · {escape(host['chip'])} · "
             f"{host['configured_gb']} GB configured</p>{measurements}</article>"
         )
+    pair_card = ""
+    if pair:
+        ranks = "".join(
+            f"<li>{escape(rank['slot'])} · {escape(rank['phase'])} · "
+            f"{'fresh' if rank['fresh'] else 'telemetry unavailable'}"
+            + (f" · {escape(rank['transport'])}" if rank.get("transport") else "") + "</li>"
+            for rank in pair["ranks"]
+        )
+        state = escape(pair["state"].replace("_", " ").capitalize())
+        reason = escape(pair["reason"].replace("_", " "))
+        pair_card = (f"<section aria-label='Paired inference'><article><h2>Paired inference</h2>"
+                     f"<p>{state} · {reason}</p><ul>{ranks}</ul></article></section>")
     count = sum(host["state"] == "reporting" for host in nodes)
     return PAGE.substitute(cards="".join(cards), reporting=count, total=len(nodes),
-                           checked=timestamp(now),
+                           checked=timestamp(now), pair=pair_card,
                            chat='<a href="/chat">Private chat</a>' if chat else "").encode()

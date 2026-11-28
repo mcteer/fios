@@ -101,3 +101,9 @@ Run `make chat-test` for portable verification. On fios-core, `make chat-accepta
 - [Future roadmap](specs/roadmap.md) tracks Deep Research and subsequent milestones.
 - [Creative presets](src/agent/authoring.toml) define initial campaign, one-shot, session and art direction for future Projects.
 - [Spec Kit workflow](.specify/README.md) describes the installed Codex skills, tooling and workflow.
+
+## Paired Studio inference
+
+Spec 005 uses a private JACCL link between the two Studios. Paired jobs acquire both reservations before starting. The reporter alone retrieves conversation text and submits an answer. The Mini commits the answer after both ranks complete and their transport records agree.
+
+Use `make pair-test` for the portable suite and `make pair-acceptance` on fios-core for the disposable native services. The hardware guide covers the matched model workload, authenticated leases, failure tests and release checks. Disable a paired alias with `model-withdraw` and its expected revision. The workers fence and clean both rank processes before either slot is reused. [Spec 005 hardware validation](specs/005-paired-studio-inference/quickstart.md)

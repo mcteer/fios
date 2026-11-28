@@ -73,9 +73,20 @@ class Handler(BaseHTTPRequestHandler):
         nodes = [read_node(self.server.directory, "fios-core", now)]
         nodes.extend(studio_nodes(self.server.snapshot_port))
         if self.path == "/":
-            return self.reply(200, render(nodes, now, chat=self.server.chat is not None), "text/html; charset=utf-8")
+            return self.reply(200, render(nodes, now, chat=self.server.chat is not None,
+                                          pair=self.pair_status()), "text/html; charset=utf-8")
         body = dict(version=1, observed_at=now, nodes=nodes)
         self.reply(200, json.dumps(body, allow_nan=False).encode(), "application/json")
+
+    def pair_status(self):
+        if self.server.chat is None or not self.server.control_slots.acquire(blocking=False):
+            return None
+        try:
+            return self.server.chat.call("pair-status", {})
+        except BridgeError:
+            return None
+        finally:
+            self.server.control_slots.release()
 
     def method_denied(self):
         self.reply(405, b"Read-only service\n")

@@ -13,6 +13,7 @@ from agent.text_policy import require_approved
 
 from .enrollment import Rejected, private_path
 from .job_ledger import KEY, encoded, identifier
+from .model_catalog import ALIASES
 
 PROMPT_BYTES = 16 * 1024
 ANSWER_BYTES = 64 * 1024
@@ -174,7 +175,7 @@ class ConversationStore:
         valid_key(key)
         if parent is not None:
             identifier(parent)
-        if alias not in ("general-chat", "coding") or type(inventory) is not bool:
+        if alias not in ALIASES or type(inventory) is not bool:
             raise Rejected("invalid")
         if not isinstance(prompt, str) or not prompt.strip():
             raise Rejected("invalid")

@@ -8,6 +8,7 @@ services:
     command: ["--node", "${FIOS_INVENTORY_ID:?set fios-core, studio-a, or studio-b}"]
     network_mode: host
     init: true
+    restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
