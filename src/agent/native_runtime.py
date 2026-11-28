@@ -65,7 +65,7 @@ def deployment_stamp(engine, model):
     return signature
 
 
-def verify_environment(engine, manifest, entry, executable_digest):
+def verify_environment(engine, manifest, entry, executable_digest, *, paired=False):
     """Pin installed package contents and launcher alongside the interpreter."""
     file = Path(manifest)
     private_path(file)
@@ -90,8 +90,13 @@ def verify_environment(engine, manifest, entry, executable_digest):
         raise ValueError("Runtime environment digest changed")
     launcher = digest_file(Path(__file__).with_name("native_executor.py"))
     adapter = digest_file(Path(__file__).with_name("inference.py"))
-    return manifest_digest({"executable": executable_digest, "packages": expected,
-                            "entry": entry, "launcher": launcher, "adapter": adapter})
+    identity = {"executable": executable_digest, "packages": expected,
+                "entry": entry, "launcher": launcher, "adapter": adapter}
+    if paired:
+        identity["paired"] = {name: digest_file(Path(__file__).with_name(name)) for name in
+                              ("paired_runtime.py", "jaccl_executor.py", "jaccl_transport.py",
+                               "inference_worker.py")}
+    return manifest_digest(identity)
 
 
 class NativeRuntime:
@@ -134,21 +139,23 @@ class NativeRuntime:
         if type(config["port"]) is not int or not 1 <= config["port"] <= 65535:
             raise ValueError("Invalid runtime port")
         self.revision, self.entry, self.port = config["revision"], entry, config["port"]
+        self.profile_document = None
         self.temperature = 0
         self.limits = None
         self.verified_deployment = None
         if purpose:
+            profile = Profile.parse(config["profile"]) if purpose == "inference" else None
+            document = self.profile_document = profile.document() if profile else None
+            paired = document is not None and "devices" in document
             artifact = manifest_digest(config["model_files"])
             environment = verify_environment(self.engine, config["environment_manifest"], entry,
-                                             config["executable_sha256"])
+                                             config["executable_sha256"], paired=paired)
             if purpose == "policy":
                 identity = {"artifact": artifact, "engine": environment, "prompt": prompt_digest("framed"),
                             "worker": digest_file(Path(__file__).with_name("policy_worker.py"))}
                 if manifest_digest(identity) != self.revision:
                     raise ValueError("Policy revision does not match the staged runtime and prompt")
             else:
-                profile = Profile.parse(config["profile"])
-                document = profile.document()
                 template = config["model_files"].get("chat_template.jinja",
                                                      config["model_files"].get("tokenizer_config.json"))
                 if (profile.revision != self.revision or document["artifact"] != artifact
@@ -207,26 +214,36 @@ class NativeRuntime:
         return json.loads(helper.stdout)
 
     def launch(self):
+        self.spawn()
+
+    def spawn(self, entry=None, arguments=(), environment=None, *, capture=False):
         if (self.verified_deployment is not None
                 and self.verified_deployment != deployment_stamp(self.engine, self.model)):
             raise Rejected("profile_changed", 409)
         if platform.system() != "Darwin" or platform.machine() != "arm64":
             raise Rejected("native_macos_required", 409)
+        if entry is None:
+            entry = self.entry
+            arguments = ("--model", str(self.model), "--host", "127.0.0.1", "--port", str(self.port))
+            environment = self.environment()
         with self.lock:
             if self.interrupted.is_set():
                 raise Rejected("fenced", 409)
             if self.process is not None:
                 raise Rejected("runtime_busy", 409)
             self.descriptor = self.acquire_executor()
-            launcher = Path(__file__).with_name("native_executor.py").resolve()
+            if entry == "agent.jaccl_executor":
+                launcher = ["-m", entry, "--parent", str(os.getpid())]
+            else:
+                path = Path(__file__).with_name("native_executor.py").resolve()
+                launcher = [str(path), str(os.getpid()), entry]
             try:
                 self.process = subprocess.Popen(
-                    [str(self.engine), "-B", str(launcher), str(os.getpid()), self.entry,
-                     "--model", str(self.model),
-                     "--host", "127.0.0.1", "--port", str(self.port)],
-                    env=self.environment(), cwd=self.state, stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    [str(self.engine), "-B", *launcher, *arguments],
+                    env=environment, cwd=self.state, stdin=subprocess.PIPE if capture else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE if capture else subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     start_new_session=True, pass_fds=(self.descriptor,))
+                return self.process
             except BaseException:
                 os.close(self.descriptor)
                 self.descriptor = None

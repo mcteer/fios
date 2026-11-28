@@ -18,6 +18,7 @@ WORKER_FIELDS = {
 WORKER_FIELDS["finish"] = WORKER_FIELDS["ready"] | {"result"}
 WORKER_ROUTES = {f"/v1/jobs/{action}": action for action in WORKER_FIELDS}
 OWNER = "local-operator"
+TRIAL_OWNER = "local-pair-trial"
 OPERATOR_FIELDS = {
     "job-context": (),
     "job-submit": ("incarnation", "key", "profile", "tokens", "deadline"),
@@ -25,6 +26,9 @@ OPERATOR_FIELDS = {
     "job-list": ("cursor",),
     "job-events": ("job", "cursor"),
     "job-cancel": ("job",),
+    "pair-trial-submit": ("incarnation", "key", "candidate", "recipe"),
+    "pair-trial-inspect": ("job",),
+    "pair-trial-cancel": ("job",),
 }
 
 
@@ -90,12 +94,18 @@ def operator(scheduler, action, data):
     jobs = scheduler.jobs
     if action == "job-context":
         return {"incarnation": jobs.context()}
+    if action == "pair-trial-submit":
+        return {"job": scheduler.submit_trial(TRIAL_OWNER, data)}
     if action == "job-submit":
         return {"job": jobs.submit(OWNER, {key: data[key] for key in fields})}
     if action == "job-list":
         # A page of full job views fits within the existing Unix response bound.
         return {"jobs": scheduler.describe(OWNER, after=integer(data.get("cursor", 0), 0, 2**63 - 1))}
     job = identifier(data["job"])
+    if action == "pair-trial-inspect":
+        return {"job": scheduler.describe(TRIAL_OWNER, job=job, diagnostics=True)[0]}
+    if action == "pair-trial-cancel":
+        return {"job": scheduler.cancel(TRIAL_OWNER, job)}
     if action == "job-get":
         return {"job": scheduler.describe(OWNER, job=job)[0]}
     if action == "job-events":
@@ -124,10 +134,12 @@ def worker_operation(scheduler, operation, node, data, *, local_peer=False):
         required |= {"pressure"}
         if local_peer:
             required |= {"memory_bytes"}
+    version = data.get("version")
+    pair_capable = type(version) is int and version == 2 and not local_peer and scheduler.catalog is not None
     fields = data.keys()
-    if operation == "finish" and "usage" in fields:
-        fields = fields - {"usage"}
-    if (fields != required or type(data["version"]) is not int or data["version"] != 1
+    if operation == "finish":
+        fields = fields - ({"usage", "transport_evidence", "trial_measurement", "failure"} if pair_capable else {"usage"})
+    if (fields != required or (not pair_capable and (type(version) is not int or version != 1))
             or data["node"] != node):
         raise Rejected("invalid")
     session = identifier(data["session"])
@@ -145,9 +157,9 @@ def worker_operation(scheduler, operation, node, data, *, local_peer=False):
                        and operation == "finish" else scheduler.jobs.transaction)
         with transaction() as db:
             if operation == "poll":
-                return scheduler.poll(db, node, session)
+                return scheduler.poll(db, node, session, pair_capable=pair_capable)
             if operation != "cleaned":
-                return scheduler.assignment(db, operation, node, session, data)
+                return scheduler.assignment(db, operation, node, session, data, pair_capable=pair_capable)
             response = scheduler.cleanup(db, node, session, data)
         # A lost response can be acknowledged again only after durable release.
         if "clean_ack" in response:

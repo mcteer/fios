@@ -165,3 +165,83 @@ time.sleep(30)
             config.write_text('{"changed":true}')
             with self.assertRaisesRegex(Rejected, "profile_changed"):
                 runtime.launch()
+
+
+class PairedWorkerBarrierTests(unittest.TestCase):
+    def test_prepared_rank_starts_when_peer_arrives_on_later_poll(self):
+        from agent.inference_worker import InferenceWorker
+
+        fields = dict(job="job", generation=1, epoch="epoch", grant="grant", remaining=15)
+        prepare = dict(action="prepare", **fields)
+        start = dict(action="start", **fields)
+        offers = iter((prepare, prepare, start, start))
+        runs = []
+
+        class Worker(InferenceWorker):
+            def execute(self, offer, grant):
+                runs.append((offer["job"], grant["generation"]))
+
+        def control(operation, _data):
+            if operation == "poll":
+                return next(offers)
+
+        worker = Worker(control, None, lambda _: {}, None)
+        worker.step()
+        self.assertEqual(runs, [])
+        worker.step()
+        worker.step()
+        self.assertEqual(runs, [("job", 1)])
+
+    def test_worker_does_not_start_an_assignment_prepared_by_prior_process(self):
+        from agent.inference_worker import InferenceWorker
+
+        start = dict(action="start", job="job", generation=1, epoch="epoch",
+                     grant="grant", remaining=15)
+
+        class Worker(InferenceWorker):
+            def execute(self, _offer, _grant):
+                self.fail_start()
+
+        worker = Worker(lambda action, _: start if action == "poll" else {}, None, lambda _: {}, None)
+        worker.fail_start = lambda: self.fail("unprepared grant started")
+        worker.step()
+
+    def test_running_trial_stops_its_child_when_link_monitor_reports_down(self):
+        from threading import Event
+        from agent.inference_worker import InferenceWorker
+
+        fields = dict(job="job", generation=1, epoch="epoch", grant="grant", remaining=15)
+        offers = iter((dict(action="prepare", trial={}, **fields),
+                       dict(action="start", trial={}, **fields)))
+        stopped = Event()
+        receipts = []
+
+        class Runtime:
+            def check_budget(self):
+                pass
+
+            def prepare(self, _offer):
+                pass
+
+            def run_trial(self, _offer, _deadline):
+                if not stopped.wait(timeout=5):
+                    raise AssertionError("Native process was left running")
+                return {}
+
+            def check_link(self):
+                raise Rejected("transport_unavailable", 409)
+
+            def stop(self):
+                stopped.set()
+
+        def control(operation, data):
+            if operation == "poll":
+                return next(offers)
+            if operation == "finish":
+                receipts.append(data)
+
+        worker = InferenceWorker(control, None, lambda _: {}, None, paired_runtime=Runtime())
+        worker.step()
+        self.assertTrue(stopped.is_set())
+        self.assertEqual(receipts, [dict(job="job", generation=1, epoch="epoch", grant="grant",
+                                         result="failed", failure="transport_unavailable")])

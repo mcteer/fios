@@ -174,6 +174,10 @@ class JobLedger:
         deadline = integer(request["deadline"], 1, 3600)
         intent = encoded({"profile": profile, "tokens": tokens, "deadline": deadline,
                           "resource_class": "synthetic", "project": None})
+        return self.submit_intent(owner, expected, key, intent, deadline)
+
+    def submit_intent(self, owner, expected, key, intent, deadline):
+        """Deduplicate a validated intent before consuming queue capacity."""
         with self.transaction() as db:
             if expected != self.incarnation(db):
                 raise Rejected("ledger_changed", 409)

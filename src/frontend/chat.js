@@ -52,12 +52,12 @@ function controls() {
 
 async function loadCatalog() {
   catalog = await api("catalog");
-  const labels = { "general-chat": "General chat", coding: "Coding" };
+  const labels = { "general-chat": "General chat", coding: "Coding", "paired-coding": "Paired Studio coding" };
   const reasons = { unqualified: "unavailable", occupied: "busy", waiting_capacity: "waiting for capacity" };
   for (const option of alias.options) {
     const model = catalog.aliases[option.value];
-    option.disabled = !model.available;
-    option.textContent = labels[option.value] + (reasons[model.reason] ? " · " + reasons[model.reason] : "");
+    option.disabled = !model?.available;
+    option.textContent = labels[option.value] + (reasons[model?.reason] ? " · " + reasons[model?.reason] : "");
   }
   if (alias.selectedOptions[0]?.disabled) {
     const available = Array.from(alias.options).find((item) => !item.disabled);

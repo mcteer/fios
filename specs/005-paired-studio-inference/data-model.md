@@ -1,0 +1,17 @@
+# Paired placement and evidence
+
+| Entity | Identity, fields and constraints |
+| --- | --- |
+| Paired profile | Immutable revision over alias, host class, ordered slots and roles, supported sharding mode, per-rank artifact manifest, engine, template, evaluation, publication policy, license, context and output caps. Fixed membership is edge-a as rank 0/reporter and edge-b as rank 1. A split pack records distinct expected shard digests under one manifest. |
+| Joint qualification | Ties a profile and ordered slots to OS/runtime builds, device map fingerprint, workload and evidence version, per-host peak/floor, transport observations, baseline, quality, latency, throughput, recovery checks, synthetic flag and admin decision. A report describes one actual joint trial. Promote by expected revision to avoid overwriting another decision. |
+| Attempt and holds | Existing job, ledger incarnation, generation, session, epoch, reporter and one exclusive hold per slot. Atomic acquisition or no holds. Preserve existing duplicate-submission and restored-ledger semantics. Each worker sees only its own grant. |
+| Trial intent | `TrialIntent.recipe` identifies the immutable reviewed recipe. It binds the candidate and fixture digests, per-host ceiling and floor and deadline to an admin-owned job. It shares slot holds with all serving work. Its only result is diagnostic evidence. |
+| Rank receipt | One record per attempt and slot with expected rank, profile revision, observed peer/group identity, transport, evidence reference and bounded execution result. Duplicate identical receipts are idempotent. A conflicting receipt cannot advance state. Only rank 0 can attach tagged input/output usage or supply text. |
+| Content and settlement | Existing private segments, pending title, owner and policy revision remain tied to the attempt. Publish to readers and settle job-wide usage only on qualified group success. Unknown counts remain unknown. Failure discards staged text and pending title. |
+| Cleanup receipt | Per-slot, single-use reconciliation challenge, proven local process-group exit and a newer capacity observation. Only this acknowledgment releases the corresponding hold. An unreachable member remains quarantined. |
+
+For a real paired attempt, `RankReceipt.transport_evidence` is required and resolves to per-rank observations defined in the [transport contract](contracts/pair.md#evidence-required-from-each-adapter). Keep bounded transfer summaries and omit payload bytes. Trial success records a report after validating both receipts and fixture outcomes. It uses the same hold and cleanup lifecycle as a serving attempt.
+
+**Serving lifecycle.** Queued → preparing (two holds) → running (both ready) → successful settlement (both positive receipts plus approved content), or stopping → fenced cleanup → failed/cancelled/expired. Reuse eligibility is a per-host decision independent of whether the user sees a terminal failure. A returning host must reconcile old work before new admission. Preserve existing job-state vocabulary on the wire. “Degraded” and “cleaning” are operator summaries derived from reasons and holds.
+
+A material profile, host build or topology mismatch makes joint evidence ineligible. A transient disconnect disables admission until fresh health and a successful two-rank probe confirm the same configuration. An ambiguous crash never replays an inference request automatically.

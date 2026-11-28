@@ -56,13 +56,16 @@ def admin_handler(ledger, openssl, ca, operator, scheduler=None):
             elif action == "model-record":
                 if scheduler is None or scheduler.catalog is None:
                     raise Rejected("scheduling_unavailable", 503)
-                if (data.keys() != {"action", "profile", "evidence"}
-                        or not isinstance(data["evidence"], dict)
-                        or data["evidence"].get("synthetic") is not False):
+                if data.keys() != {"action", "profile", "evidence"} or not isinstance(data["evidence"], dict):
                     raise Rejected("invalid_evidence")
                 from .model_catalog import Profile
                 profile = Profile.parse(data["profile"])
-                scheduler.catalog.record(profile, data["evidence"])
+                if profile.document()["alias"] == "paired-coding":
+                    scheduler.catalog.record_joint(profile, data["evidence"])
+                elif data["evidence"].get("synthetic") is False:
+                    scheduler.catalog.record(profile, data["evidence"])
+                else:
+                    raise Rejected("invalid_evidence")
                 scheduler.sweep()
                 result = {"revision": profile.revision}
             elif action in ("model-status", "model-trial", "model-promote", "model-withdraw"):
@@ -126,11 +129,19 @@ def command(path, data):
         body = json.dumps(data, ensure_ascii=True).encode("ascii")
         if len(body) >= ADMIN_LIMIT:
             raise ValueError("Operator request exceeds limit")
-        conn.sendall(body + b"\n")
+        early_denial = None
+        try:
+            conn.sendall(body + b"\n")
+        except BrokenPipeError as error:
+            # Identity can be rejected before the server reads the request.
+            early_denial = error
         raw, rest = read_until(conn, b"\n", ADMIN_LIMIT, deadline)
         if rest:
             raise ValueError("Unexpected operator response")
-        return json_object(raw)
+        response = json_object(raw)
+        if early_denial and response != {"ok": False, "reason": "identity"}:
+            raise early_denial
+        return response
 
 
 def serve(args):
@@ -156,6 +167,8 @@ def serve(args):
     if bool(args.chat_bridge_key) != bool(args.chat_bridge_port) or (
             args.chat_bridge_key and not args.inference_key):
         raise ValueError("The chat bridge requires an explicit key, port and inference configuration")
+    if args.pair_trials and not args.inference_key:
+        raise ValueError("Paired trials require inference scheduling")
     with ExitStack() as stack:
         stack.enter_context(job_protocol.service_lock(directory))
         scheduler = None
@@ -179,7 +192,16 @@ def serve(args):
                 if db.execute("PRAGMA user_version").fetchone()[0] != 2:
                     raise ValueError("Migrate the job ledger before enabling inference")
             catalog = Catalog(jobs)
-            scheduler = Scheduler(jobs, ledger, catalog=catalog)
+            trial_recipes = None
+            if args.pair_trials:
+                private_path(args.pair_trials)
+                with args.pair_trials.open("rb") as recipe_file:
+                    recipe_bytes = recipe_file.read(65537)
+                if len(recipe_bytes) > 65536:
+                    raise ValueError("Paired trial configuration exceeds its size limit")
+                trial_recipes = json_object(recipe_bytes)
+            scheduler = Scheduler(jobs, ledger, catalog=catalog, trial_recipes=trial_recipes,
+                                  trial_hardware=not args.test_loopback)
             store = ConversationStore(jobs, key, catalog=catalog)
             scheduler.dispatch = Dispatch(scheduler, store, LoopbackPolicy(args.policy_port),
                                           policy_revision=args.policy_revision)
@@ -273,6 +295,7 @@ def main():
             p.add_argument("--test-loopback", action="store_true")
             p.add_argument("--synthetic-scheduling", action="store_true")
             p.add_argument("--inference-key", type=Path)
+            p.add_argument("--pair-trials", type=Path)
             p.add_argument("--policy-port", type=int)
             p.add_argument("--policy-revision")
             p.add_argument("--chat-bridge-key", type=Path)
@@ -286,7 +309,9 @@ def main():
     sub.add_parser("model-record").add_argument("report", type=Path)
     for action in ("model-promote", "model-withdraw"):
         p = sub.add_parser(action)
-        p.add_argument("alias", choices=("general-chat", "coding"))
+        from .model_catalog import ALIASES
+
+        p.add_argument("alias", choices=ALIASES)
         p.add_argument("--expected", required=action == "model-withdraw")
         if action == "model-promote":
             p.add_argument("revision")

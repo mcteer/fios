@@ -17,8 +17,9 @@ FIELDS = ("job", "generation", "grant", "epoch")
 
 
 class FakeWorker:
-    def __init__(self, reporter):
+    def __init__(self, reporter, *, pair=False):
         self.reporter = reporter
+        self.pair = pair
         self.capacity_sequence = 0
         self.resident = None
         self.ticket = None
@@ -32,7 +33,7 @@ class FakeWorker:
 
     def call(self, op, **data):
         status, response = self.reporter.request(
-            f"/v1/jobs/{op}", dict(version=1, node=self.reporter.node,
+            f"/v1/jobs/{op}", dict(version=2 if self.pair else 1, node=self.reporter.node,
                                  session=self.reporter.session, **data))
         return {"status": status, **json.loads(response)}
 
@@ -45,7 +46,8 @@ class FakeWorker:
             self.running, self.ticket = False, None
         self.capacity_sequence += 1
         return self.call("capacity", sequence=self.capacity_sequence, sampled_at=int(time.time()),
-                         available_bytes=available, resident_revision=self.resident)
+                         available_bytes=available, resident_revision=self.resident,
+                         **({"pressure": "normal"} if self.pair else {}))
 
     def poll(self):
         # Subtract transit by starting the countdown before sending the poll.
@@ -60,7 +62,7 @@ class FakeWorker:
                 self.ticket, self.deadline = ticket, candidate
             self.guard()
             if response["action"] == "start" and self.ticket == ticket:
-                self.resident = RESIDENT
+                self.resident = None if self.pair else RESIDENT
                 self.running = True
         return response
 
@@ -104,9 +106,10 @@ def main():
     parser.add_argument("port", type=int)
     for name in ("ca", "cert", "key"):
         parser.add_argument(name, type=Path)
+    parser.add_argument("--pair", action="store_true")
     args = parser.parse_args()
     worker = FakeWorker(Reporter(args.slot, "127.0.0.1", args.port, "fios-core",
-                                 context(args.ca, args.cert, args.key)))
+                                 context(args.ca, args.cert, args.key)), pair=args.pair)
     while True:
         worker.guard()
         if not select.select([sys.stdin], [], [], 0.05)[0]:

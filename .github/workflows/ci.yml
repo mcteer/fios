@@ -23,7 +23,7 @@ jobs:
         env:
           SPECIFY_FEATURE_NO_PERSIST: "1"
         run: |
-          for feature in specs/001-platform-foundation specs/002-studio-enrollment specs/003-job-ledger-scheduling specs/004-private-chat-coding; do
+          for feature in specs/001-platform-foundation specs/002-studio-enrollment specs/003-job-ledger-scheduling specs/004-private-chat-coding specs/005-paired-studio-inference; do
             SPECIFY_FEATURE_DIRECTORY="$feature" bash .specify/scripts/bash/check-prerequisites.sh --json --require-spec --require-tasks
           done
 
@@ -35,6 +35,11 @@ jobs:
 
       - name: Run portable private chat tests
         run: make chat-test
+
+      - name: Run portable paired inference and recovery tests
+        run: |
+          make pair-test
+          PYTHONPATH=src python3 -B -m unittest discover -s tests -p test_orbstack_recovery.py -v
 
       - name: Validate the dedicated management and chat container definitions
         env:
