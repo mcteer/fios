@@ -43,6 +43,7 @@ function report(error) {
 }
 
 function controls() {
+  select("large-moe-limits").hidden = alias.value !== "large-moe";
   select("inventory").disabled = alias.value !== "general-chat";
   select("send").disabled = submitting || busy.has(currentTurn?.state) ||
     !catalog?.aliases[alias.value]?.available;
@@ -52,14 +53,17 @@ function controls() {
 
 async function loadCatalog() {
   catalog = await api("catalog");
-  const labels = { "general-chat": "General chat", coding: "Coding", "paired-coding": "Paired Studio coding" };
+  const labels = {
+    "general-chat": "General chat", coding: "Coding", "paired-coding": "Paired Studio coding",
+    "large-moe": "Large MoE · both Studios",
+  };
   const reasons = { unqualified: "unavailable", occupied: "busy", waiting_capacity: "waiting for capacity" };
   for (const option of alias.options) {
     const model = catalog.aliases[option.value];
     option.disabled = !model?.available;
     option.textContent = labels[option.value] + (reasons[model?.reason] ? " · " + reasons[model?.reason] : "");
   }
-  if (alias.selectedOptions[0]?.disabled) {
+  if (alias.selectedOptions[0]?.disabled && alias.value !== "large-moe") {
     const available = Array.from(alias.options).find((item) => !item.disabled);
     if (available) alias.value = available.value;
   }
@@ -94,6 +98,10 @@ async function readThread(id = conversation) {
     for (const [label, value] of [["You", turn.prompt], ["fios", turn.answer]]) {
       if (!value) continue;
       const entry = document.createElement("article");
+      entry.dataset.job = turn.job;
+      if (label === "fios" && ["completed", "succeeded"].includes(turn.state)) {
+        entry.dataset.publication = "approved";
+      }
       const name = document.createElement("strong");
       const text = document.createElement("pre");
       name.textContent = label;

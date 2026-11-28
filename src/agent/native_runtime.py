@@ -65,7 +65,7 @@ def deployment_stamp(engine, model):
     return signature
 
 
-def verify_environment(engine, manifest, entry, executable_digest, *, paired=False):
+def verify_environment(engine, manifest, entry, executable_digest, *, paired=False, large=False):
     """Pin installed package contents and launcher alongside the interpreter."""
     file = Path(manifest)
     private_path(file)
@@ -96,11 +96,16 @@ def verify_environment(engine, manifest, entry, executable_digest, *, paired=Fal
         identity["paired"] = {name: digest_file(Path(__file__).with_name(name)) for name in
                               ("paired_runtime.py", "jaccl_executor.py", "jaccl_transport.py",
                                "inference_worker.py")}
+    if large:
+        identity["paired"].update({
+            name: digest_file(Path(__file__).with_name(name))
+            for name in ("native_runtime.py", "macos_memory.py", "moe_watchdog.py", "rank_monitor.py")
+        })
     return manifest_digest(identity)
 
 
 class NativeRuntime:
-    def __init__(self, path, state, *, clock=time.monotonic, require_manifest=False, purpose=None):
+    def __init__(self, path, state, *, clock=time.monotonic, require_manifest=False, purpose=None, probe_artifact=None, pair_only=False, policy_input_limit=4096):
         private_path(Path(path))
         private_path(Path(state), directory=True)
         self.state = Path(state)
@@ -147,18 +152,29 @@ class NativeRuntime:
             profile = Profile.parse(config["profile"]) if purpose == "inference" else None
             document = self.profile_document = profile.document() if profile else None
             paired = document is not None and "devices" in document
-            artifact = manifest_digest(config["model_files"])
+            artifact = self.staged_artifact = manifest_digest(config["model_files"])
+            large = document is not None and document.get("alias") == "large-moe"
+            if large != pair_only or (probe_artifact is not None and not large):
+                raise ValueError("Large profiles require an explicitly configured paired worker")
+            if large and {path.name for path in self.model.iterdir()} != config["model_files"].keys():
+                raise ValueError("Large-model directory contains an unreviewed file")
             environment = verify_environment(self.engine, config["environment_manifest"], entry,
-                                             config["executable_sha256"], paired=paired)
+                                             config["executable_sha256"], paired=paired, large=large)
             if purpose == "policy":
                 identity = {"artifact": artifact, "engine": environment, "prompt": prompt_digest("framed"),
                             "worker": digest_file(Path(__file__).with_name("policy_worker.py"))}
+                if policy_input_limit != 4096:
+                    identity["input_limit"] = policy_input_limit
+                    identity["rank"] = {
+                        name: digest_file(Path(__file__).with_name(name))
+                        for name in ("policy_rank.py", "macos_memory.py", "moe_watchdog.py")
+                    }
                 if manifest_digest(identity) != self.revision:
                     raise ValueError("Policy revision does not match the staged runtime and prompt")
             else:
                 template = config["model_files"].get("chat_template.jinja",
                                                      config["model_files"].get("tokenizer_config.json"))
-                if (profile.revision != self.revision or document["artifact"] != artifact
+                if (profile.revision != self.revision or (probe_artifact or document["artifact"]) != artifact
                         or document["engine"] != environment or document["template"] != template):
                     raise ValueError("Serving profile does not match the staged runtime")
                 self.temperature = document["settings"]["temperature"]
@@ -216,7 +232,7 @@ class NativeRuntime:
     def launch(self):
         self.spawn()
 
-    def spawn(self, entry=None, arguments=(), environment=None, *, capture=False):
+    def spawn(self, entry=None, arguments=(), environment=None, *, capture=False, observers=()):
         if (self.verified_deployment is not None
                 and self.verified_deployment != deployment_stamp(self.engine, self.model)):
             raise Rejected("profile_changed", 409)
@@ -232,7 +248,7 @@ class NativeRuntime:
             if self.process is not None:
                 raise Rejected("runtime_busy", 409)
             self.descriptor = self.acquire_executor()
-            if entry == "agent.jaccl_executor":
+            if entry in ("agent.jaccl_executor", "agent.policy_rank"):
                 launcher = ["-m", entry, "--parent", str(os.getpid())]
             else:
                 path = Path(__file__).with_name("native_executor.py").resolve()
@@ -242,7 +258,7 @@ class NativeRuntime:
                     [str(self.engine), "-B", *launcher, *arguments],
                     env=environment, cwd=self.state, stdin=subprocess.PIPE if capture else subprocess.DEVNULL,
                     stdout=subprocess.PIPE if capture else subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    start_new_session=True, pass_fds=(self.descriptor,))
+                    start_new_session=True, pass_fds=(self.descriptor, *observers))
                 return self.process
             except BaseException:
                 os.close(self.descriptor)

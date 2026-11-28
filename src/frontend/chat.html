@@ -25,11 +25,13 @@
     <p id="status" role="status"></p>
     <form id="composer">
       <label for="alias">Model</label>
-      <select id="alias" name="alias">
+      <select id="alias" name="alias" aria-describedby="large-moe-limits">
         <option value="general-chat">General chat</option>
         <option value="coding">Coding</option>
         <option value="paired-coding" disabled>Paired Studio coding</option>
+        <option value="large-moe" disabled>Large MoE · both Studios</option>
       </select>
+      <span id="large-moe-limits" hidden>8,192 tokens total, up to 1,024 generated</span>
       <label><input id="inventory" type="checkbox"> Include cluster status</label>
       <label for="prompt">Message</label>
       <textarea id="prompt" name="prompt" rows="4" required maxlength="16384"></textarea>

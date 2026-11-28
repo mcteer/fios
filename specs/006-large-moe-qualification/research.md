@@ -1,0 +1,31 @@
+# Research · Large MoE qualification
+
+## Candidate order
+
+The sizes below sum safetensors shard bytes at the pinned conversion revisions. The even split is arithmetic before replication, lazy-load transients, buffers, caches and OS overhead. It establishes neither per-host peak nor admission. Both Studios must be able to stage the **full** local pack for the existing loader, with separate space for scratch and retained artifacts.
+
+| Candidate | Pinned weight bytes | Even split per host | First decision |
+| --- | ---: | ---: | --- |
+| GLM-5.3 mixed 3/6-bit | 332,578,579,798 | 154.9 GiB | Preferred candidate. Verify the corrected shared-indexer implementation and its sharding before acquisition. [Pack and converter evaluation](https://huggingface.co/pipenetwork/GLM-5.3-MLX-mixed-3_6bit/blob/4c4ce289cd0b7815dd7b30af3d0320647feb8fd9/README.md) |
+| Qwen3.5-397B-A17B 4-bit | 223,861,162,211 | 104.2 GiB | First alternative if GLM fails compatibility, fit, speed or quality. Prove text-only key mapping for this multimodal conversion. [Pack](https://huggingface.co/mlx-community/Qwen3.5-397B-A17B-4bit/tree/39159bd8aa74f5c8446d2b2dc584f62bb51cb0d3) |
+| GLM-5.3 4-bit | 418,604,213,206 | 194.9 GiB | Conditional quality comparison only if lighter GLM passes compatibility and fit, misses quality, and the heavier revision independently clears both budgets. [Pack](https://huggingface.co/pipenetwork/GLM-5.3-MLX-4bit/tree/b356ef7cf02c761f0ace6810921d8a7e648fc56d) |
+
+GLM has a model-specific license. Qwen lists Apache-2.0. Record the actual terms, upstream and conversion revisions and applicable notices during preflight. No new serving rights or hardware results are inferred from the cards. [GLM upstream](https://huggingface.co/zai-org/GLM-5.3) · [Qwen upstream](https://huggingface.co/Qwen/Qwen3.5-397B-A17B)
+
+## Loader and transport
+
+The GLM converter describes a shared-indexer error that a short sample can conceal. Inspect the pinned corrected adapter, compare its expected mappings and cached-index reuse across the 2,048-token boundary against a frozen trusted reference, and run a paired reduced-weights architecture probe before committing to a full download. The fallback pack was converted with MLX-VLM. Review the language-only adapter and account explicitly for excluded vision tensors. Neither architecture has qualified on this specific pair. [Corrected GLM source](https://github.com/PipeNetwork/glm53-mlx/blob/79f89ca69ee2b8aed4918903c1512ca7ec965215/glm53_mlx/runtime.py) · [Qwen adapter](https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/models/qwen3_5_moe.py)
+
+The inspected GLM snapshot declares a model loader supplied by the weight repository and requires remote-code loading. GLM is deferred pending a reviewed adapter. Qwen uses the pinned MLX-LM text adapter with repository code disabled. The full Qwen pack has 56 reviewed files totaling 223,888,199,225 bytes. Qualification used a 160 GiB rank ceiling and a 32 GiB host floor on each Studio. The exact two-rank release passed with observed peak rank footprints of about 117 GiB and no swap growth. [Completed qualification](tasks.md#completed-qualification)
+
+The first two verified safetensors headers cover their approved file lengths and contain 120 language-model tensors and 333 vision tensors. The pinned text adapter drops the vision tensors, validates text weights and shards before MLX materializes the parameters. The pinned MLX evaluation binding releases the Python interpreter lock while evaluating arrays, allowing the rank watchdog to sample during GPU evaluation. [MLX-LM text adapter](https://github.com/ml-explore/mlx-lm/blob/v0.32.2/mlx_lm/models/qwen3_5.py#L391-L418) · [MLX evaluation binding](https://github.com/ml-explore/mlx/blob/v0.32.5/python/src/transforms.cpp#L1097-L1104)
+
+The reviewed loader permits non-strict weight loading in its sharding path. Inspect exact keys, shapes, quantization groups, device allocation, tokenizer and template offline. Use reviewed pinned executable code, local-only loading and remote code disabled. Reject a candidate needing an unaudited executable or an unsupported transfer path. Scope any observer extension to the candidate's actual model payload operations and use the existing cross-rank verifier. [MLX-LM loader](https://github.com/ml-explore/mlx-lm/blob/93e6d4a6447b3080861985947f0820e76fcb957d/mlx_lm/utils.py#L733-L809) · [Converter loader](https://github.com/PipeNetwork/glm53-mlx/blob/79f89ca69ee2b8aed4918903c1512ca7ec965215/glm53_mlx/load.py)
+
+## Existing behavior and decisions
+
+- Spec 005 measured the comparable Qwen3-4B on one and two Studios. The first physical interruption exposed a fencing defect. The patched watchdog then passed a fresh exact-runtime hardware report and armed link-loss test. The large-model trials retained their own per-rank evidence. [005 hardware record](../005-paired-studio-inference/tasks.md#native-model-evidence)
+- The current catalog requires matched one-host and pair job IDs. Add a versioned pair-only qualification route and identity-level placement guard. Borrowing an unrelated one-host job or using the earlier baseline as a quality score for the new candidate would defeat both evaluations. [Catalog](../../src/backend/model_catalog.py) · [Trial recipe](../../src/backend/pair_trial.py)
+- The native executor currently launches a fresh rank per request and reports process peak at the end. Measure capacity and swap independently throughout execution. Use one cold process start and five consecutive fresh-process, filesystem-cache-warm runs. On timed fixture turns, take launch-to-first-model-text from the native reporter and submit-to-visible-approved-answer from the WebKit harness observing the same job. This captures loading, policy checks and UI delay without comparing clocks across hosts. [Executor](../../src/agent/jaccl_executor.py) · [Current sampler](../../src/agent/macos_memory.py)
+
+The native monitor reads used swap in bytes through `sysctlbyname` and checks the size of the returned structure. This detects growth smaller than the rounded size shown by the command-line display. [Apple XNU swap usage structure](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/sysctl.h#L1100-L1106)

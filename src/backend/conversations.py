@@ -13,7 +13,7 @@ from agent.text_policy import require_approved
 
 from .enrollment import Rejected, private_path
 from .job_ledger import KEY, encoded, identifier
-from .model_catalog import ALIASES
+from .model_catalog import ALIASES, LARGE_ALIAS, LARGE_DEADLINE
 
 PROMPT_BYTES = 16 * 1024
 ANSWER_BYTES = 64 * 1024
@@ -62,11 +62,11 @@ def valid_key(value):
 
 
 class ConversationStore:
-    def __init__(self, jobs, digest_key, *, quota=DEFAULT_QUOTA, catalog=None):
+    def __init__(self, jobs, digest_key, *, quota=DEFAULT_QUOTA, catalog=None, directory=None):
         if len(digest_key) < 32:
             raise ValueError("A private 256-bit digest key is required")
         self.jobs = jobs
-        self.path = jobs.path.with_name("conversations.sqlite")
+        self.path = (directory if directory is not None else jobs.path.parent) / "conversations.sqlite"
         self.key = digest_key
         self.quota = quota
         self.catalog = catalog
@@ -171,7 +171,7 @@ class ConversationStore:
             return conversation
 
     def submit(self, owner, conversation, incarnation, key, parent, alias, prompt, inventory,
-               *, profile=None, tokens=512, deadline=120, inventory_context=None, browser=False):
+               *, profile=None, tokens=512, deadline=120, inventory_context=None, browser=False, rehearsal=False):
         valid_key(key)
         if parent is not None:
             identifier(parent)
@@ -187,7 +187,7 @@ class ConversationStore:
             raise Rejected("too_large", 413)
         request_parts = [conversation, parent, alias, prompt, inventory, tokens, deadline]
         if browser:
-            request_parts.append("browser")
+            request_parts.append("rehearsal" if rehearsal else "browser")
         request = encoded(request_parts)
         digest = hmac.new(self.key, request.encode(), hashlib.sha256).hexdigest()
         with self.transaction() as db:
@@ -212,16 +212,24 @@ class ConversationStore:
             reserve = ANSWER_BYTES + TITLE_BYTES - len(row["title"].encode())
             if self.remaining(db, owner) < size + reserve + context_size:
                 raise Rejected("quota", 429)
+            extra = {}
             if self.catalog is not None:
-                candidate = self.catalog.active(db, alias)
+                candidate = self.catalog.rehearsal_profile(db) if rehearsal else self.catalog.active(db, alias)
+                if rehearsal:
+                    if alias != LARGE_ALIAS or candidate is None or parent is not None or inventory:
+                        raise Rejected("rehearsal_unavailable", 409)
+                    extra = dict(rehearsal=candidate["rehearsal"], suite=candidate["evaluation"],
+                                 case=self.catalog.rehearsal_case(db, candidate, prompt))
                 if candidate is None:
                     raise Rejected("unqualified", 409)
                 profile, tokens = candidate["revision"], candidate["output"]
+                if alias == LARGE_ALIAS:
+                    deadline = LARGE_DEADLINE
             # Payload and digest stay in the attached private store. The ledger's
             # key is independent of a user-chosen key or a later ledger incarnation.
             intent = encoded(dict(profile=profile or alias, alias=alias, tokens=tokens,
                                   deadline=deadline, resource_class="inference", project=None,
-                                  inventory=inventory))
+                                  inventory=inventory, **extra))
             receipt = self.jobs.enqueue(db, owner, secrets.token_hex(16), intent, deadline)
             if browser:
                 db.execute("INSERT INTO main.chat_attachments VALUES (?,?,NULL)",

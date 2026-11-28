@@ -10,6 +10,7 @@ import sqlite3
 class Task:
     prompt: str
     expected: tuple
+    datasets: tuple | None = None
 
 
 ORDERS = (
@@ -24,6 +25,22 @@ TASKS = (
     Task("Return one SQLite SELECT over orders(region TEXT, units INTEGER) that lists distinct "
          "regions with at least one order of five units or more. Order by region ascending. "
          "Return SQL only.", ((("east",), ("west",)), (("east",), ("south",), ("west",)))),
+)
+
+
+# Separate examples prevent a canned result derived from the original tables.
+MOE_ORDERS = (
+    (("ash", 0), ("ash", 6), ("elm", 3), ("pine", 8), ("pine", 8)),
+    (("birch", 2), ("elm", 3), ("elm", 4), ("spruce", 9)),
+)
+MOE_TASKS = (
+    Task("Return only one SQLite SELECT over orders(region TEXT, units INTEGER). "
+         "Return regions with two or more orders and their order counts, in ascending region order.",
+         ((("ash", 2), ("pine", 2)), (("elm", 2),)), MOE_ORDERS),
+    Task("Return only one SQLite SELECT over orders(region TEXT, units INTEGER). "
+         "List each region and the largest single order in it, in ascending region order.",
+         ((("ash", 6), ("elm", 3), ("pine", 8)),
+          (("birch", 2), ("elm", 4), ("spruce", 9))), MOE_ORDERS),
 )
 
 
@@ -50,7 +67,7 @@ def evaluate(task, sql):
         fenced = re.fullmatch(r"```(?:sql|sqlite)?[ \t]*\r?\n([\s\S]+?)\r?\n```", sql, re.IGNORECASE)
         if fenced:
             sql = fenced[1]
-        for orders, expected in zip(ORDERS, task.expected, strict=True):
+        for orders, expected in zip(task.datasets if task.datasets is not None else ORDERS, task.expected, strict=True):
             with closing(sqlite3.connect(":memory:")) as db:
                 db.execute("CREATE TABLE orders(region TEXT NOT NULL, units INTEGER NOT NULL)")
                 db.executemany("INSERT INTO orders VALUES (?,?)", orders)

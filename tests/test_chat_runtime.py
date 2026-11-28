@@ -185,7 +185,7 @@ class PairedWorkerBarrierTests(unittest.TestCase):
             if operation == "poll":
                 return next(offers)
 
-        worker = Worker(control, None, lambda _: {}, None)
+        worker = Worker(control, None, lambda _: {}, object())
         worker.step()
         self.assertEqual(runs, [])
         worker.step()

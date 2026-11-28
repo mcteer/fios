@@ -22,22 +22,20 @@ Run from fios-core after both Studios have the verified dedicated Thunderbolt ro
 - Append `--leases-only --link-window` for a coordinated administrator link interruption. The harness prints its run directory and waits for the administrator terminal to arm it on edge-b. From that terminal, validate sudo, create the run directory’s `link-armed` file and wait for `link-ready` before cycling the dedicated interface. Restore `en5` automatically after the interruption. The harness requires a failed generation, released reservations and a successful paired turn after recovery.
 - Append `--web-only` for the private disposable browser-to-pair exercise with a fixed fixture publication check. The active production alias requires its own separate promotion.
 
-For the timed interruption, paste the directory printed by the current harness at the prompt on edge-b. This arms the harness after sudo validation and restores the interface when the command exits.
+For the link-loss retest, open an interactive shell on edge-b before starting the harness.
 
 ```sh
-printf 'Current link-test directory: '
-read -r trial
-case "$trial" in
-  /private/tmp/fios-jaccl-model-*)
-    sudo -v && (
-      [ -d "$trial" ] || exit 1
-      touch "$trial/link-armed"
-      while [ -d "$trial" ] && [ ! -f "$trial/link-ready" ]; do sleep 1; done
-      [ -f "$trial/link-ready" ] || exit 1
-      trap 'sudo -n /sbin/ifconfig en5 up' EXIT
-      sudo -n /sbin/ifconfig en5 down && sleep 4
-    )
-    ;;
-  *) printf 'Use the current run directory printed by the harness.\n' ;;
-esac
+ssh -t mcteer@fios-edge-b.local
+sudo -v
 ```
+
+Sudo hides password characters. Press Return after typing the password. A successful validation returns to the shell prompt. Keep that terminal open.
+
+On fios-core, run:
+
+```sh
+PYTHONPATH=src:tests python3 -B tests/macos/verify_jaccl_model.py \
+  --candidate qwen3-instruct --leases-only --link-window
+```
+
+When the harness prints `Run on edge-b:`, paste the full `/bin/sh` command from that line into the edge-b terminal. The helper verifies the management route, validates sudo in that terminal, and arms the current run. After both ranks start, it cycles edge-b's `en5` for four seconds and restores it. The harness verifies failed inference, cleanup and a successful retry. If interrupted and the interface remains down, run `sudo /sbin/ifconfig en5 up` on edge-b.

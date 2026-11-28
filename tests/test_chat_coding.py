@@ -1,7 +1,7 @@
 """Coding qualification fixtures use bounded read-only SQL over synthetic data."""
 import unittest
 
-from fixtures.chat_coding import evaluate, TASKS
+from fixtures.chat_coding import evaluate, MOE_TASKS, TASKS
 
 
 class CodingFixtureTests(unittest.TestCase):
@@ -13,6 +13,16 @@ class CodingFixtureTests(unittest.TestCase):
         for task, solution in zip(TASKS, solutions, strict=True):
             self.assertTrue(evaluate(task, solution))
             self.assertTrue(evaluate(task, f"```sql\n{solution}\n```"))
+
+    def test_large_model_holdouts_require_correct_results_on_both_tables(self):
+        count, maximum = MOE_TASKS
+        self.assertTrue(evaluate(count, "SELECT region, COUNT(*) FROM orders GROUP BY region "
+                                        "HAVING COUNT(*) >= 2 ORDER BY region"))
+        self.assertTrue(evaluate(maximum, "SELECT region, MAX(units) FROM orders "
+                                          "GROUP BY region ORDER BY region"))
+        self.assertFalse(evaluate(count, "SELECT region, COUNT(*) FROM orders GROUP BY region"))
+        self.assertFalse(evaluate(maximum, "SELECT region, SUM(units) FROM orders "
+                                           "GROUP BY region ORDER BY region"))
 
     def test_wrong_or_unbounded_sql_fails_even_with_expected_rows(self):
         task = TASKS[0]

@@ -16,6 +16,7 @@ WORKER_FIELDS = {
     "cleaned": {"challenge", "sequence", "disposition"},
 }
 WORKER_FIELDS["finish"] = WORKER_FIELDS["ready"] | {"result"}
+WORKER_FIELDS["review-append"] = WORKER_FIELDS["ready"] | {"sequence", "data"}
 WORKER_ROUTES = {f"/v1/jobs/{action}": action for action in WORKER_FIELDS}
 OWNER = "local-operator"
 TRIAL_OWNER = "local-pair-trial"
@@ -27,6 +28,8 @@ OPERATOR_FIELDS = {
     "job-events": ("job", "cursor"),
     "job-cancel": ("job",),
     "pair-trial-submit": ("incarnation", "key", "candidate", "recipe"),
+    "large-review-page": ("blind", "cursor"),
+    "large-trial-submit": ("incarnation", "key", "candidate", "recipe", "approval"),
     "pair-trial-inspect": ("job",),
     "pair-trial-cancel": ("job",),
 }
@@ -80,7 +83,7 @@ def cli(sub):
                 parser.add_argument("job")
             else:
                 parser.add_argument(f"--{field}", required=True,
-                                    type=int if field in ("tokens", "deadline") else str)
+                                    type=int if field in ("tokens", "deadline", "approval") else str)
 
 
 def operator(scheduler, action, data):
@@ -92,9 +95,14 @@ def operator(scheduler, action, data):
         raise Rejected("invalid")
     scheduler.sweep()
     jobs = scheduler.jobs
+    if action == "large-review-page":
+        with scheduler.enrollment.lock, jobs.transaction(write=False) as db:
+            return scheduler.reviews.page(db, data["blind"], data.get("cursor", 0))
     if action == "job-context":
         return {"incarnation": jobs.context()}
-    if action == "pair-trial-submit":
+    if action in ("pair-trial-submit", "large-trial-submit"):
+        if action == "large-trial-submit":
+            integer(data["approval"], 1, 2**63 - 1)
         return {"job": scheduler.submit_trial(TRIAL_OWNER, data)}
     if action == "job-submit":
         return {"job": jobs.submit(OWNER, {key: data[key] for key in fields})}
@@ -122,7 +130,7 @@ def local(scheduler, operation, data):
 def worker(scheduler, route, node, pin, data):
     operation = WORKER_ROUTES[route]
     with scheduler.enrollment.lock:
-        scheduler.enrollment.authorize(node, pin, "scheduling")
+        scheduler.enrollment.authorize(node, pin, "inference" if operation == "review-append" else "scheduling")
         return worker_operation(scheduler, operation, node, data)
 
 
@@ -135,10 +143,17 @@ def worker_operation(scheduler, operation, node, data, *, local_peer=False):
         if local_peer:
             required |= {"memory_bytes"}
     version = data.get("version")
-    pair_capable = type(version) is int and version == 2 and not local_peer and scheduler.catalog is not None
+    pair_capable = type(version) is int and version in (2, 3) and not local_peer and scheduler.catalog is not None
+    large_capable = pair_capable and version == 3
+    if operation == "review-append" and not large_capable:
+        raise Rejected("protocol_version", 409)
+    if operation == "capacity" and large_capable:
+        required |= {"large_revision", "single_capable"}
     fields = data.keys()
     if operation == "finish":
         fields = fields - ({"usage", "transport_evidence", "trial_measurement", "failure"} if pair_capable else {"usage"})
+        if large_capable:
+            fields -= {"phase_observation", "review_output"}
     if (fields != required or (not pair_capable and (type(version) is not int or version != 1))
             or data["node"] != node):
         raise Rejected("invalid")
@@ -154,12 +169,14 @@ def worker_operation(scheduler, operation, node, data, *, local_peer=False):
             return scheduler.set_capacity(node, session, data)
         dispatch = getattr(scheduler, "dispatch", None)
         transaction = (dispatch.conversations.transaction if dispatch is not None
-                       and operation == "finish" else scheduler.jobs.transaction)
+                       and (operation == "finish" or (large_capable and operation == "poll"))
+                       else scheduler.jobs.transaction)
         with transaction() as db:
             if operation == "poll":
-                return scheduler.poll(db, node, session, pair_capable=pair_capable)
+                return scheduler.poll(db, node, session, pair_capable=pair_capable, large_capable=large_capable)
             if operation != "cleaned":
-                return scheduler.assignment(db, operation, node, session, data, pair_capable=pair_capable)
+                return scheduler.assignment(db, operation, node, session, data, pair_capable=pair_capable,
+                                            large_capable=large_capable)
             response = scheduler.cleanup(db, node, session, data)
         # A lost response can be acknowledged again only after durable release.
         if "clean_ack" in response:

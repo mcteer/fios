@@ -66,12 +66,12 @@ def main():
     parser.add_argument("--runtime-state", type=Path)
     parser.add_argument("--recover-orbstack", action="store_true")
     args = parser.parse_args()
-    if args.recover_orbstack and (not args.watch or args.remote or args.inference_config):
+    if args.recover_orbstack and (not args.watch or args.remote or args.inference_config or args.pair_config):
         parser.error("OrbStack recovery requires the native telemetry watch process")
-    if args.pair_config and (not args.inference_config or not args.remote or args.node == "fios-core"):
+    if args.pair_config and (not args.remote or args.node == "fios-core"):
         parser.error("Paired execution requires an enrolled native Studio worker")
     try:
-        if args.inference_config:
+        if args.inference_config or args.pair_config:
             from agent.inference_worker import run_host
             run_host(args, observe)
             return

@@ -33,19 +33,20 @@ from backend.pair_trial import paired_rdma, transport_observation
 from backend.scheduler import Scheduler
 
 
-def staged_metadata(root, device):
+def staged_metadata(root, device, *, large=False, empty=False):
     from agent.native_runtime import digest_file, environment_root, manifest_digest, verify_environment
 
     model = root / "model"
     engine = root / "venv/bin/python"
-    files = {path.name: digest_file(path) for path in model.iterdir() if path.is_file()}
+    files = {} if empty else {path.name: digest_file(path) for path in model.iterdir() if path.is_file()}
     environment = root / "environment-files.json"
     site = environment_root(engine)
     environment.touch(mode=0o600)
     environment.write_text(json.dumps({path.relative_to(site).as_posix(): digest_file(path)
                                        for path in site.rglob("*") if path.is_file()}))
     executable = digest_file(engine)
-    engine_digest = verify_environment(engine, environment, "mlx_lm.server", executable, paired=True)
+    engine_digest = (verify_environment(engine, environment, "mlx_lm.server", executable, paired=True, large=True)
+                     if large else verify_environment(engine, environment, "mlx_lm.server", executable, paired=True))
     raw = subprocess.check_output(["/usr/bin/ibv_devinfo", "-d", device], timeout=3, text=True)
     guid = re.search(r"^\s*node_guid:\s*([0-9a-fA-F:]+)\s*$", raw, re.MULTILINE)
     if guid is None or "PORT_ACTIVE" not in raw or "Thunderbolt" not in raw:
@@ -72,9 +73,11 @@ def worker_config(root, request):
         write_json(fixture, document)
         fixtures[sha256(fixture.read_bytes()).hexdigest()] = str(fixture)
     write_json(root / "runtime.json", request["runtime"])
-    write_json(root / "pair.json", dict(runtime=str(root / "runtime.json"),
-                                      devices=["rdma_en5", "rdma_en5"], coordinator="192.168.0.1",
-                                      port=request["coordinate_port"], fixtures=fixtures))
+    pair = dict(runtime=str(root / "runtime.json"), devices=["rdma_en5", "rdma_en5"],
+                coordinator="192.168.0.1", port=request["coordinate_port"], fixtures=fixtures)
+    if "large_stage" in request:
+        pair["large_stage"] = request["large_stage"]
+    write_json(root / "pair.json", pair)
 
 
 def remote_worker(root, args):
@@ -163,12 +166,13 @@ def verify_tcp_control(hosts, remote, remote_dir, port, profile, devices, fixtur
           flush=True)
 
 
-def browser_turn(root, scheduler, profile, fixture):
+def browser_turn(root, scheduler, profile, fixture, *, qualified=False):
     """Qualify the browser-to-real-rank path in the disposable application."""
     catalog = scheduler.catalog
-    catalog.synthetic = True
-    catalog.record_synthetic_pair(profile, dict.fromkeys(STUDIOS, 8 * 1024**3))
-    catalog.change("paired-coding", None, profile.revision, synthetic=True)
+    if not qualified:
+        catalog.synthetic = True
+        catalog.record_synthetic_pair(profile, dict.fromkeys(STUDIOS, 8 * 1024**3))
+    catalog.change("paired-coding", None, profile.revision, synthetic=not qualified)
     bridge_secret = os.urandom(32)
     bridge_key = root / "bridge.key"
     bridge_key.touch(mode=0o600)
@@ -226,7 +230,7 @@ def browser_turn(root, scheduler, profile, fixture):
             raise ValueError("Paired web answer did not pass the fixture publication check")
         wait_for(lambda: not scheduler.jobs.get("local-operator", job)["slots"],
                  "Browser turn did not release both ranks", 20)
-        catalog.change("paired-coding", profile.revision, None, synthetic=True)
+        catalog.change("paired-coding", profile.revision, None, synthetic=not qualified)
         status, body = request("GET", prefix + "catalog")
         if status != 200 or json.loads(body)["aliases"]["paired-coding"]["available"]:
             raise ValueError("Withdrawing the test alias left it available")
@@ -234,7 +238,9 @@ def browser_turn(root, scheduler, profile, fixture):
           flush=True)
 
 
-def run_leases(hosts, options, remote, remote_dir, coordinate_port, no_thinking, *, link_window=False, web_only=False):
+def run_leases(hosts, options, remote, remote_dir, coordinate_port, no_thinking, *, link_window=False, web_only=False,
+               qualification_ledger=None, checker_port=None, checker_revision=None,
+               comparison=None):
     from enrollment_fixtures import Signer
 
     with tempfile.TemporaryDirectory(prefix="fios-jaccl-leases-") as folder, ExitStack() as resources:
@@ -269,10 +275,10 @@ def run_leases(hosts, options, remote, remote_dir, coordinate_port, no_thinking,
         profile = Profile.parse(dict(
             alias="paired-coding", host_class="m3-ultra-pair", devices=devices,
             artifact=metadata[0]["artifact"], engine=metadata[0]["engine"],
-            template=metadata[0]["template"], license="Apache-2.0", policy="f" * 64,
+            template=metadata[0]["template"], license="Apache-2.0", policy=checker_revision or "f" * 64,
             evaluation=fixture_hash, context=8192, output=1024,
             settings=dict(temperature=0, no_thinking=no_thinking)))
-        if not link_window and not web_only:
+        if (not link_window and not web_only) or qualification_ledger:
             verify_tcp_control(hosts, remote, remote_dir, coordinate_port + 1, profile, devices, fixture)
         recipes = {}
         for name, slots in (("baseline", STUDIOS[:1]), ("pair", STUDIOS)):
@@ -282,7 +288,7 @@ def run_leases(hosts, options, remote, remote_dir, coordinate_port, no_thinking,
                                           for slot in slots})
         recipes["interrupt"] = dict(recipes["pair"], fixture=long_hash, tokens=1024)
         scheduler = Scheduler(jobs, ledger, catalog=catalog, trial_recipes=recipes, trial_hardware=True)
-        if web_only:
+        if web_only or qualification_ledger:
             def policy(purpose, text, revision):
                 if revision != profile.document()["policy"]:
                     return False
@@ -292,6 +298,10 @@ def run_leases(hosts, options, remote, remote_dir, coordinate_port, no_thinking,
                     return json.loads(text)["answer"].strip().rstrip(".").casefold() == fixture["expected"].rstrip(".").casefold()
                 return purpose == "title" and 0 < len(text) < 160
 
+            if qualification_ledger:
+                from agent.text_policy import LoopbackPolicy
+
+                policy = LoopbackPolicy(checker_port)
             store = ConversationStore(jobs, os.urandom(32), catalog=catalog)
             scheduler.dispatch = Dispatch(scheduler, store, policy,
                                           policy_revision=profile.document()["policy"])
@@ -347,14 +357,16 @@ def run_leases(hosts, options, remote, remote_dir, coordinate_port, no_thinking,
                 raise ValueError("A real trial left a reservation behind")
             return result
 
-        for name in (() if link_window else ("baseline", "pair")):
-            result = settle(submit(name, name))
+        matched = {}
+        for name in (() if link_window and not qualification_ledger else ("baseline", "pair")):
+            matched[name] = submit(name, name)
+            result = settle(matched[name])
             print(json.dumps(dict(lease_trial=name, state=result["state"], reason=result["reason"],
                                   ranks=result["ranks"])), flush=True)
             if result["state"] != "succeeded":
                 raise ValueError(f"{name} trial did not pass its native fixture and cleanup")
 
-        for fault in (() if link_window else ("cancel", "rank-0", "rank-1")):
+        for fault in (() if link_window and not qualification_ledger else ("cancel", "rank-0", "rank-1")):
             job = submit("interrupt", fault)
             wait_for(lambda: all(json.loads(call(host, "rank-active")) for host in hosts),
                      "Both native ranks did not start", 40)
@@ -373,6 +385,7 @@ def run_leases(hosts, options, remote, remote_dir, coordinate_port, no_thinking,
 
         if link_window:
             print(f"LINK TEST WAITING TO ARM: {remote_dir}", flush=True)
+            print(f"Run on edge-b: /bin/sh {remote_dir}/arm_jaccl_link.sh", flush=True)
             wait_for(lambda: json.loads(call(hosts[1], "link-armed")),
                      "The operator did not arm the link test", 180)
             job = submit("interrupt", "physical-link-loss")
@@ -386,7 +399,7 @@ def run_leases(hosts, options, remote, remote_dir, coordinate_port, no_thinking,
                      "The operator link interruption was not observed", 40)
             lost_at = elapsed()
             result = settle(job, 17)
-            if result["state"] != "failed" or result["reason"] == "fixture_failed":
+            if result["state"] != "failed" or result["reason"] != "transport_unavailable":
                 raise ValueError(f"Link interruption settled as {result['state']} ({result['reason']})")
             if any(json.loads(call(host, "rank-active")) for host in hosts):
                 raise ValueError("A native rank survived physical link loss")
@@ -409,6 +422,45 @@ def run_leases(hosts, options, remote, remote_dir, coordinate_port, no_thinking,
             print(json.dumps(dict(fault="link", outcome=result["state"], reason=result["reason"],
                                   cleanup_seconds=cleanup_seconds,
                                   recovery_seconds=round(elapsed() - lost_at, 3))), flush=True)
+
+
+        if qualification_ledger:
+            # First qualify in the disposable ledger so the real publication
+            # path can use an actual paired profile. Export only after that
+            # browser turn and withdrawal succeed.
+            report = dict(
+                baseline=matched["baseline"], paired=matched["pair"],
+                cold_trials=1, warm_trials=5, worst_latency_ms=comparison["worst_latency_ms"],
+                latency_limit_ms=comparison["latency_limit_ms"],
+                checks=dict.fromkeys(("quality", "publication", "context", "cancellation",
+                                      "cleanup", "license", "rollback", "tcp_rejected",
+                                      "link_loss", "rank_loss"), True))
+            catalog.record_joint(profile, report)
+            browser_turn(root, scheduler, profile, fixture, qualified=True)
+            test_backup = root / "restore-source.sqlite"
+            jobs.backup(test_backup)
+            test_state = root / "restore-test"
+            test_state.mkdir(mode=0o700)
+            test_db = test_state / "jobs.sqlite"
+            JobLedger.initialize(test_db)
+            restored = JobLedger(test_db)
+            restored.restore(test_backup)
+            with restored.transaction(write=False) as db:
+                if (restored.incarnation(db) == jobs.context()
+                        or db.execute("SELECT 1 FROM model_aliases").fetchone()):
+                    raise ValueError("Comparable restore bypassed the existing fences")
+            # The file has job history and measurements, without fixture chat
+            # content. Strip expired transport credentials before exporting it.
+            with jobs.transaction() as db:
+                for row in db.execute("SELECT id,receipts FROM jobs").fetchall():
+                    entries = json.loads(row["receipts"])
+                    for entry in entries.values():
+                        for key in ("session", "grant", "epoch"):
+                            entry.pop(key, None)
+                    db.execute("UPDATE jobs SET receipts=? WHERE id=?",
+                               (json.dumps(entries), row["id"]))
+            jobs.backup(qualification_ledger)
+            print(json.dumps(dict(comparable=profile.revision, report=report)), flush=True)
 
 
 def stop_worker(process, call, host):
@@ -440,8 +492,8 @@ def active_rank(root):
 def cli():
     mode, root, *args = sys.argv[1:]
     root = Path(root)
-    if mode == "metadata":
-        print(json.dumps(staged_metadata(root, args[0])))
+    if mode in ("metadata", "metadata-large"):
+        print(json.dumps(staged_metadata(root, args[0], large=mode == "metadata-large", empty=args[1:] == ["empty"])))
     elif mode == "ring":
         ring_worker(root, json.load(sys.stdin))
     elif mode == "configure":

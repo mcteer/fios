@@ -157,7 +157,9 @@ class Handler(BaseHTTPRequestHandler):
         seen_answer = False
         sequence = 0
         active = {"active", "queued", "preparing", "running"}
-        deadline = time.monotonic() + 125
+        # The native controller still owns each job's deadline. Keep the
+        # browser attached for the longest supported large-model request.
+        deadline = time.monotonic() + 905
 
         def send(kind, **fields):
             nonlocal sequence

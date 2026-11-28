@@ -1,0 +1,377 @@
+"""Run approved architecture or full-pack trials on the two real Studios."""
+
+import argparse
+from contextlib import ExitStack
+from hashlib import sha256
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import shlex
+import socket
+import ssl
+import subprocess
+import sys
+from tempfile import NamedTemporaryFile, TemporaryDirectory
+
+from backend.enrollment import Ledger, STUDIOS, private_path
+from backend.enroll import admin_handler
+from backend.heartbeat import Listener, worker_handler
+from backend.job_ledger import JobLedger
+from backend.job_protocol import TRIAL_OWNER, operator
+from backend.machine_tls import context, fingerprint, management_address
+from backend.model_catalog import Catalog, Profile
+from backend.moe_suite import CAMPAIGNS, CODING, CONTROLS
+from backend.pair_trial import GIB, PAIR_ONLY
+from backend.scheduler import Scheduler
+from enrollment_fixtures import Signer
+from jaccl_lease_trial import stop_worker, wait_for
+from moe_full_stage import PeerCopy, acquire
+from verify_jaccl_model import HOSTS, OPTIONS, parallel, verified_wheels
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def verify(args):
+    prior_probe = getattr(args, "probe_ledger", None)
+    if prior_probe:
+        private_path(prior_probe)
+    stage = "full" if prior_probe else "probe"
+    run = "/private/tmp/fios-moe-probe-" + secrets.token_hex(8)
+    retained = getattr(args, "stage_record", None)
+    resume = getattr(args, "resume_stage", None)
+    keep_probe = getattr(args, "keep_probe_environment", None)
+    serving = getattr(args, "checker_record", None)
+    if serving:
+        private_path(serving)
+        if json.loads(serving.read_text())["revision"] != args.policy:
+            raise ValueError("The approved suite pins a different native checker")
+    if resume:
+        private_path(resume)
+        record = json.loads(resume.read_text())
+        run = record["run"]
+        if (not re.fullmatch(r"/private/tmp/fios-moe-probe-[0-9a-f]{16}", run)
+                or record["stage"] not in ("probe", "full")):
+            raise ValueError("Invalid full-pack staging record")
+    keep_stage = False
+    with TemporaryDirectory(prefix="fios-moe-probe-") as folder, ExitStack() as clean:
+        root = Path(folder)
+        state = root / "state"
+        Ledger.initialize(state)
+        ledger = Ledger(state)
+        if prior_probe:
+            # The probe approval is tied to this isolated ledger incarnation.
+            # Clone the completed, stopped harness for its next trial stage.
+            from shutil import copyfile
+
+            copyfile(prior_probe, state / "jobs.sqlite")
+            (state / "jobs.sqlite").chmod(0o600)
+        else:
+            JobLedger.initialize(state / "jobs.sqlite")
+        jobs = JobLedger(state / "jobs.sqlite")
+        if not prior_probe:
+            jobs.restore(args.comparable_ledger)
+        catalog = Catalog(jobs, rehearsal=bool(prior_probe))
+        with jobs.transaction(write=False) as db:
+            row = db.execute("SELECT revision FROM qualified_pairs LIMIT 2").fetchall()
+            if len(row) != 1:
+                raise ValueError("Expected one comparable hardware qualification")
+            comparable = row[0]["revision"]
+
+        def remote(host, *argv, payload=None, limit=30):
+            return subprocess.run(["ssh", *OPTIONS, host, shlex.join(map(str, argv))],
+                                  input=payload, text=True, stdout=subprocess.PIPE,
+                                  check=True, timeout=limit).stdout
+
+        def call(host, mode, *argv, payload=None, limit=30):
+            return remote(host, "env", f"PYTHONPATH={run}/src", f"{run}/venv/bin/python",
+                          "-B", f"{run}/jaccl_lease_trial.py", mode, run, *argv, payload=payload, limit=limit)
+
+        def send(host, files, destination):
+            subprocess.run(["scp", *OPTIONS, "-r", *map(str, files), f"{host}:{destination}"],
+                           check=True, timeout=40)
+
+        verified_wheels(root)
+        signer = Signer(root, "moe-probe")
+        certificate, key = signer.issue("fios-core", server=True)
+        staged = []
+        def prepare(host):
+            remote(host, "mkdir", "-m", "700", run)
+            staged.append(host)
+            send(host, [root / "wheels", root / "requirements.txt", ROOT / "src",
+                        Path(__file__).with_name("jaccl_lease_trial.py"),
+                        Path(__file__).with_name("moe_resources.py")], run)
+            remote(host, "/opt/homebrew/bin/python3", "-m", "venv", run + "/venv")
+            remote(host, run + "/venv/bin/python", "-m", "pip", "--isolated", "install", "--no-index",
+                   "--no-compile", "--require-hashes", "--find-links", run + "/wheels",
+                   "-r", run + "/requirements.txt", limit=120)
+            # Like the comparable harness, freeze installed package contents
+            # after removing host-specific bytecode generated by ensurepip.
+            remote(host, "/opt/homebrew/bin/python3", "-B", "-c",
+                   "from pathlib import Path; import shutil,sys; "
+                   "[shutil.rmtree(path) for path in list(Path(sys.argv[1]).glob('**/__pycache__'))]",
+                   run + "/venv/lib")
+            remote(host, "mkdir", "-m", "700", run + "/model")
+            return json.loads(call(host, "metadata-large", "rdma_en5"))
+
+        def remove_staging():
+            if keep_stage:
+                return
+            def remove(host):
+                remote(host, "/opt/homebrew/bin/python3", "-B", "-c",
+                       "from pathlib import Path; import sys,shutil; p=Path(sys.argv[1]); "
+                       "assert p.parent==Path('/private/tmp') and p.name.startswith('fios-moe-probe-'); "
+                       "shutil.rmtree(p)", run)
+                remote(host, "test", "!", "-e", run)
+            parallel(remove, staged)
+            if resume:
+                resume.unlink()
+
+        clean.callback(remove_staging)
+
+        def write_record(path, stage):
+            private_path(path.parent, directory=True)
+            with NamedTemporaryFile(mode="w", dir=path.parent, prefix=".stage-receipt-") as stream:
+                json.dump(dict(run=run, candidate=profile.revision, stage=stage), stream)
+                stream.flush()
+                os.link(stream.name, path)
+
+        if resume:
+            staged.extend(HOSTS)
+            metadata = parallel(lambda host: json.loads(call(host, "metadata-large", "rdma_en5", "empty")), HOSTS)
+        else:
+            metadata = parallel(prepare, HOSTS)
+        if metadata[0]["engine"] != metadata[1]["engine"]:
+            raise ValueError("Studio engine digests disagree")
+        pack = json.loads(args.pack_manifest.read_text())
+        policy = args.policy
+        evaluation = catalog.register_large_suite(json.loads(args.suite.read_text()))
+        devices = {slot: item["device"] for slot, item in zip(STUDIOS, metadata, strict=True)}
+        files = pack["files"]
+        template = files.get("chat_template.jinja", files.get("tokenizer_config.json"))["sha256"]
+        profile = Profile.parse(dict(
+            alias="large-moe", host_class="m3-ultra-pair", placement=PAIR_ONLY,
+            devices=devices, artifact=pack["artifact"], engine=metadata[0]["engine"],
+            template=template, policy=policy, evaluation=evaluation, license="Apache-2.0",
+            context=8192, output=1024, settings=dict(temperature=0, no_thinking=True)))
+        def observe():
+            def sample(host):
+                return json.loads(remote(host, "env", f"PYTHONPATH={run}/src", "/opt/homebrew/bin/python3",
+                                         "-B", run + "/moe_resources.py", run + "/model"))
+            return {slot: value for item in parallel(sample, HOSTS) for slot, value in item.items()}
+
+        if prior_probe:
+            with jobs.transaction(write=False) as db:
+                probe = db.execute("SELECT id FROM jobs WHERE owner=? AND request_key=? "
+                                   "AND state='succeeded'", (TRIAL_OWNER, "approved-probe")).fetchone()
+                if probe is None:
+                    raise ValueError("Expected one completed architecture probe")
+                catalog.large_basis(db, profile.revision, comparable)
+            if resume and record["candidate"] != profile.revision:
+                raise ValueError("Full-pack staging record has a different candidate")
+            print("Requesting full-pack staging authority against the cleaned two-Studio probe.", flush=True)
+            already_staged = bool(resume and record["stage"] == "full")
+            checkpoint = getattr(args, "weight_checkpoint", None)
+            with ExitStack() as copy_scope:
+                peer = (None if already_staged or checkpoint else
+                        PeerCopy(root, run, HOSTS, OPTIONS, remote, send, copy_scope))
+                budgets, approval = acquire(catalog, jobs, profile, comparable, probe["id"], pack,
+                                            args.pack_manifest, hosts=HOSTS, run=run, remote=remote,
+                                            send=send, observe=observe, peer=peer, staged=already_staged,
+                                            checkpoint=checkpoint)
+            cases = (*CONTROLS, *CODING, *CAMPAIGNS, "over-limit", "cancel", "rank-0", "rank-1",
+                     "link", "post-fault")
+            fixtures = {case: json.loads((args.suite.parent / (case + ".json")).read_text())
+                        for case in cases}
+        else:
+            catalog.register_large(profile)
+            files = json.loads(args.probe_manifest.read_text())
+            # MLX's process baseline is close to 1 GiB with this probe.
+            # Leave room for framework initialization while retaining the
+            # same independent 32 GiB headroom and zero-swap requirements.
+            budgets = {slot: dict(peak_bytes=4 * GIB, disk_bytes=2 * GIB) for slot in STUDIOS}
+
+            def approval():
+                decision = catalog.decide_large_stage(dict(
+                    candidate=profile.revision, comparable=comparable, incarnation=jobs.context(),
+                    budgets=budgets, observations=observe(), stage="probe", files=files))
+                if decision["decision"] != "approved":
+                    raise ValueError(f"Probe preflight refused: {decision['refusal']}")
+                return decision["approval"]
+
+            transfer = catalog.large_stage_authority(profile.revision, approval(), "probe")
+            parallel(lambda host: send(host, [args.probe / name for name in files], run + "/model"), HOSTS)
+
+            def check_probe(host):
+                proof = dict(ok=True, **transfer)
+                remote(host, "/bin/sh", "-c", 'umask 077; cat > "$1"', "sh",
+                       run + "/probe-approval.json", payload=json.dumps(proof))
+                remote(host, "env", f"PYTHONPATH={run}/src", "/opt/homebrew/bin/python3", "-B",
+                       run + "/moe_resources.py", run + "/model", "--verify-probe", run + "/probe-approval.json")
+
+            parallel(check_probe, HOSTS)
+            fixtures = {"probe": dict(prompt="Return only the word apple.", expected="apple")}
+
+        metadata = parallel(lambda host: json.loads(call(
+            host, "metadata-large", "rdma_en5", limit=480 if prior_probe else 30)), HOSTS)
+        if prior_probe and any(item["artifact"] != pack["artifact"] for item in metadata):
+            raise ValueError("Staged full pack diverges from reviewed metadata")
+        if retained:
+            write_record(retained, "full")
+            if resume:
+                resume.unlink()
+            keep_stage = True
+            print(f"Full pack verified on both Studios. Receipt saved to {retained}.", flush=True)
+            return
+        recipes = {}
+        for case, fixture in fixtures.items():
+            checksum = sha256(json.dumps(fixture, ensure_ascii=True).encode()).hexdigest()
+            values = dict(candidate=profile.revision, fixture=checksum, engine="mlx-lm", devices=devices,
+                          tokens=1, deadline=90, placement=PAIR_ONLY, stage=stage, artifact=pack["artifact"],
+                          budgets={slot: dict(floor=32 * GIB, ceiling=budgets[slot]["peak_bytes"])
+                                   for slot in STUDIOS})
+            if prior_probe:
+                values.update(case=case, tokens=32 if case in (*CONTROLS, "post-fault") else 1024, deadline=700)
+                if case in CODING:
+                    values["review"] = "coding"
+                if case in CAMPAIGNS:
+                    values["review"] = "campaign"
+            recipes[case] = values
+        scheduler = Scheduler(jobs, ledger, catalog=catalog, trial_recipes=recipes, trial_hardware=True)
+        bind = management_address(socket.gethostbyname("fios-core.local"))
+        workers = clean.enter_context(ExitStack())
+        listener = Listener((bind, 8742), worker_handler(
+            ledger, context(signer.ca, certificate, key, server=True), scheduler)).start()
+        workers.callback(listener.close)
+        # Stay below the Studios' dynamic TCP port range for the JACCL
+        # listener used by this disposable pair.
+        coordinate_port = 47000 + secrets.randbelow(1000)
+        processes = []
+        for host, item, slot in zip(HOSTS, metadata, STUDIOS, strict=True):
+            leaf, worker_key = signer.issue(slot)
+            ledger.change("approve", slot, None, machine=slot,
+                          pin=fingerprint(ssl.PEM_cert_to_DER_cert(leaf.read_text())))
+            for file, name in ((signer.ca, "ca.pem"), (leaf, "leaf.pem"), (worker_key, "leaf.key")):
+                send(host, [file], run + "/" + name)
+            remote(host, "chmod", "600", run + "/leaf.key")
+            call(host, "configure", payload=json.dumps(dict(
+                runtime=dict(item["native"], profile=profile.document(), revision=profile.revision),
+                fixtures=fixtures, coordinate_port=coordinate_port,
+                large_stage=dict(stage=stage, artifact=item["artifact"]))))
+            command = ["env", f"PYTHONPATH={run}/src", f"{run}/venv/bin/python", "-B",
+                       run + "/jaccl_lease_trial.py", "worker", run, "--node", slot,
+                       "--remote", bind, "--server-name", "fios-core", "--port", "8742",
+                       "--ca", run + "/ca.pem", "--cert", run + "/leaf.pem", "--key", run + "/leaf.key",
+                       "--pair-config", run + "/pair.json", "--runtime-state", run]
+            process = subprocess.Popen(["ssh", *OPTIONS, host, shlex.join(command)], stdout=subprocess.DEVNULL)
+            processes.append(process)
+            workers.callback(stop_worker, process, call, host)
+
+        def ready():
+            if any(process.poll() is not None for process in processes):
+                raise ValueError("Studio worker exited before authenticating")
+            return all(scheduler.fresh(slot) for slot in STUDIOS)
+
+        # A restored archive fences every possible executor. There is no
+        # Mini inference worker in this disposable pair-only service.
+        with jobs.transaction() as db:
+            db.execute("DELETE FROM holds WHERE slot='fios-core' AND kind='cleanup' AND job IS NULL")
+        wait_for(ready, "Both staged workers did not authenticate", 480 if prior_probe else 45)
+        def submit(recipe, key):
+            action = "large-trial-submit"
+            return operator(scheduler, action, dict(action=action, candidate=profile.revision, recipe=recipe,
+                            approval=approval(), incarnation=jobs.context(), key=key))["job"]["id"]
+
+        def settle(job, limit):
+            def settled():
+                scheduler.sweep()
+                view = scheduler.describe(TRIAL_OWNER, job=job, diagnostics=True)[0]
+                return view if (view["state"] in ("failed", "expired", "succeeded", "cancelled")
+                                and not view["slots"]) else None
+            return wait_for(settled, "Trial did not finish and clear its reservations", limit)
+
+        if prior_probe:
+            from moe_full_suite import run_native
+
+            admin_path = root / "operator.sock"
+            admin_listener = Listener(str(admin_path), admin_handler(
+                ledger, None, None, os.getuid(), scheduler), family=socket.AF_UNIX).start()
+            clean.callback(admin_listener.close)
+            send(HOSTS[1], [Path(__file__).with_name("arm_jaccl_link.sh")], run)
+            native, failures = run_native(scheduler, HOSTS, call, remote, run, admin_path, submit, settle, profile)
+            if failures:
+                raise ValueError(f"Full-pack qualification failed these cases: {', '.join(sorted(failures))}")
+            if serving is None:
+                raise ValueError("Full qualification requires the reviewed native checker record")
+            from moe_browser_suite import run_browser
+
+            revision = run_browser(root, scheduler, admin_path, profile, comparable, approval,
+                                   native, args.suite.parent, serving)
+            print(f"Recorded full native and browser qualification for {revision}.", flush=True)
+        else:
+            job = submit("probe", "approved-probe")
+            view = settle(job, 105)
+            if view["state"] != "succeeded":
+                ranks = {slot: dict(result=rank["result"], failure=rank.get("failure"))
+                         for slot, rank in view["ranks"].items()}
+                raise ValueError(f"Paired probe failed: {view['reason']} ({ranks})")
+            print(json.dumps({"candidate": profile.revision, "job": job, "rank_evidence": view["ranks"]}),
+                  flush=True)
+
+        with jobs.transaction() as db:
+            for row in db.execute("SELECT id,receipts FROM jobs").fetchall():
+                receipts = json.loads(row["receipts"])
+                for receipt in receipts.values():
+                    for key in ("session", "grant", "epoch"):
+                        receipt.pop(key, None)
+                db.execute("UPDATE jobs SET receipts=? WHERE id=?", (json.dumps(receipts), row["id"]))
+        jobs.backup(args.output_ledger)
+        if keep_probe:
+            workers.close()
+
+            def prune(host):
+                remote(host, "/opt/homebrew/bin/python3", "-B", "-c",
+                       "from pathlib import Path; import shutil,sys; "
+                       "p=Path(sys.argv[1]); m=p/'model'; "
+                       "assert p.parent==Path('/private/tmp') and p.name.startswith('fios-moe-probe-'); "
+                       "shutil.rmtree(m); m.mkdir(mode=0o700); "
+                       "names=('ca.pem','leaf.pem','leaf.key','pair.json','runtime.json',"
+                       "'approved-fixture-probe.json','probe-approval.json','trial-worker.pid'); "
+                       "[(p/name).unlink(missing_ok=True) for name in names]", run)
+
+            parallel(prune, HOSTS)
+            write_record(keep_probe, "probe")
+            keep_stage = True
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for field in ("pack-manifest", "suite", "output-ledger"):
+        parser.add_argument(f"--{field}", type=Path, required=True)
+    for field in ("comparable-ledger", "probe-manifest", "probe", "probe-ledger"):
+        parser.add_argument(f"--{field}", type=Path)
+    parser.add_argument("--policy", required=True)
+    staging = parser.add_mutually_exclusive_group()
+    staging.add_argument("--stage-record", type=Path)
+    staging.add_argument("--keep-probe-environment", type=Path)
+    parser.add_argument("--resume-stage", type=Path)
+    parser.add_argument("--checker-record", type=Path)
+    parser.add_argument("--weight-checkpoint", type=Path)
+    args = parser.parse_args()
+    if socket.gethostname().split(".")[0] != "fios-core":
+        parser.error("Run through the authorized Mini operator")
+    if (args.stage_record or args.resume_stage or args.weight_checkpoint) and not args.probe_ledger:
+        parser.error("Full-pack staging requires a completed probe ledger")
+    if args.keep_probe_environment and args.probe_ledger:
+        parser.error("Keep a probe environment only after running the probe")
+    if not args.probe_ledger and not all((args.comparable_ledger, args.probe_manifest, args.probe)):
+        parser.error("An architecture probe requires the comparable ledger and reduced probe files")
+    if args.probe_ledger and not args.stage_record and not args.checker_record:
+        parser.error("Full qualification requires the reviewed native checker record")
+    verify(args)
+
+
+if __name__ == "__main__":
+    main()

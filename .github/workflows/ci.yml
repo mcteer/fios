@@ -23,7 +23,7 @@ jobs:
         env:
           SPECIFY_FEATURE_NO_PERSIST: "1"
         run: |
-          for feature in specs/001-platform-foundation specs/002-studio-enrollment specs/003-job-ledger-scheduling specs/004-private-chat-coding specs/005-paired-studio-inference; do
+          for feature in specs/001-platform-foundation specs/002-studio-enrollment specs/003-job-ledger-scheduling specs/004-private-chat-coding specs/005-paired-studio-inference specs/006-large-moe-qualification; do
             SPECIFY_FEATURE_DIRECTORY="$feature" bash .specify/scripts/bash/check-prerequisites.sh --json --require-spec --require-tasks
           done
 
@@ -40,6 +40,9 @@ jobs:
         run: |
           make pair-test
           PYTHONPATH=src python3 -B -m unittest discover -s tests -p test_orbstack_recovery.py -v
+
+      - name: Run portable large-model placement tests
+        run: make moe-test
 
       - name: Validate the dedicated management and chat container definitions
         env:

@@ -37,6 +37,37 @@ TRIAL_PROFILE = json.loads(os.environ["FIOS_CHAT_TRIAL_PROFILE"]) if os.environ.
     "FIOS_CHAT_TRIAL_PROFILE") else DEFAULT_TRIAL_PROFILE
 
 
+class StreamDeadlineTests(unittest.TestCase):
+    def test_live_turn_can_publish_after_the_former_stream_limit(self):
+        from io import BytesIO
+        from threading import Lock
+        from types import SimpleNamespace
+        from unittest.mock import Mock, patch
+
+        from backend import core
+
+        bridge = Mock()
+        job = "a" * 32
+        turn = dict(job=job, state="running", answer="", revision="b" * 64, usage=None)
+        bridge.call.side_effect = (
+            {"ticket": "ticket"}, {"turns": [turn]},
+            {"ticket": None}, {"turns": [dict(turn, state="succeeded", answer="Finished")]},
+        )
+        handler = object.__new__(core.Handler)
+        handler.server = SimpleNamespace(stream_lock=Lock(), stream_jobs=set(), chat=bridge)
+        handler.wfile = BytesIO()
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        clock = iter((0, 0, 126))
+        with patch.object(core, "time", SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda _: None)):
+            handler.chat_stream("test-conversation", job, after=0)
+        self.assertIn(b"Finished", handler.wfile.getvalue())
+        self.assertEqual([call.args[0] for call in bridge.call.call_args_list],
+                         ["stream", "conversation", "stream", "conversation"])
+        self.assertEqual(handler.server.stream_jobs, set())
+
+
 class ChatWebTests(unittest.TestCase):
     def setUp(self):
         resources = ExitStack()
@@ -171,6 +202,8 @@ class ChatWebTests(unittest.TestCase):
         catalog = json.loads(content)
         self.assertTrue(catalog["aliases"]["general-chat"]["available"])
         self.assertFalse(catalog["aliases"]["coding"]["available"])
+        self.assertEqual(catalog["aliases"]["large-moe"],
+                         dict(available=False, revision=None, reason="unqualified"))
         status, created = post("create", {"key": "one"})
         self.assertEqual(status, 200, created)
         cid = created["id"]
@@ -225,7 +258,8 @@ class ChatWebTests(unittest.TestCase):
     def test_chat_page_renders_in_webkit(self):
         result = subprocess.run([os.environ["FIOS_CHAT_TEST_WEBKIT"],
                                  f"http://127.0.0.1:{self.web_port}/chat"],
-                                check=True, capture_output=True, text=True, timeout=20)
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
         print(result.stdout.strip(), flush=True)
 
     def test_worker_executes_and_reconciles_via_native_channel(self):

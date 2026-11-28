@@ -53,6 +53,81 @@ def admin_handler(ledger, openssl, ca, operator, scheduler=None):
                 result = ledger.status()
             elif isinstance(action, str) and action in job_protocol.OPERATOR_FIELDS:
                 result = job_protocol.operator(scheduler, action, data)
+            elif action == "large-policy-check":
+                deadline = time.monotonic() + 33
+                if scheduler is None or scheduler.catalog is None or scheduler.dispatch is None:
+                    raise Rejected("rehearsal_unavailable", 409)
+                if data.keys() != {"action", "report"}:
+                    raise Rejected("invalid_policy_fixture")
+                result = scheduler.catalog.verify_policy_fixture(
+                    data["report"], scheduler.dispatch.checker, scheduler.dispatch.policy_revision)
+            elif action in ("large-rehearsal-open", "large-rehearsal-observe", "large-rehearsal-record",
+                            "large-rehearsal-close"):
+                if scheduler is None or scheduler.catalog is None or scheduler.dispatch is None:
+                    raise Rejected("rehearsal_unavailable", 409)
+                with scheduler.enrollment.lock:
+                    if action == "large-rehearsal-close":
+                        if data.keys() != {"action"}:
+                            raise Rejected("invalid_rehearsal")
+                        scheduler.catalog.rehearsal = None
+                        scheduler.sweep()
+                        result = {}
+                    elif data.keys() != {"action", "report"}:
+                        raise Rejected("invalid_rehearsal")
+                    elif action == "large-rehearsal-open":
+                        result = scheduler.catalog.open_rehearsal(data["report"])
+                    else:
+                        with scheduler.dispatch.conversations.transaction() as db:
+                            if action == "large-rehearsal-observe":
+                                scheduler.catalog.record_rehearsal_observation(db, data["report"])
+                                result = {}
+                            else:
+                                result = {"revision": scheduler.catalog.record_large_qualification(db, data["report"])}
+            elif action == "large-model-suite":
+                if scheduler is None or scheduler.catalog is None:
+                    raise Rejected("scheduling_unavailable", 503)
+                if data.keys() != {"action", "suite"}:
+                    raise Rejected("invalid_moe_suite")
+                result = {"evaluation": scheduler.catalog.register_large_suite(data["suite"])}
+            elif action == "large-review-verdict":
+                if scheduler is None or scheduler.catalog is None:
+                    raise Rejected("scheduling_unavailable", 503)
+                if data.keys() != {"action", "blind", "digest", "verdict"}:
+                    raise Rejected("invalid_review_verdict")
+                with scheduler.enrollment.lock:
+                    with scheduler.jobs.transaction() as db:
+                        job = scheduler.reviews.grade(db, data["blind"], data["digest"], data["verdict"])
+                    scheduler.reviews.samples.pop(job, None)
+                result = {}
+            elif action == "large-model-stage-check":
+                if scheduler is None or scheduler.catalog is None:
+                    raise Rejected("scheduling_unavailable", 503)
+                if data.keys() != {"action", "candidate", "approval", "stage"}:
+                    raise Rejected("invalid_stage")
+                result = scheduler.catalog.large_stage_authority(
+                    data["candidate"], data["approval"], data["stage"])
+            elif action == "large-model-stage":
+                if scheduler is None or scheduler.catalog is None:
+                    raise Rejected("scheduling_unavailable", 503)
+                if data.keys() != {"action", "request"}:
+                    raise Rejected("invalid_stage")
+                result = scheduler.catalog.decide_large_stage(data["request"])
+            elif action == "large-model-resources":
+                if scheduler is None or scheduler.catalog is None:
+                    raise Rejected("scheduling_unavailable", 503)
+                if data.keys() != {"action", "candidate", "comparable", "budgets", "observations"}:
+                    raise Rejected("invalid_evidence")
+                result = scheduler.catalog.evaluate_large_resources(
+                    data["candidate"], data["comparable"], data["budgets"], data["observations"])
+            elif action == "large-model-register":
+                if scheduler is None or scheduler.catalog is None:
+                    raise Rejected("scheduling_unavailable", 503)
+                if data.keys() != {"action", "profile"}:
+                    raise Rejected("invalid_profile")
+                from .model_catalog import Profile
+                profile = Profile.parse(data["profile"])
+                scheduler.catalog.register_large(profile)
+                result = {"revision": profile.revision}
             elif action == "model-record":
                 if scheduler is None or scheduler.catalog is None:
                     raise Rejected("scheduling_unavailable", 503)
@@ -121,7 +196,7 @@ def admin_handler(ledger, openssl, ca, operator, scheduler=None):
 
 def command(path, data):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + (34 if data.get("action") == "large-policy-check" else 3)
         timeout(conn, deadline)
         conn.connect(str(path))
         if peer_uid(conn) != os.geteuid():
@@ -191,7 +266,7 @@ def serve(args):
             with jobs.transaction(write=False) as db:
                 if db.execute("PRAGMA user_version").fetchone()[0] != 2:
                     raise ValueError("Migrate the job ledger before enabling inference")
-            catalog = Catalog(jobs)
+            catalog = Catalog(jobs, rehearsal=args.large_rehearsal)
             trial_recipes = None
             if args.pair_trials:
                 private_path(args.pair_trials)
@@ -202,9 +277,18 @@ def serve(args):
                 trial_recipes = json_object(recipe_bytes)
             scheduler = Scheduler(jobs, ledger, catalog=catalog, trial_recipes=trial_recipes,
                                   trial_hardware=not args.test_loopback)
-            store = ConversationStore(jobs, key, catalog=catalog)
-            scheduler.dispatch = Dispatch(scheduler, store, LoopbackPolicy(args.policy_port),
-                                          policy_revision=args.policy_revision)
+            rehearsal_directory = None
+            if args.large_rehearsal:
+                if not args.chat_bridge_key or not args.pair_trials:
+                    raise ValueError("Rehearsal needs a private browser bridge and fixed trial recipes")
+                import tempfile
+
+                rehearsal_directory = Path(stack.enter_context(tempfile.TemporaryDirectory(
+                    prefix="moe-rehearsal-", dir=directory)))
+            store = ConversationStore(jobs, key, catalog=catalog, directory=rehearsal_directory)
+            scheduler.dispatch = Dispatch(
+                scheduler, store, LoopbackPolicy(args.policy_port, long_context=args.policy_long_context),
+                policy_revision=args.policy_revision, long_context=args.policy_long_context)
 
             def verify_peer(conn):
                 if peer_uid(conn) != os.geteuid():
@@ -235,7 +319,8 @@ def serve(args):
                             for node, record in nodes.items()}
 
                 chat_bridge = Listener(("127.0.0.1", args.chat_bridge_port),
-                                       browser_handler(scheduler, bridge_secret, inventory), capacity=8)
+                                       browser_handler(scheduler, bridge_secret, inventory,
+                                                       rehearsal=args.large_rehearsal), capacity=8)
                 stack.callback(chat_bridge.close)
         if args.synthetic_scheduling:
             if not args.test_loopback:
@@ -296,8 +381,10 @@ def main():
             p.add_argument("--synthetic-scheduling", action="store_true")
             p.add_argument("--inference-key", type=Path)
             p.add_argument("--pair-trials", type=Path)
+            p.add_argument("--large-rehearsal", action="store_true")
             p.add_argument("--policy-port", type=int)
             p.add_argument("--policy-revision")
+            p.add_argument("--policy-long-context", action="store_true")
             p.add_argument("--chat-bridge-key", type=Path)
             p.add_argument("--chat-bridge-port", type=int)
             p.add_argument("--chat-observations", type=Path, default=Path(".fios/observations"))
@@ -307,6 +394,18 @@ def main():
     trial.add_argument("revision")
     trial.add_argument("slot", choices=("fios-core", *STUDIOS))
     sub.add_parser("model-record").add_argument("report", type=Path)
+    sub.add_parser("large-model-register").add_argument("manifest", type=Path)
+    sub.add_parser("large-model-resources").add_argument("report", type=Path)
+    sub.add_parser("large-model-stage").add_argument("report", type=Path)
+    sub.add_parser("large-model-suite").add_argument("report", type=Path)
+    sub.add_parser("large-rehearsal-close")
+    for action in ("large-rehearsal-open", "large-rehearsal-observe", "large-rehearsal-record", "large-policy-check"):
+        sub.add_parser(action).add_argument("report", type=Path)
+    sub.add_parser("large-review-verdict").add_argument("report", type=Path)
+    stage_check = sub.add_parser("large-model-stage-check")
+    stage_check.add_argument("candidate")
+    stage_check.add_argument("approval", type=int)
+    stage_check.add_argument("stage", choices=("probe", "full"))
     for action in ("model-promote", "model-withdraw"):
         p = sub.add_parser(action)
         from .model_catalog import ALIASES
@@ -337,6 +436,32 @@ def main():
             data = {"action": args.action}
             if args.action in job_protocol.OPERATOR_FIELDS:
                 data.update({key: getattr(args, key) for key in job_protocol.OPERATOR_FIELDS[args.action]})
+            elif args.action == "large-model-register":
+                with args.manifest.open("rb") as manifest:
+                    data["profile"] = json_object(manifest.read(ADMIN_LIMIT))
+            elif args.action in ("large-rehearsal-open", "large-rehearsal-observe", "large-rehearsal-record", "large-policy-check"):
+                with args.report.open("rb") as report_file:
+                    data["report"] = json_object(report_file.read(ADMIN_LIMIT))
+            elif args.action == "large-model-suite":
+                with args.report.open("rb") as report_file:
+                    data["suite"] = json_object(report_file.read(ADMIN_LIMIT))
+            elif args.action == "large-review-verdict":
+                with args.report.open("rb") as report_file:
+                    report = json_object(report_file.read(ADMIN_LIMIT))
+                if report.keys() != {"blind", "digest", "verdict"}:
+                    raise ValueError("Invalid review verdict")
+                data.update(report)
+            elif args.action == "large-model-stage-check":
+                data.update(candidate=args.candidate, approval=args.approval, stage=args.stage)
+            elif args.action == "large-model-stage":
+                with args.report.open("rb") as report_file:
+                    data["request"] = json_object(report_file.read(ADMIN_LIMIT))
+            elif args.action == "large-model-resources":
+                with args.report.open("rb") as report_file:
+                    report = json_object(report_file.read(ADMIN_LIMIT))
+                if report.keys() != {"candidate", "comparable", "budgets", "observations"}:
+                    raise ValueError("Invalid resource report")
+                data.update(report)
             elif args.action == "model-record":
                 with args.report.open("rb") as report_file:
                     report = json_object(report_file.read(ADMIN_LIMIT))

@@ -7,6 +7,8 @@ from .job_ledger import KEY, TOKEN_LIMIT, integer
 
 ENGINES = ("mlx-lm", "mlx-serve", "exo")
 GIB = 1024**3
+PAIR_ONLY = "studio_pair_only"
+LARGE_FLOOR = 32 * GIB
 
 
 def digest(value):
@@ -22,14 +24,23 @@ def recipe_name(value):
 
 
 def recipes(document):
-    if not isinstance(document, dict) or len(document) > 16:
+    if not isinstance(document, dict) or len(document) > 32:
         raise Rejected("invalid_recipe")
     return {recipe_name(name): recipe(value) for name, value in document.items()}
 
 
 def recipe(value):
     fields = {"candidate", "fixture", "engine", "devices", "tokens", "deadline", "budgets"}
-    if not isinstance(value, dict) or value.keys() != fields or value["engine"] not in ENGINES:
+    if not isinstance(value, dict):
+        raise Rejected("invalid_recipe")
+    large = "placement" in value
+    if large:
+        fields |= {"placement", "stage", "artifact"}
+        if "review" in value:
+            fields.add("review")
+        if "case" in value:
+            fields.add("case")
+    if value.keys() != fields or value["engine"] not in ENGINES:
         raise Rejected("invalid_recipe")
     budgets, devices = value["budgets"], value["devices"]
     if not isinstance(budgets, dict) or set(budgets) not in ({STUDIOS[0]}, {STUDIOS[1]}, set(STUDIOS)):
@@ -44,14 +55,32 @@ def recipe(value):
     mapped = {slot: digest(device) for slot, device in devices.items()}
     if len(set(mapped.values())) != len(mapped):
         raise Rejected("invalid_recipe")
-    return dict(candidate=digest(value["candidate"]), fixture=digest(value["fixture"]),
+    result = dict(candidate=digest(value["candidate"]), fixture=digest(value["fixture"]),
                 engine=value["engine"], devices=mapped, budgets=bounds,
                 tokens=integer(value["tokens"], 1, TOKEN_LIMIT),
                 deadline=integer(value["deadline"], 1, 3600))
+    if large:
+        if (value["placement"] != PAIR_ONLY or value["stage"] not in ("probe", "full")
+                or budgets.keys() != set(STUDIOS) or result["tokens"] > 1024
+                or any(item["floor"] < LARGE_FLOOR or item["floor"] + item["ceiling"] > 256 * GIB
+                       for item in bounds.values())):
+            raise Rejected("invalid_recipe")
+        result.update(placement=PAIR_ONLY, stage=value["stage"], artifact=digest(value["artifact"]))
+        if "review" in value:
+            if value["stage"] != "full" or value["review"] not in ("coding", "campaign"):
+                raise Rejected("invalid_recipe")
+            result["review"] = value["review"]
+        if "case" in value:
+            if value["stage"] != "full":
+                raise Rejected("invalid_recipe")
+            result["case"] = recipe_name(value["case"])
+    return result
 
 
-def trial_measurement(value, *, ceiling, deadline, tokens):
+def trial_measurement(value, *, ceiling, deadline, tokens, input_limit=None):
     fields = {"peak_bytes", "first_text_ms", "elapsed_ms", "fixture_passed", "completed_tokens"}
+    if input_limit is not None:
+        fields.add("timing")
     if (not isinstance(value, dict) or value.keys() != fields
             or type(value["fixture_passed"]) is not bool):
         raise Rejected("invalid_trial_measurement")
@@ -59,6 +88,16 @@ def trial_measurement(value, *, ceiling, deadline, tokens):
     integer(value["peak_bytes"], 1, ceiling - 1)
     integer(value["completed_tokens"], 1, tokens)
     integer(value["first_text_ms"], 0, elapsed)
+    if input_limit is not None:
+        timing = value["timing"]
+        if not isinstance(timing, dict) or timing.keys() != {"input_tokens", "prefill_ms", "decode_ms"}:
+            raise Rejected("invalid_trial_timing")
+        integer(timing["input_tokens"], 1, input_limit)
+        prefill = integer(timing["prefill_ms"], 1, elapsed)
+        if value["completed_tokens"] == 1:
+            integer(timing["decode_ms"], 0, 0)
+        else:
+            integer(timing["decode_ms"], 1, elapsed - prefill + 1)
     return value
 
 

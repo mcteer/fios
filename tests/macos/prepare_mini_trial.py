@@ -17,7 +17,7 @@ def model_files(model):
     return {file.name: digest_file(file) for file in model.iterdir() if file.suffix in names}
 
 
-def prepare(root, engine, chat, guard, output_tokens):
+def prepare(root, engine, chat, guard, output_tokens, policy_input_limit=4096):
     private_path(root, directory=True)
     executable = digest_file(engine)
     site = environment_root(engine)
@@ -32,8 +32,13 @@ def prepare(root, engine, chat, guard, output_tokens):
         chat_port, guard_port = first.getsockname()[1], second.getsockname()[1]
     chat_hashes, guard_hashes = model_files(chat), model_files(guard)
     worker = Path(__file__).resolve().parents[2] / "src" / "agent" / "policy_worker.py"
-    policy = manifest_digest(dict(artifact=manifest_digest(guard_hashes), engine=fingerprint,
-                                  prompt=prompt_digest("framed"), worker=digest_file(worker)))
+    identity = dict(artifact=manifest_digest(guard_hashes), engine=fingerprint,
+                    prompt=prompt_digest("framed"), worker=digest_file(worker))
+    if policy_input_limit != 4096:
+        identity["input_limit"] = policy_input_limit
+        identity["rank"] = {name: digest_file(worker.with_name(name))
+                            for name in ("policy_rank.py", "macos_memory.py", "moe_watchdog.py")}
+    policy = manifest_digest(identity)
     profile = dict(alias="general-chat", host_class="m4-pro-mini", artifact=manifest_digest(chat_hashes),
                    engine=fingerprint, template=chat_hashes.get(
                        "chat_template.jinja", chat_hashes.get("tokenizer_config.json")),
@@ -63,9 +68,10 @@ def main():
     for name in ("state", "engine", "chat", "guard"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--output-tokens", type=int, default=512)
+    parser.add_argument("--policy-input-limit", type=int, choices=(4096, 12288), default=4096)
     args = parser.parse_args()
     os.umask(0o077)
-    prepare(args.state, args.engine, args.chat, args.guard, args.output_tokens)
+    prepare(args.state, args.engine, args.chat, args.guard, args.output_tokens, args.policy_input_limit)
 
 
 if __name__ == "__main__":

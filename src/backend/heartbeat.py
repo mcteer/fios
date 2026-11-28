@@ -142,12 +142,10 @@ class Listener:
 
 
 def worker_handler(ledger, context, scheduler=None):
+    from .chat_dispatch import OPERATIONS
     from .job_protocol import WORKER_ROUTES, worker
 
-    data_routes = {}
-    if scheduler and scheduler.dispatch:
-        from .chat_dispatch import OPERATIONS
-        data_routes = {"/v1/inference/" + operation: operation for operation in OPERATIONS}
+    data_routes = {"/v1/inference/" + operation: operation for operation in OPERATIONS}
 
     def handle(raw, _peer, deadline):
         timeout(raw, deadline)
@@ -196,10 +194,10 @@ def worker_handler(ledger, context, scheduler=None):
 
                     # Input frames retain the original three-second deadline.
                     # Classification can inspect both the answer and its title.
-                    result_deadline = time.monotonic() + 12
+                    deadline = time.monotonic() + scheduler.dispatch.policy_deadline
                     result = scheduler.dispatch.handle(data_routes[target], node, session, data,
                                                        authorize_peer=verify_peer)
-                    reply(conn, result_deadline, 200, result)
+                    reply(conn, deadline, 200, result)
                 elif target in WORKER_ROUTES:
                     reply(conn, deadline, 200, worker(scheduler, target, node, pin, data))
                 elif target == "/v1/sessions":

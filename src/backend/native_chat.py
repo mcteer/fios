@@ -67,7 +67,7 @@ def worker_call(path, operation, data, verify_peer):
     return result
 
 
-def browser_handler(scheduler, secret, inventory=None):
+def browser_handler(scheduler, secret, inventory=None, *, rehearsal=False):
     from hmac import compare_digest
     import re
 
@@ -75,10 +75,11 @@ def browser_handler(scheduler, secret, inventory=None):
     from .heartbeat import read_request, reply
     from .job_ledger import identifier
     from .job_protocol import OWNER
-    from .model_catalog import ALIASES
+    from .model_catalog import ALIASES, LARGE_ALIAS
     from .wire import read_exact
 
     store = scheduler.dispatch.conversations
+    owner = "local-moe-rehearsal" if rehearsal else OWNER
 
     def action_result(action, data):
         fields = {
@@ -92,7 +93,11 @@ def browser_handler(scheduler, secret, inventory=None):
         if action == "pair-status":
             return scheduler.pair_status()
         with scheduler.enrollment.lock, scheduler.jobs.transaction(write=False) as db:
-            profiles = {alias: scheduler.catalog.active(db, alias) for alias in ALIASES}
+            if rehearsal:
+                profiles = dict.fromkeys(ALIASES)
+                profiles[LARGE_ALIAS] = scheduler.catalog.rehearsal_profile(db)
+            else:
+                profiles = {alias: scheduler.catalog.active(db, alias) for alias in ALIASES}
             policies = {item["policy"] for item in profiles.values() if item}
             policy = scheduler.dispatch.policy_revision
             if policy is None and len(policies) == 1:
@@ -106,6 +111,8 @@ def browser_handler(scheduler, secret, inventory=None):
                     if available:
                         intent = dict(resource_class="inference", alias=alias, profile=revision,
                                       tokens=item["output"])
+                        if rehearsal:
+                            intent["rehearsal"] = item["rehearsal"]
                         if scheduler.eligible(db, intent):
                             reason = "ready"
                         elif scheduler.eligible(db, intent, check_holds=False):
@@ -115,31 +122,31 @@ def browser_handler(scheduler, secret, inventory=None):
                     aliases[alias] = dict(available=available, revision=revision, reason=reason)
                 return {"incarnation": scheduler.jobs.incarnation(db), "aliases": aliases}
         if action == "history":
-            return store.history(OWNER, policy, data["before"])
+            return store.history(owner, policy, data["before"])
         if action == "conversation":
-            return store.read(OWNER, data["id"], policy)
+            return store.read(owner, data["id"], policy)
         if action == "stream":
             scheduler.sweep()
             ticket = data["ticket"]
             if ticket is not None:
                 identifier(ticket)
-            return {"ticket": store.touch_attachment(OWNER, data["id"], data["job"], ticket)}
+            return {"ticket": store.touch_attachment(owner, data["id"], data["job"], ticket)}
         if action == "create":
-            return {"id": store.create(OWNER, data["key"])}
+            return {"id": store.create(owner, data["key"])}
         if action == "delete":
-            store.delete(OWNER, data["id"])
+            store.delete(owner, data["id"])
             return {}
         if action == "stop":
-            state = scheduler.cancel(OWNER, identifier(data["job"]))
+            state = scheduler.cancel(owner, identifier(data["job"]))
             return {"state": state["state"]}
         if type(data["inventory"]) is not bool:
             raise Rejected("invalid")
         context = None
         if data["inventory"] and inventory is not None:
             context = json.dumps(inventory(), allow_nan=False, separators=(",", ":"))
-        return store.submit(OWNER, data["id"], data["incarnation"], data["key"], data["parent"],
+        return store.submit(owner, data["id"], data["incarnation"], data["key"], data["parent"],
                             data["alias"], data["prompt"], data["inventory"], inventory_context=context,
-                            browser=True)
+                            browser=True, rehearsal=rehearsal)
 
     expected = "Bearer " + secret.hex()
 

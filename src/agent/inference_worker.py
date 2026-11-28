@@ -31,7 +31,7 @@ class InferenceWorker:
         return self.control("capacity", self.describe_capacity(self.resident))
 
     def reconcile(self, offer):
-        runtimes = (self.runtime, self.paired_runtime) if self.paired_runtime else (self.runtime,)
+        runtimes = [runtime for runtime in (self.runtime, self.paired_runtime) if runtime is not None]
         for runtime in runtimes:
             runtime.stop()
         if any(not runtime.quiescent() for runtime in runtimes):
@@ -57,6 +57,8 @@ class InferenceWorker:
                 if not self.paired_runtime:
                     raise Rejected("profile_unavailable", 409)
                 self.paired_runtime.prepare(offer)
+            elif self.runtime is None:
+                raise Rejected("profile_unavailable", 409)
             self.control("ready", grant)
             self.prepared = grant
             sent = self.clock()
@@ -77,13 +79,20 @@ class InferenceWorker:
         try:
             self.execute(start, grant)
         except (OSError, ValueError, TimeoutError, SubprocessError) as error:
-            self.execution_runtime(start).stop()
+            runtime = self.execution_runtime(start)
+            runtime.stop()
             result = ("withheld" if isinstance(error, Rejected)
                       and error.reason == "publication_withheld" else "failed")
             try:
-                details = ({"failure": "transport_unavailable"} if isinstance(error, Rejected)
-                           and error.reason == "transport_unavailable" and ("pair" in start or "trial" in start)
-                           else {})
+                details = {}
+                if isinstance(error, Rejected) and ("pair" in start or "trial" in start):
+                    if error.reason == "transport_unavailable":
+                        details["failure"] = error.reason
+                    elif (error.reason in ("unsafe_rank_resources", "stale_rank_resources")
+                          and getattr(runtime, "large_stage", None)):
+                        details["failure"] = "unsafe_rank_resources"
+                    elif error.reason == "context_limit" and start.get("trial", {}).get("placement"):
+                        details["failure"] = error.reason
                 self.control("finish", {**grant, "result": result, **details})
             except (OSError, ValueError):
                 # The next poll and cleanup challenge handle lost sessions.
@@ -113,6 +122,8 @@ class InferenceWorker:
             if self.paired_runtime is None:
                 raise Rejected("profile_unavailable", 409)
             return self.paired_runtime
+        if self.runtime is None:
+            raise Rejected("profile_unavailable", 409)
         return self.runtime
 
     def execute(self, start, grant):
@@ -143,6 +154,8 @@ class InferenceWorker:
                             raise Rejected("fenced", 409)
                         if check_link:
                             check_link()
+                        if getattr(runtime, "large_stage", None):
+                            runtime.check_budget()
                         if self.clock() >= next_renewal:
                             self.report()
                             sent = self.clock()
@@ -152,7 +165,25 @@ class InferenceWorker:
                 answer, usage, diagnostics = task.result()
                 if check_link:
                     check_link()
-            except BaseException:
+            except BaseException as error:
+                if check_link and getattr(runtime, "large_stage", None) and isinstance(error, Exception):
+                    lost_link = isinstance(error, Rejected) and error.reason == "transport_unavailable"
+                    if not lost_link:
+                        try:
+                            check_link()
+                        except Rejected as link_error:
+                            lost_link = link_error.reason == "transport_unavailable"
+                    if lost_link:
+                        try:
+                            # A failed receipt fences the pair before reaping.
+                            # Each Studio still has to prove its own cleanup.
+                            self.control("finish", {**grant, "result": "failed",
+                                                    "failure": "transport_unavailable"})
+                        except (OSError, ValueError):
+                            pass
+                        else:
+                            runtime.stop()
+                            return
                 runtime.stop()
                 raise
         # End model residency before invoking publication policy, particularly
@@ -163,6 +194,25 @@ class InferenceWorker:
         if self.stopping():
             raise Rejected("fenced", 409)
         if "trial" in start or ("pair" in start and not start["reporter"]):
+            if "review" in start.get("trial", {}) and start["reporter"]:
+                from hashlib import sha256
+
+                text = answer.encode()
+                if not 0 < len(text) <= 64 * 1024:
+                    raise Rejected("invalid_review_output")
+                self.report()
+                self.control("renew", grant)
+                frames = 0
+                sent = self.clock()
+                for offset in range(0, len(text), PAGE):
+                    if self.clock() - sent >= 4:
+                        self.report()
+                        self.control("renew", grant)
+                        sent = self.clock()
+                    self.control("review-append", {
+                        **grant, "sequence": frames, "data": base64.b64encode(text[offset:offset + PAGE]).decode()})
+                    frames += 1
+                diagnostics["review_output"] = dict(frames=frames, digest=sha256(text).hexdigest())
             self.control("finish", {**grant, "result": "ok", **diagnostics})
             return
         data = answer.encode()
@@ -173,12 +223,31 @@ class InferenceWorker:
             frames += 1
         self.report()
         self.control("renew", grant)
-        self.transfer("publish", {**grant, "frames": frames})
+        if getattr(runtime, "large_stage", None):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                publication = pool.submit(self.transfer, "publish", {**grant, "frames": frames})
+                while not publication.done():
+                    try:
+                        publication.result(timeout=3)
+                    except TimeoutError:
+                        if publication.done():
+                            publication.result()
+                        if self.stopping():
+                            raise Rejected("fenced", 409)
+                        self.report()
+                        self.control("renew", grant)
+                publication.result()
+        else:
+            self.transfer("publish", {**grant, "frames": frames})
         self.control("finish", {**grant, "result": "ok", "usage": usage, **diagnostics})
 
     def generate(self, start, grant, deadline):
         if "trial" in start:
-            return None, None, self.paired_runtime.run_trial(start, deadline)
+            result = self.paired_runtime.run_trial(start, deadline)
+            if "review" in start["trial"]:
+                answer, diagnostics = result
+                return answer, None, diagnostics
+            return None, None, result
         if "pair" in start:
             payload = self.messages(grant) if start["reporter"] else None
             return self.paired_runtime.run_chat(start, payload, deadline)
@@ -205,7 +274,8 @@ def run_host(args, observe):
 
     if args.runtime_state is None:
         raise ValueError("Specify a private worker runtime state directory")
-    runtime = NativeRuntime(args.inference_config, args.runtime_state, purpose="inference")
+    runtime = (NativeRuntime(args.inference_config, args.runtime_state, purpose="inference")
+               if args.inference_config else None)
     paired_runtime = None
     if args.pair_config:
         from .paired_runtime import PairedRuntime
@@ -229,7 +299,9 @@ def run_host(args, observe):
         reporter = from_args(args)
 
         def transport(route, operation, data):
-            request_timeout = 13 if route == "inference" else 2
+            request_timeout = 2
+            if route == "inference":
+                request_timeout = 64 if paired_runtime and paired_runtime.large_stage else 13
             status, body = reporter.request("/v1/" + route + "/" + operation, data,
                                             timeout=request_timeout)
             response = json.loads(body)
@@ -264,11 +336,17 @@ def run_host(args, observe):
                               pressure=pressure)
                 if reporter is None:
                     result["memory_bytes"] = sample["memory_bytes"]
+                if paired_runtime and paired_runtime.large_stage:
+                    result["large_revision"] = paired_runtime.revision
+                    result["single_capable"] = runtime is not None
                 return result
 
+            version = 1
+            if paired_runtime:
+                version = 3 if paired_runtime.large_stage else 2
+
             def control(operation, data):
-                return transport("jobs", operation,
-                                 dict(data, version=2 if paired_runtime else 1, node=args.node, session=session))
+                return transport("jobs", operation, dict(data, version=version, node=args.node, session=session))
 
             def transfer(operation, data):
                 identity = {"session": session} if reporter is None else {
@@ -293,6 +371,7 @@ def run_host(args, observe):
                 last_reason = "unavailable"
             stopping.wait(2)
         finally:
-            runtime.stop()
+            if runtime:
+                runtime.stop()
             if paired_runtime:
                 paired_runtime.stop()

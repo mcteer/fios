@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "rubric": {
+    "dimensions": ["canon fidelity", "narrative clarity", "session usability"],
+    "anchors": {
+      "5": "Preserves every canon fact, connects every scene, or supplies every requested playable hook, respectively.",
+      "4": "One minor omission, without contradiction or loss of playability.",
+      "3": "Requires a substantive edit.",
+      "2": "Requires several substantive edits.",
+      "1": "Unusable."
+    },
+    "minimum_per_dimension": 4
+  },
+  "briefs": [
+    {
+      "case": "tide-bell",
+      "prompt": "Outline a three-scene session in a fishing town. Canon: The tide bell rings only at low tide. Keeper Iona has never left town. A submerged causeway links the town to an abandoned orchard. Include an investigation clue, a choice with two meaningful consequences and an ending hook. Keep the outline under 300 words."
+    },
+    {
+      "case": "glass-distillery",
+      "prompt": "Outline a three-scene one-shot at a glassworks. Canon: Foreman Sel has barred fire magic indoors. The night shift is paid in paper chits. The guild seal is a square with a diagonal crack. Include two noncombat solutions and an observable consequence for each. Keep the outline under 300 words."
+    },
+    {
+      "case": "winter-train",
+      "prompt": "Outline a three-scene campaign session at a stranded passenger train. Canon: The train has four carriages. The conductor can read but cannot speak. The signal tower is uphill and has no working lamp. Include an escalating complication, a choice that affects passengers, and two follow-up hooks. Keep the outline under 300 words."
+    },
+    {
+      "case": "council-of-wells",
+      "prompt": "Outline a three-scene campaign session about a village water dispute. Canon: The upper well is dry. The lower well is shared by three farms. A festival in two days requires no water. Include two factions with defensible goals, a clue available without negotiation and a choice with a lasting consequence. Keep the outline under 300 words."
+    }
+  ]
+}
